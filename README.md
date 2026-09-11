@@ -92,4 +92,24 @@ initialization safeguards, normalization, cleanup, and failure reporting **witho
 pyATS installed**. They do not establish compatibility with a particular router
 image or claim a successful live lab run.
 
+## Development
+
+Lint and formatting are enforced by [Ruff](https://docs.astral.sh/ruff/), which the
+`dev` extra installs and `pyproject.toml` configures (line length 110, target
+py310, `E`/`F`/`I`/`UP`/`B`/`SIM`):
+
+```bash
+python3 -m ruff check .
+python3 -m ruff format --check .
+```
+
+Tests mirror the module under test -- `tests/test_policy.py` covers `ncv/policy.py`,
+and so on -- with the shared repository paths, demo intent/snapshots, and fake-lab
+fixtures in `tests/conftest.py`. Snapshot section validation lives in `ncv/schema.py`
+so the snapshot loader and the Genie normalizer share one definition.
+
+CI runs both Ruff checks, the test suite, and the fixture diff gates on Ubuntu
+(Python 3.10 and 3.12) and Windows (Python 3.11), always with pyATS and Genie
+absent so the offline path is what gets exercised.
+
 For an interview walkthrough, see [docs/EXPLAIN.md](docs/EXPLAIN.md).
