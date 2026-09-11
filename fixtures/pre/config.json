@@ -1,0 +1,8 @@
+{
+  "r1": {
+    "running": "hostname r1\nntp server 192.0.2.1\nlogging host 192.0.2.10\ninterface GigabitEthernet0/1\n ip address 10.0.12.1 255.255.255.252\n"
+  },
+  "r2": {
+    "running": "hostname r2\nntp server 192.0.2.1\ninterface GigabitEthernet0/1\n ip address 10.0.12.2 255.255.255.252\n"
+  }
+}

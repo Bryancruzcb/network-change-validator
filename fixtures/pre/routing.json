@@ -1,0 +1,22 @@
+{
+  "r1": {
+    "vrfs": {
+      "default": {
+        "routes": {
+          "10.20.0.0/24": { "protocol": "ospf", "next_hop": "10.0.12.2" },
+          "10.10.0.0/24": { "protocol": "connected" }
+        }
+      }
+    }
+  },
+  "r2": {
+    "vrfs": {
+      "default": {
+        "routes": {
+          "10.10.0.0/24": { "protocol": "ospf", "next_hop": "10.0.12.1" },
+          "10.20.0.0/24": { "protocol": "connected" }
+        }
+      }
+    }
+  }
+}

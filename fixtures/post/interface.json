@@ -1,0 +1,12 @@
+{
+  "r1": {
+    "interfaces": {
+      "GigabitEthernet0/1": { "oper_status": "up", "in_errors": 42, "crc": 9 }
+    }
+  },
+  "r2": {
+    "interfaces": {
+      "GigabitEthernet0/1": { "oper_status": "down", "in_errors": 1, "crc": 0 }
+    }
+  }
+}
