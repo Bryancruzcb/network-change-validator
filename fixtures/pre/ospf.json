@@ -1,0 +1,12 @@
+{
+  "r1": {
+    "neighbors": {
+      "10.0.12.2": { "state": "FULL", "interface": "GigabitEthernet0/1" }
+    }
+  },
+  "r2": {
+    "neighbors": {
+      "10.0.12.1": { "state": "FULL", "interface": "GigabitEthernet0/1" }
+    }
+  }
+}

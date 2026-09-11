@@ -1,0 +1,10 @@
+{
+  "r1": {
+    "neighbors": {}
+  },
+  "r2": {
+    "neighbors": {
+      "10.0.12.1": { "state": "DOWN", "interface": "GigabitEthernet0/1" }
+    }
+  }
+}
