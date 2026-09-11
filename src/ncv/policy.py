@@ -17,15 +17,12 @@ class Finding:
     action: str
 
 
-FULL_STATES = {"up", "full", "FULL", "UP"}
-
-
 def evaluate(intent: Intent, pre: dict[str, Any], post: dict[str, Any]) -> list[Finding]:
     findings: list[Finding] = []
     findings.extend(_devices(intent, pre, post))
     findings.extend(_adjacencies(intent, pre, post))
     findings.extend(_routes(intent, pre, post))
-    findings.extend(_errors(intent, post))
+    findings.extend(_errors(intent, pre, post))
     findings.extend(_drift(intent, pre, post))
     return findings
 
@@ -58,37 +55,26 @@ def _device_set(snap: dict[str, Any]) -> set[str]:
     return names
 
 
-def _nbr_state(snap: dict[str, Any], device: str, neighbor: str) -> str | None:
-    node = (snap.get("ospf") or {}).get(device) or {}
-    nbrs = node.get("neighbors") or {}
-    rec = nbrs.get(neighbor)
-    if rec is None:
-        return None
-    return str(rec.get("state", ""))
+def _neighbor(snap: dict[str, Any], device: str, neighbor: str) -> dict[str, Any] | None:
+    return (snap.get("ospf", {}).get(device, {}).get("neighbors", {})).get(neighbor)
 
 
 def _adjacencies(intent: Intent, pre: dict[str, Any], post: dict[str, Any]) -> list[Finding]:
     out: list[Finding] = []
     for adj in intent.adjacencies:
-        before = _nbr_state(pre, adj.device, adj.neighbor)
-        after = _nbr_state(post, adj.device, adj.neighbor)
-        ok = after is not None and after.lower() in {s.lower() for s in FULL_STATES}
-        if ok:
+        before = _neighbor(pre, adj.device, adj.neighbor)
+        after = _neighbor(post, adj.device, adj.neighbor)
+        state = str((after or {}).get("state", "")).lower().split("/")[0].strip()
+        interface_ok = not adj.interface or (after or {}).get("interface") == adj.interface
+        if state == "full" and interface_ok:
             continue
-        out.append(
-            Finding(
-                policy_id="V_ADJ",
-                device=adj.device,
-                path=f"ospf.neighbors.{adj.neighbor}.state",
-                before=before,
-                after=after,
-                why=(
-                    f"required {adj.protocol} neighbor {adj.neighbor} "
-                    f"on {adj.interface} is not FULL in post snapshot"
-                ),
-                action="in lab, restore the peer-facing interface / neighbor config and re-learn",
-            )
-        )
+        out.append(Finding(
+            policy_id="V_ADJ", device=adj.device,
+            path=f"ospf.neighbors.{adj.neighbor}", before=before, after=after,
+            why=f"required OSPF neighbor {adj.neighbor} must be FULL"
+                + (f" on {adj.interface}" if adj.interface else ""),
+            action="inspect peer state and interface configuration in the lab",
+        ))
     return out
 
 
@@ -140,67 +126,57 @@ def _iface(snap: dict[str, Any], device: str, name: str) -> dict[str, Any]:
     return rec if isinstance(rec, dict) else {}
 
 
-def _errors(intent: Intent, post: dict[str, Any]) -> list[Finding]:
+def _errors(intent: Intent, pre: dict[str, Any], post: dict[str, Any]) -> list[Finding]:
     out: list[Finding] = []
     for lim in intent.interfaces:
         rec = _iface(post, lim.device, lim.name)
-        in_err = int(rec.get("in_errors", 0) or 0)
-        crc = int(rec.get("crc", 0) or 0)
-        if in_err > lim.max_in_errors or crc > lim.max_crc:
-            out.append(
-                Finding(
-                    policy_id="V_ERR",
-                    device=lim.device,
-                    path=f"interface.{lim.name}.counters",
-                    before=None,
-                    after={"in_errors": in_err, "crc": crc},
-                    why=(
-                        f"{lim.name} errors in_errors={in_err} (max {lim.max_in_errors}), "
-                        f"crc={crc} (max {lim.max_crc})"
-                    ),
-                    action="inspect cabling / SFP in lab; do not clear counters on production",
-                )
-            )
+        before = {key: _iface(pre, lim.device, lim.name).get(key) for key in ("in_errors", "crc")}
+        after = {key: rec.get(key) for key in ("in_errors", "crc")}
+        missing = any(value is None for value in after.values())
+        if missing or after["in_errors"] > lim.max_in_errors or after["crc"] > lim.max_crc:
+            out.append(Finding(
+                policy_id="V_ERR", device=lim.device,
+                path=f"interface.{lim.name}.counters", before=before, after=after,
+                why=(f"{lim.name}: required counter evidence missing" if missing else
+                     f"{lim.name} errors in_errors={after['in_errors']} (max {lim.max_in_errors}), "
+                     f"crc={after['crc']} (max {lim.max_crc})"),
+                action="inspect interface counters and cabling in the lab",
+            ))
     return out
 
 
-def _running(snap: dict[str, Any], device: str) -> str:
-    node = (snap.get("config") or {}).get(device) or {}
-    return str(node.get("running", ""))
+def _config_lines(snap: dict[str, Any], device: str) -> set[str] | None:
+    running = snap.get("config", {}).get(device, {}).get("running")
+    return {line.strip() for line in running.splitlines()} if isinstance(running, str) else None
 
 
 def _drift(intent: Intent, pre: dict[str, Any], post: dict[str, Any]) -> list[Finding]:
     out: list[Finding] = []
-    for rule in intent.must_include:
-        text = _running(post, rule.device)
-        for line in rule.lines:
-            if line not in text:
-                out.append(
-                    Finding(
-                        policy_id="V_DRIFT",
-                        device=rule.device,
-                        path="config.running.must_include",
-                        before=line in _running(pre, rule.device),
-                        after=False,
-                        why=f"required line missing: {line}",
-                        action="restore the intended line in lab running-config",
-                    )
-                )
-    for rule in intent.must_absent:
-        text = _running(post, rule.device)
-        for line in rule.lines:
-            if line in text:
-                out.append(
-                    Finding(
-                        policy_id="V_DRIFT",
-                        device=rule.device,
-                        path="config.running.must_absent",
-                        before=line in _running(pre, rule.device),
-                        after=True,
-                        why=f"forbidden line present: {line}",
-                        action="remove the leftover line in lab; do not touch production",
-                    )
-                )
+    missing_devices: set[str] = set()
+    for kind, rules in (("must_include", intent.must_include), ("must_absent", intent.must_absent)):
+        for rule in rules:
+            before = _config_lines(pre, rule.device)
+            after = _config_lines(post, rule.device)
+            if after is None:
+                if rule.device not in missing_devices:
+                    out.append(Finding(
+                        "V_DRIFT", rule.device, "config.running", before is not None, None,
+                        "running-config evidence missing; config rules cannot be checked",
+                        "capture running-config from the lab device and retry",
+                    ))
+                    missing_devices.add(rule.device)
+                continue
+            for line in rule.lines:
+                present = line in after
+                if present == (kind == "must_include"):
+                    continue
+                out.append(Finding(
+                    "V_DRIFT", rule.device, f"config.running.{kind}",
+                    None if before is None else line in before, present,
+                    f"required line missing: {line}" if kind == "must_include" else
+                    f"forbidden line present: {line}",
+                    "review the intended configuration in the lab",
+                ))
     return out
 
 

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
-from .normalize import merge_section, normalize_learn
+from .normalize import _to_dict, normalize_learn
+from .snapshot import snapshot_destination, write_sections
 
 FEATURES = ("ospf", "routing", "interface")
 
@@ -18,64 +20,58 @@ def snapshot_live(testbed_path: str, output_dir: str, i_am_in_a_lab: bool) -> Pa
         from genie.testbed import load
     except ImportError as exc:
         raise RuntimeError(
-            "pyATS/Genie is not installed. pip install 'pyats[full]' in a venv, then retry"
+            "pyATS/Genie is not installed; install the optional lab extra: "
+            "python3 -m pip install -e '.[lab]'"
         ) from exc
 
-    out = Path(output_dir)
-    raw_dir = out / "raw"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    testbed = load(testbed_path)
-    sections: dict[str, dict[str, Any]] = {name: {} for name in (*FEATURES, "config")}
-
-    for name, device in testbed.devices.items():
-        device.connect(log_stdout=False)
+    with snapshot_destination(output_dir) as stage:
         try:
-            for feature in FEATURES:
-                try:
-                    learned = device.learn(feature)
-                except Exception as exc:
-                    (raw_dir / f"{name}_{feature}_error.txt").write_text(str(exc), encoding="utf-8")
-                    continue
-                dumped = _dump(learned)
-                (raw_dir / f"{name}_{feature}.json").write_text(
-                    json.dumps(dumped, indent=2, default=str) + "\n", encoding="utf-8"
-                )
-                sections[feature] = merge_section(
-                    sections[feature], normalize_learn(name, feature, dumped)
-                )
+            testbed = load(testbed_path)
+        except Exception as exc:
+            raise RuntimeError(f"cannot load lab testbed {testbed_path}: {exc}") from exc
+        if not testbed.devices:
+            raise ValueError("lab testbed has no devices")
+        for name in testbed.devices:
+            if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+                raise ValueError(f"unsupported lab device name {name!r}; use letters, digits, _ or -")
+        sections: dict[str, dict[str, Any]] = {name: {} for name in (*FEATURES, "config")}
+        raw_dir = stage / "raw"
+        raw_dir.mkdir()
+        for name, device in testbed.devices.items():
+            operation = "connect"
             try:
+                # Unicon defaults can initialize configuration. Disable initialization,
+                # including testbed arguments which otherwise take precedence over kwargs.
+                for connection in device.connections.values():
+                    if isinstance(connection, dict):
+                        arguments = connection.setdefault("arguments", {})
+                        arguments.update(init_exec_commands=[], init_config_commands=[])
+                device.connect(log_stdout=False, init_exec_commands=[], init_config_commands=[])
+                for feature in FEATURES:
+                    operation = f"learn {feature}"
+                    dumped = _to_dict(device.learn(feature))
+                    sections[feature].update(normalize_learn(name, feature, dumped))
+                    (raw_dir / f"{name}_{feature}.json").write_text(
+                        json.dumps(dumped, indent=2, default=str) + "\n", encoding="utf-8"
+                    )
+                operation = "show running-config"
                 running = device.execute("show running-config")
+                if (not isinstance(running, str) or not running.strip()
+                        or running.lstrip().startswith("%")):
+                    raise ValueError("empty, non-text, or CLI error running-config response")
+                sections["config"][name] = {"running": running}
+                (raw_dir / f"{name}_config.txt").write_text(running, encoding="utf-8")
             except Exception as exc:
-                running = f"! collect failed: {exc}\n"
-            sections["config"][name] = {"running": str(running)}
-            (raw_dir / f"{name}_config.txt").write_text(str(running), encoding="utf-8")
-        finally:
-            try:
-                device.disconnect()
-            except Exception:
-                pass
-
-    for feature, payload in sections.items():
-        (out / f"{feature}.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    meta = {
-        "source": "live-pyats",
-        "testbed": testbed_path,
-        "devices": list(testbed.devices.keys()),
-        "features": list(FEATURES) + ["config"],
-    }
-    (out / "SOURCE.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
-    return out
-
-
-def _dump(learned: Any) -> Any:
-    if hasattr(learned, "to_dict"):
-        try:
-            return learned.to_dict()
-        except Exception:
-            pass
-    info = getattr(learned, "info", None)
-    if isinstance(info, dict):
-        return {"info": info}
-    if isinstance(learned, dict):
-        return learned
-    return {"repr": repr(learned)}
+                raise RuntimeError(f"lab capture failed for {name} during {operation}: {exc}") from exc
+            finally:
+                try:
+                    device.disconnect()
+                except Exception:
+                    pass  # Preserve the collection error, if any.
+        write_sections(stage, sections)
+        meta = {
+            "source": "live-pyats", "testbed": testbed_path,
+            "devices": list(testbed.devices), "features": [*FEATURES, "config"],
+        }
+        (stage / "SOURCE.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    return Path(output_dir)

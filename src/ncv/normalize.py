@@ -1,89 +1,88 @@
 from __future__ import annotations
 
+from ipaddress import ip_network
 from typing import Any
+
+from .snapshot import validate_section
 
 
 def normalize_learn(device: str, feature: str, blob: Any) -> dict[str, Any]:
+    """Adapt a small set of Genie shapes; reject unsupported or ambiguous data."""
     data = _to_dict(blob)
+    if isinstance(data.get("info"), dict):
+        data = data["info"]
     if feature == "ospf":
-        return {device: {"neighbors": _ospf_neighbors(data)}}
-    if feature == "routing":
-        return {device: {"vrfs": _vrfs(data)}}
-    if feature == "interface":
-        return {device: {"interfaces": _ifaces(data)}}
-    if feature == "config":
-        return {device: {"running": _running(data)}}
-    return {device: data}
-
-
-def merge_section(dst: dict[str, Any], src: dict[str, Any]) -> dict[str, Any]:
-    out = dict(dst)
-    for dev, payload in src.items():
-        if dev not in out:
-            out[dev] = payload
-        elif isinstance(out[dev], dict) and isinstance(payload, dict):
-            merged = dict(out[dev])
-            merged.update(payload)
-            out[dev] = merged
-        else:
-            out[dev] = payload
-    return out
+        payload = {"neighbors": _ospf_neighbors(data)}
+    elif feature == "routing":
+        payload = {"vrfs": _vrfs(data)}
+    elif feature == "interface":
+        payload = {"interfaces": _ifaces(data)}
+    else:
+        raise ValueError(f"unsupported learned feature: {feature}")
+    result = {device: payload}
+    validate_section(feature, result, f"{device}.{feature}")
+    return result
 
 
 def _to_dict(blob: Any) -> dict[str, Any]:
-    if blob is None:
-        return {}
     if isinstance(blob, dict):
         return blob
-    for attr in ("info", "to_dict"):
-        val = getattr(blob, attr, None)
-        if callable(val):
-            got = val()
-            if isinstance(got, dict):
-                return got
-        elif isinstance(val, dict):
-            return val
-    return {}
+    info = getattr(blob, "info", None)
+    if isinstance(info, dict):
+        return info
+    method = getattr(blob, "to_dict", None)
+    if callable(method):
+        result = method()
+        if isinstance(result, dict):
+            return result
+    raise ValueError("learn returned no supported mapping")
 
 
 def _ospf_neighbors(data: dict[str, Any]) -> dict[str, Any]:
-    if "neighbors" in data and isinstance(data["neighbors"], dict):
-        return data["neighbors"]
+    if not any(key in data for key in ("neighbors", "vrf")):
+        raise ValueError("unsupported OSPF data: expected neighbors or vrf")
     found: dict[str, Any] = {}
 
-    def walk(node: Any) -> None:
+    def walk(node: Any, interface: str | None = None) -> None:
         if not isinstance(node, dict):
             return
-        nbrs = node.get("neighbors")
-        if isinstance(nbrs, dict):
-            for key, rec in nbrs.items():
-                if not isinstance(rec, dict):
-                    continue
-                state = rec.get("state") or rec.get("neighbor_state") or rec.get("adj_state")
-                iface = rec.get("interface") or rec.get("address") or ""
-                if state:
-                    found[str(key)] = {"state": str(state), "interface": str(iface)}
-        for val in node.values():
-            walk(val)
+        for key, value in node.items():
+            if key == "neighbors":
+                if not isinstance(value, dict):
+                    raise ValueError("OSPF neighbors must be a mapping")
+                for neighbor, rec in value.items():
+                    if not isinstance(rec, dict):
+                        raise ValueError(f"invalid OSPF neighbor {neighbor}")
+                    normalized = {
+                        "state": rec.get("state", rec.get("neighbor_state", rec.get("adj_state"))),
+                        "interface": rec.get("interface", interface),
+                    }
+                    if str(neighbor) in found:
+                        raise ValueError(f"ambiguous OSPF neighbor {neighbor}: multiple interfaces/VRFs")
+                    found[str(neighbor)] = normalized
+            elif key in ("interfaces", "interface") and isinstance(value, dict):
+                for name, record in value.items():
+                    walk(record, str(name))
+            else:
+                walk(value, interface)
 
     walk(data)
     return found
 
 
 def _vrfs(data: dict[str, Any]) -> dict[str, Any]:
-    if "vrfs" in data and isinstance(data["vrfs"], dict):
+    if "vrfs" in data:
         return data["vrfs"]
-    vrfs = (data.get("info") or {}).get("vrf") if isinstance(data.get("info"), dict) else data.get("vrf")
+    vrfs = data.get("vrf")
     if not isinstance(vrfs, dict):
-        vrfs = {"default": data}
-    out: dict[str, Any] = {}
-    for vrf_name, vrf in vrfs.items():
-        if not isinstance(vrf, dict):
-            continue
-        routes = vrf.get("routes") or vrf.get("address_family") or {}
-        flat: dict[str, Any] = {}
-        _collect_routes(routes, flat)
-        out[str(vrf_name)] = {"routes": flat}
+        raise ValueError("unsupported routing data: expected vrf or vrfs")
+    out = {}
+    for name, rec in vrfs.items():
+        if not isinstance(rec, dict):
+            raise ValueError(f"invalid routing VRF {name}")
+        routes: dict[str, Any] = {}
+        _collect_routes(rec, routes)
+        out[str(name)] = {"routes": routes}
     return out
 
 
@@ -91,41 +90,44 @@ def _collect_routes(node: Any, out: dict[str, Any]) -> None:
     if not isinstance(node, dict):
         return
     for key, rec in node.items():
-        if isinstance(rec, dict) and (
-            "route" in rec or "next_hop" in rec or "next_hops" in rec or "source_protocol" in rec or "active" in rec
-        ):
-            proto = rec.get("protocol") or rec.get("source_protocol") or rec.get("route_preference") or ""
-            out[str(key)] = {"protocol": str(proto)}
+        if key == "routes":
+            if not isinstance(rec, dict):
+                raise ValueError("routing routes must be a mapping")
+            for prefix, route in rec.items():
+                if not isinstance(route, dict):
+                    raise ValueError(f"invalid route {prefix}")
+                prefix = str(ip_network(prefix))
+                if prefix in out:
+                    raise ValueError(f"ambiguous duplicate route {prefix}")
+                out[prefix] = {"protocol": route.get("protocol", route.get("source_protocol"))}
         else:
             _collect_routes(rec, out)
 
 
+def _counter(record: dict[str, Any], *names: str) -> int | None:
+    for name in names:
+        if name in record:
+            value = record[name]
+            if isinstance(value, str) and value.isdecimal():
+                return int(value)
+            return value  # Schema validation rejects malformed values; unknown stays None.
+    return None
+
+
 def _ifaces(data: dict[str, Any]) -> dict[str, Any]:
-    if "interfaces" in data and isinstance(data["interfaces"], dict):
-        inner = data["interfaces"]
-        sample = next(iter(inner.values()), None)
-        if isinstance(sample, dict) and ("in_errors" in sample or "oper_status" in sample):
-            return inner
-    src = data.get("interfaces") or data.get("info") or data
+    src = data.get("interfaces")
     if not isinstance(src, dict):
-        return {}
-    out: dict[str, Any] = {}
+        raise ValueError("unsupported interface data: expected interfaces")
+    out = {}
     for name, rec in src.items():
         if not isinstance(rec, dict):
-            continue
-        counters = rec.get("counters") if isinstance(rec.get("counters"), dict) else rec
+            raise ValueError(f"invalid interface {name}")
+        counters = rec.get("counters", rec)
+        if not isinstance(counters, dict):
+            raise ValueError(f"invalid counters for interface {name}")
         out[str(name)] = {
-            "oper_status": str(rec.get("oper_status") or rec.get("enabled") or ""),
-            "in_errors": int(counters.get("in_errors") or counters.get("in_error") or 0),
-            "crc": int(counters.get("in_crc_errors") or counters.get("crc") or 0),
+            "oper_status": rec.get("oper_status"),
+            "in_errors": _counter(counters, "in_errors", "in_error"),
+            "crc": _counter(counters, "crc", "in_crc_errors"),
         }
     return out
-
-
-def _running(data: dict[str, Any]) -> str:
-    if isinstance(data.get("running"), str):
-        return data["running"]
-    cfg = data.get("config") or data.get("running_config") or data.get("text") or ""
-    if isinstance(cfg, str):
-        return cfg
-    return ""

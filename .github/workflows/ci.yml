@@ -14,5 +14,13 @@ jobs:
         run: python -m pip install -e ".[dev]"
       - name: pytest
         run: python -m pytest
-      - name: fixture diff
-        run: python -m ncv diff fixtures/pre fixtures/post --intent intents/demo.yaml --report output/ci
+      - name: confirm optional dependencies are absent
+        run: |
+          python -c "import importlib.util; assert all(importlib.util.find_spec(p) is None for p in ('pyats', 'genie'))"
+      - name: fixture diff (expected findings)
+        run: |
+          status=0
+          python -m ncv diff fixtures/pre fixtures/post --intent intents/demo.yaml --report output/ci || status=$?
+          test "$status" -eq 1
+      - name: clean fixture pair
+        run: python -m ncv diff fixtures/pre fixtures/pre --intent intents/demo.yaml --report output/clean

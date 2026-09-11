@@ -8,7 +8,7 @@ from pathlib import Path
 from .intent import load_intent
 from .policy import evaluate
 from .report import write_report
-from .snapshot import load_snapshot
+from .snapshot import copy_snapshot, load_snapshot
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -26,8 +26,9 @@ def main(argv: list[str] | None = None) -> int:
 
     snap = sub.add_parser("snapshot", help="capture a snapshot from a copied dir or a live lab")
     snap.add_argument("--output", required=True)
-    snap.add_argument("--from-dir", help="copy an existing snapshot directory")
-    snap.add_argument("--testbed", help="pyATS testbed YAML (live path)")
+    source = snap.add_mutually_exclusive_group(required=True)
+    source.add_argument("--from-dir", help="copy an existing snapshot directory")
+    source.add_argument("--testbed", help="pyATS testbed YAML (live path)")
     snap.add_argument(
         "--i-am-in-a-lab",
         action="store_true",
@@ -35,11 +36,13 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     args = parser.parse_args(argv)
-    if args.cmd == "diff":
-        return _diff(args)
-    if args.cmd == "snapshot":
+    try:
+        if args.cmd == "diff":
+            return _diff(args)
         return _snapshot(args)
-    return 2
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"ncv: error: {exc}", file=sys.stderr)
+        return 2
 
 
 def _diff(args: argparse.Namespace) -> int:
@@ -54,23 +57,16 @@ def _diff(args: argparse.Namespace) -> int:
 
 def _snapshot(args: argparse.Namespace) -> int:
     out = Path(args.output)
-    out.mkdir(parents=True, exist_ok=True)
     if args.testbed:
         from .live import snapshot_live
 
         snapshot_live(args.testbed, str(out), i_am_in_a_lab=args.i_am_in_a_lab)
-        print(json.dumps({"output": str(out), "mode": "live"}))
-        return 0
-    if args.from_dir:
-        src = Path(args.from_dir)
-        for name in ("ospf", "routing", "interface", "config"):
-            fp = src / f"{name}.json"
-            if fp.exists():
-                (out / f"{name}.json").write_text(fp.read_text(encoding="utf-8"), encoding="utf-8")
-        print(json.dumps({"output": str(out), "mode": "copy"}))
-        return 0
-    print("snapshot needs --from-dir or --testbed --i-am-in-a-lab", file=sys.stderr)
-    return 2
+        mode = "live"
+    else:
+        copy_snapshot(args.from_dir, out)
+        mode = "copy"
+    print(json.dumps({"output": str(out), "mode": mode}))
+    return 0
 
 
 if __name__ == "__main__":

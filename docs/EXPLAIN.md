@@ -5,9 +5,9 @@ One sentence: I built a Python checker that compares network state before and af
 ## What to explain
 
 1. Intent is the checklist. Snapshots are evidence. A raw diff is not the same thing.
-2. Four rules: neighbor up, route present, error counters under a limit, config lines present or absent.
+2. Four rules: OSPF neighbor FULL on its intended interface, route present, error counters under a limit, config lines present or absent.
 3. CI runs on saved fixtures so it does not need a live router.
-4. Live capture exists (`ncv snapshot --i-am-in-a-lab`) but is optional and never aimed at production.
+4. Live capture is optional, requires `--testbed`, `--output`, and `--i-am-in-a-lab`, and is never aimed at production. Its automated tests use mocks; bundled snapshots are synthetic.
 
 ## What not to say
 
@@ -23,4 +23,6 @@ python3 -m pytest
 python3 -m ncv diff fixtures/pre fixtures/post --intent intents/demo.yaml --report output/demo
 ```
 
-Open `output/demo/report.md`.
+The demo intentionally exits 1 with seven findings across four classes. Open `output/demo/report.md`.
+
+Be precise: this checks post-state against intent and shows pre-state evidence. It does not prove causation, end-to-end reachability, or compatibility with a router image you have not tested.

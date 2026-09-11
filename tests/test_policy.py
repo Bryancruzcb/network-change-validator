@@ -13,10 +13,8 @@ def test_demo_fixtures_find_four_classes():
     post = load_snapshot(ROOT / "fixtures" / "post")
     findings = evaluate(intent, pre, post)
     ids = {f.policy_id for f in findings}
-    assert "V_ADJ" in ids
-    assert "V_ROUTE" in ids
-    assert "V_ERR" in ids
-    assert "V_DRIFT" in ids
+    assert ids == {"V_ADJ", "V_ROUTE", "V_ERR", "V_DRIFT"}
+    assert len(findings) == 7
 
 
 def test_clean_pair_is_silent():
