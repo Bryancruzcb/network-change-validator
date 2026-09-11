@@ -1,0 +1,27 @@
+# Copy to lab.yaml (gitignored). Never commit passwords.
+# Never point this at a work production network.
+
+testbed:
+  name: house-lab
+  credentials:
+    default:
+      username: "%ENV{NCV_LAB_USER}"
+      password: "%ENV{NCV_LAB_PASS}"
+
+devices:
+  r1:
+    os: iosxe
+    type: router
+    connections:
+      cli:
+        protocol: ssh
+        ip: 192.0.2.11
+        port: 22
+  r2:
+    os: iosxe
+    type: router
+    connections:
+      cli:
+        protocol: ssh
+        ip: 192.0.2.12
+        port: 22
