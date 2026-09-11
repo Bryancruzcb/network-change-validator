@@ -1,4 +1,5 @@
 """Policy evaluation: required evidence, inclusive limits, and config drift."""
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -31,7 +32,7 @@ def test_missing_counters_are_findings(demo_intent, pre_snapshot, mutation):
         del interfaces["GigabitEthernet0/1"]["crc"]
     else:
         interfaces["GigabitEthernet0/1"]["crc"] = None
-    finding, = evaluate(demo_intent, pre_snapshot, post)
+    (finding,) = evaluate(demo_intent, pre_snapshot, post)
     assert finding.policy_id == "V_ERR"
     assert finding.before == {"in_errors": 0, "crc": 0}
     assert finding.after["crc"] is None
@@ -43,7 +44,7 @@ def test_missing_counters_are_findings(demo_intent, pre_snapshot, mutation):
 def test_adjacency_requires_full_on_requested_interface(demo_intent, pre_snapshot, field, value):
     post = deepcopy(pre_snapshot)
     post["ospf"]["r1"]["neighbors"]["10.0.12.2"][field] = value
-    finding, = evaluate(demo_intent, pre_snapshot, post)
+    (finding,) = evaluate(demo_intent, pre_snapshot, post)
     assert finding.policy_id == "V_ADJ"
     assert finding.after[field] == value
 
@@ -65,7 +66,7 @@ def test_config_matches_full_trimmed_lines(demo_intent, pre_snapshot):
     )
     post = deepcopy(pre_snapshot)
     post["config"]["r1"]["running"] = "ntp server 192.0.2.10\nusername leftover\n"
-    finding, = evaluate(intent, pre_snapshot, post)
+    (finding,) = evaluate(intent, pre_snapshot, post)
     assert finding.path.endswith("must_include")
     post["config"]["r1"]["running"] += "  ntp server 192.0.2.1  \n"
     assert evaluate(intent, pre_snapshot, post) == []
@@ -75,7 +76,7 @@ def test_absence_cannot_be_proven_without_config(demo_intent, pre_snapshot):
     intent = replace(demo_intent, must_include=())
     post = deepcopy(pre_snapshot)
     del post["config"]["r1"]
-    finding, = evaluate(intent, pre_snapshot, post)
+    (finding,) = evaluate(intent, pre_snapshot, post)
     assert finding.policy_id == "V_DRIFT"
     assert finding.after is None
 
@@ -115,7 +116,7 @@ def test_missing_config_is_reported_once_across_rule_groups(demo_intent, pre_sna
     )
     post = deepcopy(pre_snapshot)
     del post["config"]["r1"]
-    finding, = evaluate(intent, pre_snapshot, post)
+    (finding,) = evaluate(intent, pre_snapshot, post)
     assert finding.policy_id == "V_DRIFT"
     assert finding.path == "config.running"
     assert finding.before is True

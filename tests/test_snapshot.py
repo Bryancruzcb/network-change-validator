@@ -1,4 +1,5 @@
 """Copying a snapshot validates input and never publishes a partial directory."""
+
 from __future__ import annotations
 
 import pytest

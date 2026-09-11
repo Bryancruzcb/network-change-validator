@@ -1,4 +1,5 @@
 """Reports keep JSON evidence verbatim and neutralise Markdown injection."""
+
 from __future__ import annotations
 
 import json

@@ -1,4 +1,5 @@
 """Shared fixtures: repository paths, the demo intent/snapshots, and a fake pyATS lab."""
+
 from __future__ import annotations
 
 import sys
@@ -40,13 +41,15 @@ def fake_lab(monkeypatch):
     """One Genie-shaped device behind a fake testbed; never touches a real lab."""
     device = Mock()
     device.connections = {"cli": {"arguments": {"init_config_commands": ["hostname unwanted"]}}}
-    device.learn.side_effect = lambda feature: SimpleNamespace(info={
-        "ospf": {"neighbors": {}},
-        "routing": {"vrf": {"default": {"address_family": {"ipv4": {"routes": {}}}}}},
-        "interface": {
-            "interfaces": {"Gi1": {"oper_status": "up", "counters": {"in_errors": 0, "in_crc_errors": 0}}}
-        },
-    }[feature])
+    device.learn.side_effect = lambda feature: SimpleNamespace(
+        info={
+            "ospf": {"neighbors": {}},
+            "routing": {"vrf": {"default": {"address_family": {"ipv4": {"routes": {}}}}}},
+            "interface": {
+                "interfaces": {"Gi1": {"oper_status": "up", "counters": {"in_errors": 0, "in_crc_errors": 0}}}
+            },
+        }[feature]
+    )
     device.execute.return_value = "hostname r1\n"
     module = ModuleType("genie.testbed")
     module.load = Mock(return_value=SimpleNamespace(devices={"r1": device}))

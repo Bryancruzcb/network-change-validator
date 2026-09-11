@@ -21,8 +21,7 @@ def snapshot_live(testbed_path: str, output_dir: str, i_am_in_a_lab: bool) -> Pa
         from genie.testbed import load
     except ImportError as exc:
         raise RuntimeError(
-            "pyATS/Genie is not installed; install the optional lab extra: "
-            "python3 -m pip install -e '.[lab]'"
+            "pyATS/Genie is not installed; install the optional lab extra: python3 -m pip install -e '.[lab]'"
         ) from exc
 
     with snapshot_destination(output_dir) as stage:
@@ -57,8 +56,7 @@ def snapshot_live(testbed_path: str, output_dir: str, i_am_in_a_lab: bool) -> Pa
                     )
                 operation = "show running-config"
                 running = device.execute("show running-config")
-                if (not isinstance(running, str) or not running.strip()
-                        or running.lstrip().startswith("%")):
+                if not isinstance(running, str) or not running.strip() or running.lstrip().startswith("%"):
                     raise ValueError("empty, non-text, or CLI error running-config response")
                 sections["config"][name] = {"running": running}
                 (raw_dir / f"{name}_config.txt").write_text(running, encoding="utf-8")
@@ -69,8 +67,10 @@ def snapshot_live(testbed_path: str, output_dir: str, i_am_in_a_lab: bool) -> Pa
                     device.disconnect()
         write_sections(stage, sections)
         meta = {
-            "source": "live-pyats", "testbed": testbed_path,
-            "devices": list(testbed.devices), "features": [*FEATURES, "config"],
+            "source": "live-pyats",
+            "testbed": testbed_path,
+            "devices": list(testbed.devices),
+            "features": [*FEATURES, "config"],
         }
         (stage / "SOURCE.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
     return Path(output_dir)

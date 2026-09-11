@@ -26,8 +26,9 @@ def write_report(out_dir: str | Path, intent_id: str, findings: list[Finding]) -
         md.append("| policy | device | path | why |")
         md.append("|---|---|---|---|")
         for f in findings:
-            md.append("| " + " | ".join(_escape(value) for value in
-                                        (f.policy_id, f.device, f.path, f.why)) + " |")
+            md.append(
+                "| " + " | ".join(_escape(value) for value in (f.policy_id, f.device, f.path, f.why)) + " |"
+            )
     (root / "report.md").write_text("\n".join(md) + "\n", encoding="utf-8")
     return json_path
 

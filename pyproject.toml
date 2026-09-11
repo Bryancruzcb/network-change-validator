@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "ruff>=0.6"]
 lab = ["pyats[full]"]
 
 [project.scripts]
@@ -23,6 +23,16 @@ ncv = "ncv.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+extend-exclude = ["output", "captures"]
+
+[tool.ruff.lint]
+# F catches the unused imports this project kept accumulating in tests;
+# I keeps import blocks ordered; E/UP/B/SIM are the conservative defaults.
+select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

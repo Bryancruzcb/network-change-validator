@@ -1,4 +1,5 @@
 """Snapshot section validation reports the offending file and field."""
+
 from __future__ import annotations
 
 import json

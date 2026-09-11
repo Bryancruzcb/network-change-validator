@@ -68,13 +68,18 @@ def _adjacencies(intent: Intent, pre: dict[str, Any], post: dict[str, Any]) -> l
         interface_ok = not adj.interface or (after or {}).get("interface") == adj.interface
         if state == "full" and interface_ok:
             continue
-        out.append(Finding(
-            policy_id="V_ADJ", device=adj.device,
-            path=f"ospf.neighbors.{adj.neighbor}", before=before, after=after,
-            why=f"required OSPF neighbor {adj.neighbor} must be FULL"
+        out.append(
+            Finding(
+                policy_id="V_ADJ",
+                device=adj.device,
+                path=f"ospf.neighbors.{adj.neighbor}",
+                before=before,
+                after=after,
+                why=f"required OSPF neighbor {adj.neighbor} must be FULL"
                 + (f" on {adj.interface}" if adj.interface else ""),
-            action="inspect peer state and interface configuration in the lab",
-        ))
+                action="inspect peer state and interface configuration in the lab",
+            )
+        )
     return out
 
 
@@ -113,7 +118,7 @@ def _routes(intent: Intent, pre: dict[str, Any], post: dict[str, Any]) -> list[F
                     before=None if before is None else before.get("protocol"),
                     after=after.get("protocol"),
                     why=f"prefix {rt.prefix} present but protocol is "
-                        f"{after.get('protocol')}, intent {rt.protocol}",
+                    f"{after.get('protocol')}, intent {rt.protocol}",
                     action="check redistribution / protocol source in lab only",
                 )
             )
@@ -135,14 +140,22 @@ def _errors(intent: Intent, pre: dict[str, Any], post: dict[str, Any]) -> list[F
         after = {key: rec.get(key) for key in ("in_errors", "crc")}
         missing = any(value is None for value in after.values())
         if missing or after["in_errors"] > lim.max_in_errors or after["crc"] > lim.max_crc:
-            out.append(Finding(
-                policy_id="V_ERR", device=lim.device,
-                path=f"interface.{lim.name}.counters", before=before, after=after,
-                why=(f"{lim.name}: required counter evidence missing" if missing else
-                     f"{lim.name} errors in_errors={after['in_errors']} (max {lim.max_in_errors}), "
-                     f"crc={after['crc']} (max {lim.max_crc})"),
-                action="inspect interface counters and cabling in the lab",
-            ))
+            out.append(
+                Finding(
+                    policy_id="V_ERR",
+                    device=lim.device,
+                    path=f"interface.{lim.name}.counters",
+                    before=before,
+                    after=after,
+                    why=(
+                        f"{lim.name}: required counter evidence missing"
+                        if missing
+                        else f"{lim.name} errors in_errors={after['in_errors']} (max {lim.max_in_errors}), "
+                        f"crc={after['crc']} (max {lim.max_crc})"
+                    ),
+                    action="inspect interface counters and cabling in the lab",
+                )
+            )
     return out
 
 
@@ -171,24 +184,36 @@ def _drift(intent: Intent, pre: dict[str, Any], post: dict[str, Any]) -> list[Fi
             after = lines(post, post_lines, rule.device)
             if after is None:
                 if rule.device not in missing_devices:
-                    out.append(Finding(
-                        "V_DRIFT", rule.device, "config.running", before is not None, None,
-                        "running-config evidence missing; config rules cannot be checked",
-                        "capture running-config from the lab device and retry",
-                    ))
+                    out.append(
+                        Finding(
+                            "V_DRIFT",
+                            rule.device,
+                            "config.running",
+                            before is not None,
+                            None,
+                            "running-config evidence missing; config rules cannot be checked",
+                            "capture running-config from the lab device and retry",
+                        )
+                    )
                     missing_devices.add(rule.device)
                 continue
             for line in rule.lines:
                 present = line in after
                 if present == (kind == "must_include"):
                     continue
-                out.append(Finding(
-                    "V_DRIFT", rule.device, f"config.running.{kind}",
-                    None if before is None else line in before, present,
-                    f"required line missing: {line}" if kind == "must_include" else
-                    f"forbidden line present: {line}",
-                    "review the intended configuration in the lab",
-                ))
+                out.append(
+                    Finding(
+                        "V_DRIFT",
+                        rule.device,
+                        f"config.running.{kind}",
+                        None if before is None else line in before,
+                        present,
+                        f"required line missing: {line}"
+                        if kind == "must_include"
+                        else f"forbidden line present: {line}",
+                        "review the intended configuration in the lab",
+                    )
+                )
     return out
 
 

@@ -1,4 +1,5 @@
 """Live capture paths exercised with fake connections; no live lab required."""
+
 from __future__ import annotations
 
 import builtins
@@ -49,9 +50,7 @@ def test_optional_dependency_error(tmp_path, monkeypatch):
 def test_mock_capture_is_complete_and_disables_initialization(tmp_path, fake_lab):
     device, _ = fake_lab
     out = snapshot_live("lab.yaml", str(tmp_path / "out"), True)
-    device.connect.assert_called_once_with(
-        log_stdout=False, init_exec_commands=[], init_config_commands=[]
-    )
+    device.connect.assert_called_once_with(log_stdout=False, init_exec_commands=[], init_config_commands=[])
     assert device.connections["cli"]["arguments"]["init_config_commands"] == []
     device.execute.assert_called_once_with("show running-config")
     device.configure.assert_not_called()

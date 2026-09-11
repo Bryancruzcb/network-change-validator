@@ -90,8 +90,10 @@ def _rules(raw: Any, where: str, devices: tuple[str, ...]) -> tuple[ConfigRule, 
     for index, item in enumerate(_list(raw, where)):
         loc = f"{where}[{index}]"
         item = _mapping(item, loc, {"device", "lines"})
-        lines = tuple(_text(line, f"{loc}.lines[{i}]") for i, line in
-                      enumerate(_list(item.get("lines"), f"{loc}.lines")))
+        lines = tuple(
+            _text(line, f"{loc}.lines[{i}]")
+            for i, line in enumerate(_list(item.get("lines"), f"{loc}.lines"))
+        )
         if not lines or any("\n" in line or "\r" in line for line in lines):
             raise ValueError(f"{loc}.lines: expected at least one single config line")
         out.append(ConfigRule(_device(item.get("device"), f"{loc}.device", devices), lines))
@@ -104,13 +106,27 @@ def load_intent(path: str | Path) -> Intent:
     except yaml.YAMLError as exc:
         raise ValueError(f"invalid YAML in {path}: {exc}") from exc
     where = str(path)
-    data = _mapping(data, where, {"intent_id", "version", "devices", "adjacencies",
-                                  "routes", "interfaces", "config", "exclude_volatile"})
+    data = _mapping(
+        data,
+        where,
+        {
+            "intent_id",
+            "version",
+            "devices",
+            "adjacencies",
+            "routes",
+            "interfaces",
+            "config",
+            "exclude_volatile",
+        },
+    )
     version = _integer(data.get("version", 1), f"{where}.version")
     if version != 1:
         raise ValueError(f"{where}.version: only version 1 is supported")
-    devices = tuple(_text(d, f"{where}.devices[{i}]") for i, d in
-                    enumerate(_list(data.get("devices"), f"{where}.devices")))
+    devices = tuple(
+        _text(d, f"{where}.devices[{i}]")
+        for i, d in enumerate(_list(data.get("devices"), f"{where}.devices"))
+    )
     if not devices or len(set(devices)) != len(devices):
         raise ValueError(f"{where}.devices: expected a non-empty list of unique device names")
     adjacencies = []
@@ -120,10 +136,14 @@ def load_intent(path: str | Path) -> Intent:
         protocol = _text(a.get("protocol", "ospf"), f"{loc}.protocol").lower()
         if protocol != "ospf":
             raise ValueError(f"{loc}.protocol: only ospf adjacencies are supported")
-        adjacencies.append(Adjacency(
-            _device(a.get("device"), f"{loc}.device", devices), protocol,
-            _text(a.get("neighbor"), f"{loc}.neighbor"),
-            _text(a.get("interface", ""), f"{loc}.interface", empty=True)))
+        adjacencies.append(
+            Adjacency(
+                _device(a.get("device"), f"{loc}.device", devices),
+                protocol,
+                _text(a.get("neighbor"), f"{loc}.neighbor"),
+                _text(a.get("interface", ""), f"{loc}.interface", empty=True),
+            )
+        )
     routes = []
     for i, r in enumerate(_list(data.get("routes", []), f"{where}.routes")):
         loc = f"{where}.routes[{i}]"
@@ -133,27 +153,38 @@ def load_intent(path: str | Path) -> Intent:
             prefix = str(ip_network(prefix))
         except ValueError as exc:
             raise ValueError(f"{loc}.prefix: invalid network prefix {prefix!r}") from exc
-        routes.append(Route(
-            _device(r.get("device"), f"{loc}.device", devices),
-            _text(r.get("vrf", "default"), f"{loc}.vrf"), prefix,
-            _text(r.get("protocol", ""), f"{loc}.protocol", empty=True).lower()))
+        routes.append(
+            Route(
+                _device(r.get("device"), f"{loc}.device", devices),
+                _text(r.get("vrf", "default"), f"{loc}.vrf"),
+                prefix,
+                _text(r.get("protocol", ""), f"{loc}.protocol", empty=True).lower(),
+            )
+        )
     interfaces = []
     for i, item in enumerate(_list(data.get("interfaces", []), f"{where}.interfaces")):
         loc = f"{where}.interfaces[{i}]"
         item = _mapping(item, loc, {"device", "name", "max_in_errors", "max_crc"})
-        interfaces.append(InterfaceLimit(
-            _device(item.get("device"), f"{loc}.device", devices),
-            _text(item.get("name"), f"{loc}.name"),
-            _integer(item.get("max_in_errors", 0), f"{loc}.max_in_errors"),
-            _integer(item.get("max_crc", 0), f"{loc}.max_crc")))
+        interfaces.append(
+            InterfaceLimit(
+                _device(item.get("device"), f"{loc}.device", devices),
+                _text(item.get("name"), f"{loc}.name"),
+                _integer(item.get("max_in_errors", 0), f"{loc}.max_in_errors"),
+                _integer(item.get("max_crc", 0), f"{loc}.max_crc"),
+            )
+        )
     cfg = _mapping(data.get("config", {}), f"{where}.config", {"must_include", "must_absent"})
     return Intent(
         intent_id=_text(data.get("intent_id"), f"{where}.intent_id"),
-        version=version, devices=devices,
-        adjacencies=tuple(adjacencies), routes=tuple(routes), interfaces=tuple(interfaces),
+        version=version,
+        devices=devices,
+        adjacencies=tuple(adjacencies),
+        routes=tuple(routes),
+        interfaces=tuple(interfaces),
         must_include=_rules(cfg.get("must_include", []), f"{where}.config.must_include", devices),
         must_absent=_rules(cfg.get("must_absent", []), f"{where}.config.must_absent", devices),
-        exclude_volatile=tuple(_text(x, f"{where}.exclude_volatile[{i}]") for i, x in
-                               enumerate(_list(data.get("exclude_volatile", []),
-                                               f"{where}.exclude_volatile"))),
+        exclude_volatile=tuple(
+            _text(x, f"{where}.exclude_volatile[{i}]")
+            for i, x in enumerate(_list(data.get("exclude_volatile", []), f"{where}.exclude_volatile"))
+        ),
     )
