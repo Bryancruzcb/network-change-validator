@@ -1,0 +1,63 @@
+# Demo intent for the fixture pair under fixtures/pre and fixtures/post.
+# Isolated lab topology only. Do not point this file at production.
+
+intent_id: demo-campus-core
+version: 1
+
+devices:
+  - r1
+  - r2
+
+adjacencies:
+  - device: r1
+    protocol: ospf
+    neighbor: 10.0.12.2
+    interface: GigabitEthernet0/1
+  - device: r2
+    protocol: ospf
+    neighbor: 10.0.12.1
+    interface: GigabitEthernet0/1
+
+routes:
+  - device: r1
+    vrf: default
+    prefix: 10.20.0.0/24
+    protocol: ospf
+  - device: r2
+    vrf: default
+    prefix: 10.10.0.0/24
+    protocol: ospf
+
+interfaces:
+  - device: r1
+    name: GigabitEthernet0/1
+    max_in_errors: 10
+    max_crc: 5
+  - device: r2
+    name: GigabitEthernet0/1
+    max_in_errors: 10
+    max_crc: 5
+
+config:
+  must_include:
+    - device: r1
+      lines:
+        - "ntp server 192.0.2.1"
+        - "logging host 192.0.2.10"
+    - device: r2
+      lines:
+        - "ntp server 192.0.2.1"
+  must_absent:
+    - device: r1
+      lines:
+        - "username leftover privilege 15"
+    - device: r2
+      lines:
+        - "username leftover privilege 15"
+
+exclude_volatile:
+  - uptime
+  - in_octets
+  - out_octets
+  - last_change
+  - hello_timer
