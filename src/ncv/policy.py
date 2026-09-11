@@ -112,7 +112,8 @@ def _routes(intent: Intent, pre: dict[str, Any], post: dict[str, Any]) -> list[F
                     path=f"routing.vrfs.{rt.vrf}.routes.{rt.prefix}.protocol",
                     before=None if before is None else before.get("protocol"),
                     after=after.get("protocol"),
-                    why=f"prefix {rt.prefix} present but protocol is {after.get('protocol')}, intent {rt.protocol}",
+                    why=f"prefix {rt.prefix} present but protocol is "
+                        f"{after.get('protocol')}, intent {rt.protocol}",
                     action="check redistribution / protocol source in lab only",
                 )
             )
@@ -153,10 +154,21 @@ def _config_lines(snap: dict[str, Any], device: str) -> set[str] | None:
 def _drift(intent: Intent, pre: dict[str, Any], post: dict[str, Any]) -> list[Finding]:
     out: list[Finding] = []
     missing_devices: set[str] = set()
+    # Split each device's running-config once per snapshot and reuse it across every
+    # rule group in this evaluation. The caches are local, so a later evaluation of the
+    # same snapshots re-reads them rather than trusting stale evidence.
+    pre_lines: dict[str, set[str] | None] = {}
+    post_lines: dict[str, set[str] | None] = {}
+
+    def lines(snap: dict[str, Any], cache: dict[str, set[str] | None], device: str) -> set[str] | None:
+        if device not in cache:
+            cache[device] = _config_lines(snap, device)
+        return cache[device]
+
     for kind, rules in (("must_include", intent.must_include), ("must_absent", intent.must_absent)):
         for rule in rules:
-            before = _config_lines(pre, rule.device)
-            after = _config_lines(post, rule.device)
+            before = lines(pre, pre_lines, rule.device)
+            after = lines(post, post_lines, rule.device)
             if after is None:
                 if rule.device not in missing_devices:
                     out.append(Finding(

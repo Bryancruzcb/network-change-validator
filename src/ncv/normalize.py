@@ -3,12 +3,12 @@ from __future__ import annotations
 from ipaddress import ip_network
 from typing import Any
 
-from .snapshot import validate_section
+from .schema import validate_section
 
 
 def normalize_learn(device: str, feature: str, blob: Any) -> dict[str, Any]:
     """Adapt a small set of Genie shapes; reject unsupported or ambiguous data."""
-    data = _to_dict(blob)
+    data = learned_to_mapping(blob)
     if isinstance(data.get("info"), dict):
         data = data["info"]
     if feature == "ospf":
@@ -24,7 +24,7 @@ def normalize_learn(device: str, feature: str, blob: Any) -> dict[str, Any]:
     return result
 
 
-def _to_dict(blob: Any) -> dict[str, Any]:
+def learned_to_mapping(blob: Any) -> dict[str, Any]:
     if isinstance(blob, dict):
         return blob
     info = getattr(blob, "info", None)

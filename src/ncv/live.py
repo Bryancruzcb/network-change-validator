@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import re
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-from .normalize import _to_dict, normalize_learn
+from .normalize import learned_to_mapping, normalize_learn
 from .snapshot import snapshot_destination, write_sections
 
 FEATURES = ("ospf", "routing", "interface")
@@ -49,7 +50,7 @@ def snapshot_live(testbed_path: str, output_dir: str, i_am_in_a_lab: bool) -> Pa
                 device.connect(log_stdout=False, init_exec_commands=[], init_config_commands=[])
                 for feature in FEATURES:
                     operation = f"learn {feature}"
-                    dumped = _to_dict(device.learn(feature))
+                    dumped = learned_to_mapping(device.learn(feature))
                     sections[feature].update(normalize_learn(name, feature, dumped))
                     (raw_dir / f"{name}_{feature}.json").write_text(
                         json.dumps(dumped, indent=2, default=str) + "\n", encoding="utf-8"
@@ -64,10 +65,8 @@ def snapshot_live(testbed_path: str, output_dir: str, i_am_in_a_lab: bool) -> Pa
             except Exception as exc:
                 raise RuntimeError(f"lab capture failed for {name} during {operation}: {exc}") from exc
             finally:
-                try:
+                with suppress(Exception):  # Preserve the collection error, if any.
                     device.disconnect()
-                except Exception:
-                    pass  # Preserve the collection error, if any.
         write_sections(stage, sections)
         meta = {
             "source": "live-pyats", "testbed": testbed_path,
