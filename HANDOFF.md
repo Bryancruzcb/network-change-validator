@@ -1,19 +1,26 @@
 # Handoff
 
-Working notes for whoever picks this up next. Read the "Patch bases" section
-before generating or applying any patch.
+Working notes for whoever picks this up next. The branch is on `origin`; fetch it
+rather than applying a patch. Read "Patch bases" before trusting any commit hash
+quoted in an older note.
 
 ## Current state
 
 - Branch: `fix/offline-validation-and-lab-capture`
 - Built on `11ee5bd` ("Harden offline validation and fail incomplete lab captures"),
   which is itself based on `origin/main` at `716feac`.
-- Nothing on this branch has ever been pushed. `origin` has only `main` at `716feac`.
+- Pushed to `origin` at `2d5adaf` on 2026-09-12, and 4 commits ahead of
+  `origin/main`, which is still `716feac`.
 
 ## Patch bases -- read this first
 
-GitHub writes from the cloud workspace return **403**, so this branch has only ever
-moved between machines as `git format-patch` files applied with `git am`.
+This branch is on `origin` now, so fetch it. What follows is history, kept only
+because it explains why the same change carries different hashes in different notes.
+
+Before the push, the branch moved between machines as `git format-patch` files
+applied with `git am`. Pushes attempted from the Claude cloud sessions failed with
+**403** -- an egress-proxy restriction on that environment, not GitHub refusing the
+write. The same push succeeded from the Windows machine on 2026-09-12.
 
 `git am` re-commits, so **the same change has a different hash on each machine.**
 The Windows clone's first applied patch became `11ee5bd`; the cloud workspace knew
@@ -26,8 +33,8 @@ container, and that container was reclaimed before they were committed or export
 now in the two commits below; there is nothing left to recover, and no patch numbered
 after the first was ever applied.
 
-When exporting the next patch, base it on the current branch tip, not on `716feac`
-or any hash from a previous session's workspace.
+If a patch is ever needed again, base it on the current branch tip, not on
+`716feac` or any hash from a previous session's workspace.
 
 ## Done in this round
 
@@ -75,6 +82,15 @@ python3 -m ncv diff fixtures/pre fixtures/pre --intent intents/demo.yaml --repor
 # exits 0, 0 findings
 ```
 
+The Windows machine has no `python3` and no `py` launcher on `PATH` -- only the
+Microsoft Store `python`, which cannot see an editable install. Build a virtualenv and
+run the commands through it, substituting `.venv/Scripts/python.exe` for `python3`:
+
+```bash
+python -m venv .venv
+./.venv/Scripts/python.exe -m pip install -e ".[dev]"
+```
+
 ## Invariants -- do not regress
 
 - **Offline-first.** `genie`/`pyats` are imported inside `snapshot_live` only, after the
@@ -87,5 +103,9 @@ python3 -m ncv diff fixtures/pre fixtures/pre --intent intents/demo.yaml --repor
 
 ## Open
 
-- Push the branch to `origin` and open a PR. Still blocked on the 403; until it clears,
-  this branch exists only as local commits plus exported patches, on one machine.
+- Review and merge [PR #1](https://github.com/Bryancruzcb/network-change-validator/pull/1)
+  against `main`. CI is green on all three jobs -- Ubuntu 3.10, Ubuntu 3.12, and
+  Windows 3.11. Windows had never been exercised before this branch, so that job is
+  the first real signal for the platform.
+- The live path is still covered only by mocked connections, because no real lab run
+  has happened. That is the one claim in this repo that only a lab you own can change.
