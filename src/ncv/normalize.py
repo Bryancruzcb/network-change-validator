@@ -150,8 +150,24 @@ def _counter(record: dict[str, Any], *names: str) -> int | None:
     return None
 
 
+# Genie's Interface ops key their info by interface name and add a "vrf" membership summary.
+_GENIE_INTERFACE_KEYS = frozenset({"oper_status", "enabled", "counters", "type", "mtu", "mac_address"})
+
+
+def _genie_interface_records(data: dict[str, Any]) -> dict[str, Any] | None:
+    records = {name: rec for name, rec in data.items() if name != "vrf"}
+    looks_like_interfaces = all(
+        isinstance(rec, dict) and _GENIE_INTERFACE_KEYS & rec.keys() for rec in records.values()
+    )
+    if records and looks_like_interfaces:
+        return records
+    return None
+
+
 def _ifaces(data: dict[str, Any]) -> dict[str, Any]:
     src = data.get("interfaces")
+    if src is None:
+        src = _genie_interface_records(data)
     if not isinstance(src, dict):
         raise ValueError("unsupported interface data: expected interfaces")
     out = {}

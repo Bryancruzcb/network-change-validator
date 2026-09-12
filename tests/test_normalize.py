@@ -118,6 +118,29 @@ def test_interface_missing_counters_remain_unknown():
     assert rec == {"oper_status": "up", "in_errors": 0, "crc": None}
 
 
+def test_interface_accepts_genie_ops_shape():
+    data = {
+        "Ethernet0/1": {
+            "oper_status": "up",
+            "enabled": True,
+            "counters": {"in_errors": 0, "in_crc_errors": 2},
+        },
+        "Ethernet0/3": {"oper_status": "down", "enabled": False},
+        "vrf": {"Mgmt-intf": {"interfaces": ["Ethernet0/2"]}},
+    }
+    interfaces = normalize_learn("r1", "interface", data)["r1"]["interfaces"]
+    assert interfaces == {
+        "Ethernet0/1": {"oper_status": "up", "in_errors": 0, "crc": 2},
+        "Ethernet0/3": {"oper_status": "down", "in_errors": None, "crc": None},
+    }
+
+
+def test_interface_genie_shape_rejects_non_interface_records():
+    data = {"Ethernet0/1": {"oper_status": "up"}, "summary": {"total": 4}}
+    with pytest.raises(ValueError, match="unsupported"):
+        normalize_learn("r1", "interface", data)
+
+
 @pytest.mark.parametrize("feature", ["ospf", "bgp", "routing", "interface", "unknown"])
 def test_unsupported_learn_shapes_rejected(feature):
     with pytest.raises(ValueError, match="unsupported"):
