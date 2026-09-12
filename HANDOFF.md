@@ -1,20 +1,26 @@
 # Handoff
 
-Working notes for whoever picks this up next. The branch is on `origin`; fetch it
-rather than applying a patch. Read "Patch bases" before trusting any commit hash
-quoted in an older note.
+Working notes for whoever picks this up next. The work is on `main`; fetch it rather
+than applying a patch. Read "Patch bases" before trusting any commit hash quoted in an
+older note.
 
 ## Current state
 
-- Branch: `fix/offline-validation-and-lab-capture`
+- `fix/offline-validation-and-lab-capture` merged into `main` on 2026-09-12 as
+  [PR #1](https://github.com/Bryancruzcb/network-change-validator/pull/1). The merge was
+  a fast-forward from `716feac`, so every hash quoted in these notes is the hash the
+  commit carries on `main`.
 - Built on `11ee5bd` ("Harden offline validation and fail incomplete lab captures"),
-  which is itself based on `origin/main` at `716feac`.
-- Pushed to `origin` at `2d5adaf` on 2026-09-12, and 4 commits ahead of
-  `origin/main`, which is still `716feac`.
+  which is itself based on `716feac`.
+- CI is green on all three jobs -- Ubuntu 3.10, Ubuntu 3.12, and Windows 3.11. Windows
+  had never been exercised before this branch, so that job is the first real signal for
+  the platform.
+- The branch was deleted locally and on `origin` after the merge. Nothing is lost: the
+  fast-forward kept the commits themselves.
 
 ## Patch bases -- read this first
 
-This branch is on `origin` now, so fetch it. What follows is history, kept only
+This work is on `main` now, so fetch it. What follows is history, kept only
 because it explains why the same change carries different hashes in different notes.
 
 Before the push, the branch moved between machines as `git format-patch` files
@@ -30,10 +36,10 @@ Exactly one patch had been applied on Windows before this round of work. A secon
 cloud-side commit (`dc775ce`) and a set of uncommitted changes never left the cloud
 container, and that container was reclaimed before they were committed or exported.
 **They are gone.** The work they described was redone on top of `11ee5bd` and is
-now in the two commits below; there is nothing left to recover, and no patch numbered
-after the first was ever applied.
+now in the work recorded below; there is nothing left to recover, and no patch
+numbered after the first was ever applied.
 
-If a patch is ever needed again, base it on the current branch tip, not on
+If a patch is ever needed again, base it on the current tip of `main`, not on
 `716feac` or any hash from a previous session's workspace.
 
 ## Done in this round
@@ -56,6 +62,10 @@ On top of `11ee5bd`:
    `fail-fast: false`, running both Ruff checks, pytest, and the fixture gates with
    pyATS and Genie absent. The exit-code gate is pinned to `shell: bash` because the
    Windows runner defaults to PowerShell.
+3. **CI action majors** -- `actions/checkout` and `actions/setup-python` moved off the
+   versions that target the deprecated Node 20, so the jobs no longer lean on the
+   runner's Node 24 fallback. The matrix, `fail-fast: false`, and the bash-pinned gate
+   are untouched.
 
 ## Test count
 
@@ -103,9 +113,5 @@ python -m venv .venv
 
 ## Open
 
-- Review and merge [PR #1](https://github.com/Bryancruzcb/network-change-validator/pull/1)
-  against `main`. CI is green on all three jobs -- Ubuntu 3.10, Ubuntu 3.12, and
-  Windows 3.11. Windows had never been exercised before this branch, so that job is
-  the first real signal for the platform.
 - The live path is still covered only by mocked connections, because no real lab run
   has happened. That is the one claim in this repo that only a lab you own can change.
