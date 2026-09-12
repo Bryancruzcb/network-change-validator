@@ -22,11 +22,11 @@ python3 -m ncv diff fixtures/pre fixtures/post --intent intents/demo.yaml --repo
 ```
 
 The last command intentionally exits **1** and writes `output/demo/report.json`
-and `output/demo/report.md`. Expect **7 findings across all four violation classes**:
+and `output/demo/report.md`. Expect **8 findings across all four violation classes**:
 
 | Policy | Demo findings | What it checks |
 |---|---:|---|
-| `V_ADJ` | 2 | Required OSPF neighbor is FULL on the specified interface |
+| `V_ADJ` | 3 | Required OSPF neighbor is FULL on the specified interface; required BGP peer is Established |
 | `V_ROUTE` | 2 | Required prefix exists in the VRF, with the specified protocol if provided |
 | `V_ERR` | 1 | Required interface counters exist and do not exceed their limits |
 | `V_DRIFT` | 2 | Required devices and config evidence exist; required/forbidden lines match intent |
@@ -49,8 +49,8 @@ devices and optional `adjacencies`, `routes`, `interfaces`, and `config` section
 Unknown intent fields, unsupported adjacency protocols, invalid prefixes, and
 invalid counter limits are rejected with field context.
 
-Snapshots use up to four JSON files: `ospf.json`, `routing.json`, `interface.json`,
-and `config.json`. Each maps device names to normalized evidence; the bundled
+Snapshots use up to five JSON files: `ospf.json`, `bgp.json`, `routing.json`,
+`interface.json`, and `config.json`. Each maps device names to normalized evidence; the bundled
 fixtures show their layout. Malformed data is an input error. Missing evidence
 for a requested post-state check is a finding, never an assumed zero or successful
 absence check. An entirely empty snapshot is an input error.
@@ -61,6 +61,10 @@ Policy details:
   this is not a raw diff or proof that the change caused every violation.
 - OSPF checks require FULL (including `FULL/DR`-style states), not merely UP.
   Interface names match exactly; omit `interface` to check state alone.
+- BGP checks require an Established session, matched case-insensitively. `vrf` and
+  `remote_as` are optional discriminators, checked only when the intent declares them.
+  An adjacency carries the fields of its own protocol: `interface` belongs to `ospf`,
+  `vrf` and `remote_as` to `bgp`, and the wrong pairing is rejected by name.
 - Route checks cover presence and optional protocol, not reachability or next-hop correctness.
 - Counter limits are inclusive maxima for **absolute post counters**, not pre/post
   deltas. Missing counters fail the check. Interface operational status is not a rule.
@@ -83,8 +87,10 @@ collection and writes succeed, avoiding a partial snapshot after a failed captur
 ## Optional live path and limitations
 
 See [docs/LIVE.md](docs/LIVE.md). Live collection uses a deliberately small Genie
-adapter for OSPF, routing, and interface state plus `show running-config`.
-Unsupported shapes and ambiguous OSPF neighbors across interfaces/VRFs are rejected.
+adapter for OSPF, BGP, routing, and interface state plus `show running-config`.
+Pass `--features` to narrow that set to what a given lab actually runs.
+Unsupported shapes are rejected, as is the same neighbor seen twice: an OSPF peer
+across interfaces or VRFs, or a BGP peer across VRFs or instances.
 It is not a general multi-vendor framework.
 
 Tests use synthetic data and mocked connections. They verify the lab flag,

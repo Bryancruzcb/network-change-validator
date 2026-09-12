@@ -13,6 +13,8 @@ def normalize_learn(device: str, feature: str, blob: Any) -> dict[str, Any]:
         data = data["info"]
     if feature == "ospf":
         payload = {"neighbors": _ospf_neighbors(data)}
+    elif feature == "bgp":
+        payload = {"neighbors": _bgp_neighbors(data)}
     elif feature == "routing":
         payload = {"vrfs": _vrfs(data)}
     elif feature == "interface":
@@ -65,6 +67,40 @@ def _ospf_neighbors(data: dict[str, Any]) -> dict[str, Any]:
                     walk(record, str(name))
             else:
                 walk(value, interface)
+
+    walk(data)
+    return found
+
+
+def _bgp_neighbors(data: dict[str, Any]) -> dict[str, Any]:
+    # A device with BGP configured but no session still reports a shape; a device with
+    # no BGP at all reports nothing, and that is evidence of absence, not a bad capture.
+    if data and not any(key in data for key in ("instance", "vrf", "neighbor", "neighbors")):
+        raise ValueError("unsupported BGP data: expected instance, vrf, or neighbor")
+    found: dict[str, Any] = {}
+
+    def walk(node: Any, vrf: str | None = None) -> None:
+        if not isinstance(node, dict):
+            return
+        for key, value in node.items():
+            if key in ("neighbor", "neighbors"):
+                if not isinstance(value, dict):
+                    raise ValueError("BGP neighbors must be a mapping")
+                for neighbor, rec in value.items():
+                    if not isinstance(rec, dict):
+                        raise ValueError(f"invalid BGP neighbor {neighbor}")
+                    if str(neighbor) in found:
+                        raise ValueError(f"ambiguous BGP neighbor {neighbor}: multiple VRFs or instances")
+                    found[str(neighbor)] = {
+                        "state": rec.get("session_state", rec.get("state", rec.get("neighbor_state"))),
+                        "vrf": vrf,
+                        "remote_as": _counter(rec, "remote_as"),
+                    }
+            elif key == "vrf" and isinstance(value, dict):
+                for name, record in value.items():
+                    walk(record, str(name))
+            else:
+                walk(value, vrf)
 
     walk(data)
     return found

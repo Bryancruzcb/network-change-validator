@@ -17,6 +17,11 @@ adjacencies:
     protocol: ospf
     neighbor: 10.0.12.1
     interface: GigabitEthernet0/1
+  - device: r1
+    protocol: bgp
+    neighbor: 203.0.113.1
+    vrf: default
+    remote_as: 65100
 
 routes:
   - device: r1

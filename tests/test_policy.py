@@ -2,20 +2,21 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from copy import deepcopy
 from dataclasses import replace
 
 import pytest
 
 from ncv import policy
-from ncv.intent import ConfigRule
+from ncv.intent import Adjacency, ConfigRule
 from ncv.policy import evaluate
 
 
 def test_demo_fixtures_find_four_classes(demo_intent, pre_snapshot, post_snapshot):
     findings = evaluate(demo_intent, pre_snapshot, post_snapshot)
-    assert {f.policy_id for f in findings} == {"V_ADJ", "V_ROUTE", "V_ERR", "V_DRIFT"}
-    assert len(findings) == 7
+    assert Counter(f.policy_id for f in findings) == {"V_ADJ": 3, "V_ROUTE": 2, "V_ERR": 1, "V_DRIFT": 2}
+    assert len(findings) == 8
 
 
 def test_clean_pair_is_silent(demo_intent, pre_snapshot):
@@ -47,6 +48,35 @@ def test_adjacency_requires_full_on_requested_interface(demo_intent, pre_snapsho
     (finding,) = evaluate(demo_intent, pre_snapshot, post)
     assert finding.policy_id == "V_ADJ"
     assert finding.after[field] == value
+
+
+@pytest.mark.parametrize(
+    "field,value", [("state", "Idle"), ("state", None), ("vrf", "mgmt"), ("remote_as", 65101)]
+)
+def test_bgp_peer_must_be_established_in_the_declared_vrf_and_as(demo_intent, pre_snapshot, field, value):
+    post = deepcopy(pre_snapshot)
+    post["bgp"]["r1"]["neighbors"]["203.0.113.1"][field] = value
+    (finding,) = evaluate(demo_intent, pre_snapshot, post)
+    assert (finding.policy_id, finding.path) == ("V_ADJ", "bgp.neighbors.203.0.113.1")
+    assert finding.after[field] == value
+    assert "remote AS 65100" in finding.why
+
+
+def test_bgp_state_is_case_insensitive_and_a_lost_peer_is_a_finding(demo_intent, pre_snapshot):
+    post = deepcopy(pre_snapshot)
+    post["bgp"]["r1"]["neighbors"]["203.0.113.1"]["state"] = "established"
+    assert evaluate(demo_intent, pre_snapshot, post) == []
+    post["bgp"]["r1"]["neighbors"].clear()
+    (finding,) = evaluate(demo_intent, pre_snapshot, post)
+    assert finding.policy_id == "V_ADJ"
+    assert finding.after is None
+
+
+def test_bgp_vrf_and_remote_as_are_checked_only_when_declared(demo_intent, pre_snapshot):
+    intent = replace(demo_intent, adjacencies=(Adjacency("r1", "bgp", "203.0.113.1"),))
+    post = deepcopy(pre_snapshot)
+    post["bgp"]["r1"]["neighbors"]["203.0.113.1"].update(vrf="mgmt", remote_as=65999)
+    assert evaluate(intent, pre_snapshot, post) == []
 
 
 def test_counter_limits_are_inclusive_absolute_values(demo_intent, pre_snapshot):

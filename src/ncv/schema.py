@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-SECTIONS = ("ospf", "routing", "interface", "config")
+SECTIONS = ("ospf", "bgp", "routing", "interface", "config")
+LEARNED_FEATURES = tuple(name for name in SECTIONS if name != "config")
 
 
 def _object(value: Any, where: str) -> dict[str, Any]:
@@ -27,6 +28,14 @@ def validate_section(name: str, section: Any, where: str) -> None:
             for neighbor, rec in _object(node.get("neighbors", {}), f"{loc}.neighbors").items():
                 path = f"{loc}.neighbors.{neighbor}"
                 _text_fields(_object(rec, path), ("state", "interface"), path)
+        elif name == "bgp":
+            for neighbor, rec in _object(node.get("neighbors", {}), f"{loc}.neighbors").items():
+                path = f"{loc}.neighbors.{neighbor}"
+                rec = _object(rec, path)
+                _text_fields(rec, ("state", "vrf"), path)
+                remote_as = rec.get("remote_as")
+                if remote_as is not None and (type(remote_as) is not int or remote_as < 0):
+                    raise ValueError(f"{path}.remote_as: expected a non-negative integer or null")
         elif name == "routing":
             for vrf, rec in _object(node.get("vrfs", {}), f"{loc}.vrfs").items():
                 path = f"{loc}.vrfs.{vrf}"

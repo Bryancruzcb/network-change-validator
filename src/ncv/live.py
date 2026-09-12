@@ -7,16 +7,25 @@ from pathlib import Path
 from typing import Any
 
 from .normalize import learned_to_mapping, normalize_learn
+from .schema import LEARNED_FEATURES
 from .snapshot import snapshot_destination, write_sections
 
-FEATURES = ("ospf", "routing", "interface")
+FEATURES = LEARNED_FEATURES
 
 
-def snapshot_live(testbed_path: str, output_dir: str, i_am_in_a_lab: bool) -> Path:
+def snapshot_live(
+    testbed_path: str,
+    output_dir: str,
+    i_am_in_a_lab: bool,
+    features: tuple[str, ...] = FEATURES,
+) -> Path:
     if not i_am_in_a_lab:
         raise PermissionError(
             "live snapshot refused: pass --i-am-in-a-lab after pointing the testbed at a lab you own"
         )
+    unsupported = [name for name in features if name not in FEATURES]
+    if not features or unsupported:
+        raise ValueError(f"features must be a non-empty subset of {', '.join(FEATURES)}")
     try:
         from genie.testbed import load
     except ImportError as exc:
@@ -34,7 +43,7 @@ def snapshot_live(testbed_path: str, output_dir: str, i_am_in_a_lab: bool) -> Pa
         for name in testbed.devices:
             if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", name):
                 raise ValueError(f"unsupported lab device name {name!r}; use letters, digits, _ or -")
-        sections: dict[str, dict[str, Any]] = {name: {} for name in (*FEATURES, "config")}
+        sections: dict[str, dict[str, Any]] = {name: {} for name in (*features, "config")}
         raw_dir = stage / "raw"
         raw_dir.mkdir()
         for name, device in testbed.devices.items():
@@ -47,7 +56,7 @@ def snapshot_live(testbed_path: str, output_dir: str, i_am_in_a_lab: bool) -> Pa
                         arguments = connection.setdefault("arguments", {})
                         arguments.update(init_exec_commands=[], init_config_commands=[])
                 device.connect(log_stdout=False, init_exec_commands=[], init_config_commands=[])
-                for feature in FEATURES:
+                for feature in features:
                     operation = f"learn {feature}"
                     dumped = learned_to_mapping(device.learn(feature))
                     sections[feature].update(normalize_learn(name, feature, dumped))
@@ -70,7 +79,7 @@ def snapshot_live(testbed_path: str, output_dir: str, i_am_in_a_lab: bool) -> Pa
             "source": "live-pyats",
             "testbed": testbed_path,
             "devices": list(testbed.devices),
-            "features": [*FEATURES, "config"],
+            "features": [*features, "config"],
         }
         (stage / "SOURCE.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
     return Path(output_dir)

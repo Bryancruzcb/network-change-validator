@@ -1,0 +1,10 @@
+{
+  "r1": {
+    "neighbors": {
+      "203.0.113.1": { "state": "Established", "vrf": "default", "remote_as": 65100 }
+    }
+  },
+  "r2": {
+    "neighbors": {}
+  }
+}

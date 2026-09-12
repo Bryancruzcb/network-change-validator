@@ -59,6 +59,23 @@ def test_invalid_input_cli_is_exit_two_without_traceback(tmp_path, root, capsys)
     assert not (tmp_path / "report").exists()
 
 
+def test_features_is_refused_for_a_directory_copy(tmp_path, root, capsys):
+    code = main(
+        [
+            "snapshot",
+            "--from-dir",
+            str(root / "fixtures/pre"),
+            "--output",
+            str(tmp_path / "out"),
+            "--features",
+            "ospf",
+        ]
+    )
+    assert code == 2
+    assert "--features applies to a --testbed capture only" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()
+
+
 @pytest.mark.parametrize("sources", [[], ["--from-dir", "fixtures/pre", "--testbed", "lab.yaml"]])
 def test_snapshot_requires_exactly_one_source(tmp_path, sources):
     with pytest.raises(SystemExit) as error:

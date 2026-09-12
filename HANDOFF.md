@@ -69,8 +69,8 @@ On top of `11ee5bd`:
 
 ## Test count
 
-**52 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
-the 2 new policy regressions.
+**73 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
+the 2 policy regressions added in that round and the 21 that came with BGP support.
 
 An earlier note claimed a 59-test baseline and a 61-test target. That was wrong for
 this tree: `11ee5bd`'s own commit message records 50 passing, and the extra 9 tests
@@ -82,11 +82,11 @@ belonged to the lost uncommitted work. Do not treat 59/61 as a regression target
 python3 -m pip install -e ".[dev]"
 python3 -m ruff check .
 python3 -m ruff format --check .
-python3 -m pytest                      # 52 passed
+python3 -m pytest                      # 73 passed
 git diff --check                       # clean
 
 python3 -m ncv diff fixtures/pre fixtures/post --intent intents/demo.yaml --report output/ci
-# exits 1, 7 findings: V_ADJ 2, V_ROUTE 2, V_ERR 1, V_DRIFT 2
+# exits 1, 8 findings: V_ADJ 3, V_ROUTE 2, V_ERR 1, V_DRIFT 2
 
 python3 -m ncv diff fixtures/pre fixtures/pre --intent intents/demo.yaml --report output/clean
 # exits 0, 0 findings

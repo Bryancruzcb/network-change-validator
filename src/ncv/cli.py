@@ -8,6 +8,7 @@ from pathlib import Path
 from .intent import load_intent
 from .policy import evaluate
 from .report import write_report
+from .schema import LEARNED_FEATURES
 from .snapshot import copy_snapshot, load_snapshot
 
 
@@ -29,6 +30,11 @@ def main(argv: list[str] | None = None) -> int:
     source = snap.add_mutually_exclusive_group(required=True)
     source.add_argument("--from-dir", help="copy an existing snapshot directory")
     source.add_argument("--testbed", help="pyATS testbed YAML (live path)")
+    snap.add_argument(
+        "--features",
+        help="comma-separated learned features for --testbed; default is all of "
+        f"{', '.join(LEARNED_FEATURES)}. Narrow it when a device does not run one of them.",
+    )
     snap.add_argument(
         "--i-am-in-a-lab",
         action="store_true",
@@ -60,9 +66,17 @@ def _snapshot(args: argparse.Namespace) -> int:
     if args.testbed:
         from .live import snapshot_live
 
-        snapshot_live(args.testbed, str(out), i_am_in_a_lab=args.i_am_in_a_lab)
+        features = tuple(part.strip() for part in (args.features or "").split(",") if part.strip())
+        snapshot_live(
+            args.testbed,
+            str(out),
+            i_am_in_a_lab=args.i_am_in_a_lab,
+            features=features or LEARNED_FEATURES,
+        )
         mode = "live"
     else:
+        if args.features is not None:
+            raise ValueError("--features applies to a --testbed capture only")
         copy_snapshot(args.from_dir, out)
         mode = "copy"
     print(json.dumps({"output": str(out), "mode": mode}))

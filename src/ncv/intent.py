@@ -13,7 +13,14 @@ class Adjacency:
     device: str
     protocol: str
     neighbor: str
-    interface: str
+    interface: str = ""
+    vrf: str = ""
+    remote_as: int | None = None
+
+
+# An OSPF neighbor is identified by the interface it is seen on; a BGP peer by its
+# VRF and remote AS. Offering the wrong pair is a mistake worth naming, not ignoring.
+ADJACENCY_FIELDS = {"ospf": ("interface",), "bgp": ("vrf", "remote_as")}
 
 
 @dataclass(frozen=True)
@@ -49,6 +56,9 @@ class Intent:
     must_include: tuple[ConfigRule, ...] = field(default_factory=tuple)
     must_absent: tuple[ConfigRule, ...] = field(default_factory=tuple)
     exclude_volatile: tuple[str, ...] = field(default_factory=tuple)
+
+
+_ADJACENCY_KEYS = {field for fields in ADJACENCY_FIELDS.values() for field in fields}
 
 
 def _mapping(raw: Any, where: str, allowed: set[str]) -> dict[str, Any]:
@@ -132,16 +142,24 @@ def load_intent(path: str | Path) -> Intent:
     adjacencies = []
     for i, a in enumerate(_list(data.get("adjacencies", []), f"{where}.adjacencies")):
         loc = f"{where}.adjacencies[{i}]"
-        a = _mapping(a, loc, {"device", "protocol", "neighbor", "interface"})
+        a = _mapping(a, loc, {"device", "protocol", "neighbor", *_ADJACENCY_KEYS})
         protocol = _text(a.get("protocol", "ospf"), f"{loc}.protocol").lower()
-        if protocol != "ospf":
-            raise ValueError(f"{loc}.protocol: only ospf adjacencies are supported")
+        if protocol not in ADJACENCY_FIELDS:
+            raise ValueError(
+                f"{loc}.protocol: only {' and '.join(sorted(ADJACENCY_FIELDS))} adjacencies are supported"
+            )
+        for field_name in _ADJACENCY_KEYS - set(ADJACENCY_FIELDS[protocol]):
+            if field_name in a:
+                raise ValueError(f"{loc}.{field_name}: {protocol} adjacencies have no {field_name}")
+        remote_as = a.get("remote_as")
         adjacencies.append(
             Adjacency(
-                _device(a.get("device"), f"{loc}.device", devices),
-                protocol,
-                _text(a.get("neighbor"), f"{loc}.neighbor"),
-                _text(a.get("interface", ""), f"{loc}.interface", empty=True),
+                device=_device(a.get("device"), f"{loc}.device", devices),
+                protocol=protocol,
+                neighbor=_text(a.get("neighbor"), f"{loc}.neighbor"),
+                interface=_text(a.get("interface", ""), f"{loc}.interface", empty=True),
+                vrf=_text(a.get("vrf", ""), f"{loc}.vrf", empty=True),
+                remote_as=None if remote_as is None else _integer(remote_as, f"{loc}.remote_as"),
             )
         )
     routes = []

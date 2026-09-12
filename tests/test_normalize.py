@@ -53,6 +53,45 @@ def test_ospf_duplicate_neighbor_is_rejected():
         normalize_learn("r1", "ospf", data)
 
 
+def test_bgp_session_state_vrf_and_remote_as_are_normalized():
+    data = {
+        "info": {
+            "instance": {
+                "default": {
+                    "vrf": {
+                        "default": {
+                            "neighbor": {
+                                "203.0.113.1": {"session_state": "Established", "remote_as": "65100"}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    rec = normalize_learn("r1", "bgp", data)["r1"]["neighbors"]["203.0.113.1"]
+    assert rec == {"state": "Established", "vrf": "default", "remote_as": 65100}
+
+
+def test_bgp_duplicate_neighbor_across_vrfs_is_rejected():
+    data = {
+        "instance": {
+            "default": {
+                "vrf": {
+                    name: {"neighbor": {"203.0.113.1": {"session_state": "established"}}}
+                    for name in ("default", "mgmt")
+                }
+            }
+        }
+    }
+    with pytest.raises(ValueError, match="ambiguous BGP"):
+        normalize_learn("r1", "bgp", data)
+
+
+def test_a_device_without_bgp_reports_no_neighbors():
+    assert normalize_learn("r1", "bgp", {}) == {"r1": {"neighbors": {}}}
+
+
 def test_routing_uses_source_protocol_not_route_preference():
     data = {
         "vrf": {
@@ -79,7 +118,7 @@ def test_interface_missing_counters_remain_unknown():
     assert rec == {"oper_status": "up", "in_errors": 0, "crc": None}
 
 
-@pytest.mark.parametrize("feature", ["ospf", "routing", "interface", "unknown"])
+@pytest.mark.parametrize("feature", ["ospf", "bgp", "routing", "interface", "unknown"])
 def test_unsupported_learn_shapes_rejected(feature):
     with pytest.raises(ValueError, match="unsupported"):
         normalize_learn("r1", feature, {"unexpected": {}})

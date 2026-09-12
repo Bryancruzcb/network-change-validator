@@ -18,6 +18,7 @@ cp testbeds/lab.yaml.example testbeds/lab.yaml
 # Edit lab addresses; export NCV_LAB_USER and NCV_LAB_PASS.
 # Adapt a copy of intents/demo.yaml to your actual devices, neighbors, and routes.
 python3 -m ncv snapshot --testbed testbeds/lab.yaml --output captures/pre --i-am-in-a-lab
+# Add --features ospf,interface (for example) if a device does not run every feature.
 # Make your planned change manually in the isolated lab.
 python3 -m ncv snapshot --testbed testbeds/lab.yaml --output captures/post --i-am-in-a-lab
 python3 -m ncv diff captures/pre captures/post --intent intents/lab.yaml --report output/live
@@ -29,8 +30,12 @@ Capture outputs must be new or empty directories; use separate paths for reruns.
 
 ## Collection behavior
 
-The collector learns `ospf`, `routing`, and `interface`, then executes
+The collector learns `ospf`, `bgp`, `routing`, and `interface`, then executes
 `show running-config`. It has no configuration push or fault-application path.
+`--features` narrows the learned set, for example `--features ospf,interface` on a
+lab with no BGP; `show running-config` is always collected. A device that simply has
+no BGP configured returns nothing to normalize and records no neighbors, which is
+evidence of absence rather than a failed capture.
 Unicon's initialization command lists are set to empty, including overrides in
 connection arguments, to avoid default configuration initialization. Device
 plugins and testbeds are trusted executable dependencies: this is not a security

@@ -55,9 +55,11 @@ def test_mock_capture_is_complete_and_disables_initialization(tmp_path, fake_lab
     device.execute.assert_called_once_with("show running-config")
     device.configure.assert_not_called()
     device.disconnect.assert_called_once()
-    assert load_snapshot(out)["interface"]["r1"]["interfaces"]["Gi1"]["crc"] == 0
+    snapshot = load_snapshot(out)
+    assert snapshot["interface"]["r1"]["interfaces"]["Gi1"]["crc"] == 0
+    assert snapshot["bgp"]["r1"]["neighbors"]["203.0.113.1"]["state"] == "established"
     assert json.loads((out / "SOURCE.json").read_text())["devices"] == ["r1"]
-    assert len(list((out / "raw").iterdir())) == 4
+    assert len(list((out / "raw").iterdir())) == 5
 
 
 @pytest.mark.parametrize("operation", ["connect", "learn", "execute"])
@@ -88,6 +90,25 @@ def test_invalid_testbed_does_not_connect(tmp_path, fake_lab, devices):
     load.return_value.devices = devices
     with pytest.raises(ValueError):
         snapshot_live("lab.yaml", str(tmp_path / "out"), True)
+    device.connect.assert_not_called()
+    assert not (tmp_path / "out").exists()
+
+
+def test_features_can_be_narrowed_to_what_the_lab_runs(tmp_path, fake_lab):
+    device, _ = fake_lab
+    out = snapshot_live("lab.yaml", str(tmp_path / "out"), True, features=("interface",))
+    assert [call.args[0] for call in device.learn.call_args_list] == ["interface"]
+    snapshot = load_snapshot(out)
+    assert snapshot["bgp"] == {} and snapshot["ospf"] == {}
+    assert json.loads((out / "SOURCE.json").read_text())["features"] == ["interface", "config"]
+
+
+@pytest.mark.parametrize("features", [(), ("ospf", "arp")])
+def test_unknown_features_are_refused_before_connecting(tmp_path, fake_lab, features):
+    device, load = fake_lab
+    with pytest.raises(ValueError, match="subset"):
+        snapshot_live("lab.yaml", str(tmp_path / "out"), True, features=features)
+    load.assert_not_called()
     device.connect.assert_not_called()
     assert not (tmp_path / "out").exists()
 

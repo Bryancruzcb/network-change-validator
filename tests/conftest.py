@@ -44,6 +44,13 @@ def fake_lab(monkeypatch):
     device.learn.side_effect = lambda feature: SimpleNamespace(
         info={
             "ospf": {"neighbors": {}},
+            "bgp": {
+                "instance": {
+                    "default": {
+                        "vrf": {"default": {"neighbor": {"203.0.113.1": {"session_state": "established"}}}}
+                    }
+                }
+            },
             "routing": {"vrf": {"default": {"address_family": {"ipv4": {"routes": {}}}}}},
             "interface": {
                 "interfaces": {"Gi1": {"oper_status": "up", "counters": {"in_errors": 0, "in_crc_errors": 0}}}

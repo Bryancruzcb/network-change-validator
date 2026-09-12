@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from .intent import Intent
+from .intent import Adjacency, Intent
 
 
 @dataclass(frozen=True)
@@ -55,29 +55,55 @@ def _device_set(snap: dict[str, Any]) -> set[str]:
     return names
 
 
-def _neighbor(snap: dict[str, Any], device: str, neighbor: str) -> dict[str, Any] | None:
-    return (snap.get("ospf", {}).get(device, {}).get("neighbors", {})).get(neighbor)
+def _neighbor(snap: dict[str, Any], protocol: str, device: str, neighbor: str) -> dict[str, Any] | None:
+    return (snap.get(protocol, {}).get(device, {}).get("neighbors", {})).get(neighbor)
+
+
+def _ospf_compliant(adj: Adjacency, after: dict[str, Any] | None) -> bool:
+    record = after or {}
+    state = str(record.get("state", "")).lower().split("/")[0].strip()
+    return state == "full" and (not adj.interface or record.get("interface") == adj.interface)
+
+
+def _bgp_compliant(adj: Adjacency, after: dict[str, Any] | None) -> bool:
+    record = after or {}
+    if str(record.get("state", "")).strip().lower() != "established":
+        return False
+    if adj.vrf and record.get("vrf") != adj.vrf:
+        return False
+    return adj.remote_as is None or record.get("remote_as") == adj.remote_as
 
 
 def _adjacencies(intent: Intent, pre: dict[str, Any], post: dict[str, Any]) -> list[Finding]:
     out: list[Finding] = []
     for adj in intent.adjacencies:
-        before = _neighbor(pre, adj.device, adj.neighbor)
-        after = _neighbor(post, adj.device, adj.neighbor)
-        state = str((after or {}).get("state", "")).lower().split("/")[0].strip()
-        interface_ok = not adj.interface or (after or {}).get("interface") == adj.interface
-        if state == "full" and interface_ok:
-            continue
+        before = _neighbor(pre, adj.protocol, adj.device, adj.neighbor)
+        after = _neighbor(post, adj.protocol, adj.device, adj.neighbor)
+        if adj.protocol == "ospf":
+            if _ospf_compliant(adj, after):
+                continue
+            why = f"required OSPF neighbor {adj.neighbor} must be FULL" + (
+                f" on {adj.interface}" if adj.interface else ""
+            )
+            action = "inspect peer state and interface configuration in the lab"
+        else:
+            if _bgp_compliant(adj, after):
+                continue
+            why = (
+                f"required BGP neighbor {adj.neighbor} must be Established"
+                + (f" in vrf {adj.vrf}" if adj.vrf else "")
+                + (f" with remote AS {adj.remote_as}" if adj.remote_as is not None else "")
+            )
+            action = "inspect the peer session, its vrf, and its remote AS in the lab"
         out.append(
             Finding(
                 policy_id="V_ADJ",
                 device=adj.device,
-                path=f"ospf.neighbors.{adj.neighbor}",
+                path=f"{adj.protocol}.neighbors.{adj.neighbor}",
                 before=before,
                 after=after,
-                why=f"required OSPF neighbor {adj.neighbor} must be FULL"
-                + (f" on {adj.interface}" if adj.interface else ""),
-                action="inspect peer state and interface configuration in the lab",
+                why=why,
+                action=action,
             )
         )
     return out
