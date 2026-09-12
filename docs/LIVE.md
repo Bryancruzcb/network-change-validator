@@ -7,16 +7,17 @@ Never point it at production.
 
 ## Setup and capture
 
-Use a trusted testbed and device plugins with an authorized CML, reserved sandbox,
-or physical lab. Install the optional dependency in a virtual environment:
+Use a trusted testbed and device plugins with an authorized CML, reserved sandbox, or
+physical lab. The whole sequence, which the runbook below walks through one step at a
+time:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install -e '.[dev,lab]'
-cp testbeds/lab.yaml.example testbeds/lab.yaml
-# Edit lab addresses; export NCV_LAB_USER and NCV_LAB_PASS.
-# Adapt a copy of intents/demo.yaml to your actual devices, neighbors, and routes.
+cp testbeds/lab.yaml.example testbeds/lab.yaml   # edit addresses, keep it out of git
+cp intents/lab.yaml.example intents/lab.yaml     # edit to match the PRE capture
+export NCV_LAB_USER=... NCV_LAB_PASS=...
 python3 -m ncv snapshot --testbed testbeds/lab.yaml --output captures/pre --i-am-in-a-lab
 # Add --features ospf,interface (for example) if a device does not run every feature.
 # Make your planned change manually in the isolated lab.
@@ -24,9 +25,117 @@ python3 -m ncv snapshot --testbed testbeds/lab.yaml --output captures/post --i-a
 python3 -m ncv diff captures/pre captures/post --intent intents/lab.yaml --report output/live
 ```
 
-Create `intents/lab.yaml` from the demo before running the last command. A diff
-exits 1 for findings, 0 for a compliant post-state, or 2 for an execution/input error.
-Capture outputs must be new or empty directories; use separate paths for reruns.
+A diff exits 1 for findings, 0 for a compliant post-state, or 2 for an execution or
+input error. Capture outputs must be new or empty directories; use separate paths for
+reruns. Both `testbeds/lab.yaml` and `intents/lab.yaml` are gitignored.
+
+## Runbook: a first capture against a Cisco DevNet sandbox
+
+No real lab run has happened yet. This is the shortest honest path to one, written so
+it can be followed in order.
+
+**Before anything else: pyATS does not install on native Windows.** Run the live path
+from WSL, Linux, or macOS. The offline path in this repo runs fine on Windows, and CI
+proves that on every commit; only the `lab` extra is the problem.
+
+1. **Pick a sandbox with more than one router.** At
+   [developer.cisco.com/site/sandbox](https://developer.cisco.com/site/sandbox), an
+   always-on sandbox is a single device: enough for interface counters and config
+   drift, but it has no neighbor, so no adjacency rule can pass or fail there. A
+   reserved sandbox with a multi-node topology (the Modeling Labs ones) is what an
+   adjacency check needs. Reserved sandboxes are time-boxed and reached over VPN with
+   the credentials in the reservation mail.
+2. **Install the lab extra in the environment that will do the capturing.**
+
+   ```bash
+   python3 -m venv .venv
+   ./.venv/bin/python -m pip install -e '.[lab]'
+   ```
+
+3. **Write the testbed, keep the password out of it.**
+
+   ```bash
+   cp testbeds/lab.yaml.example testbeds/lab.yaml   # gitignored
+   # Edit the device names, addresses, and ports to match the sandbox topology.
+   export NCV_LAB_USER=... NCV_LAB_PASS=...
+   ssh "$NCV_LAB_USER"@<device-address>             # prove reachability by hand first
+   ```
+
+   Device names must be letters, digits, `_`, or `-`. Console ports on a Modeling Labs
+   topology are terminal-server ports, not always 22; take them from the topology page.
+
+4. **Capture the pre-change state.**
+
+   ```bash
+   ./.venv/bin/python -m ncv snapshot --testbed testbeds/lab.yaml        --output captures/pre --i-am-in-a-lab
+   ```
+
+   Add `--features ospf,routing,interface` if the lab runs no BGP.
+
+5. **Write the intent from that capture, not from memory.**
+
+   ```bash
+   cp intents/lab.yaml.example intents/lab.yaml    # gitignored
+   cat captures/pre/ospf.json captures/pre/bgp.json captures/pre/routing.json
+   ```
+
+   Copy the neighbor addresses, interface names, and VRF names exactly as the device
+   reported them.
+
+6. **Prove the intent matches reality before changing anything.**
+
+   ```bash
+   ./.venv/bin/python -m ncv diff captures/pre captures/pre        --intent intents/lab.yaml --report output/lab-baseline
+   ```
+
+   This must exit **0**. If it exits 1, the intent is wrong, not the network. Fix the
+   intent here, where nothing has changed yet, or every later finding is suspect.
+
+7. **Make one change by hand in the lab.** One is the point: `shutdown` on the link
+   interface, or clearing a neighbor. `ncv` has no configuration push and never will.
+
+8. **Capture the post-change state and compare.**
+
+   ```bash
+   ./.venv/bin/python -m ncv snapshot --testbed testbeds/lab.yaml        --output captures/post --i-am-in-a-lab
+   ./.venv/bin/python -m ncv diff captures/pre captures/post        --intent intents/lab.yaml --report output/lab
+   ```
+
+   Expect exit **1**, and expect the findings to name the thing you changed. A finding
+   you cannot explain is the interesting result: read `output/lab/report.md`, then the
+   evidence in `captures/post/`.
+
+9. **Undo the change and re-capture** if you want the clean pass on record too.
+
+### Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| `lab capture failed ... during learn bgp` | The image reports no usable BGP shape. Re-run with `--features` minus `bgp`. |
+| `ambiguous OSPF neighbor` / `ambiguous BGP neighbor` | The same peer appears on two interfaces, VRFs, or instances. The adapter refuses to guess; narrow the topology or extend the adapter with evidence. |
+| `unsupported lab device name` | Testbed device names allow letters, digits, `_`, and `-` only. |
+| Connect timeouts | VPN down, wrong port, or a console that needs a terminal-server port. Prove `ssh` works by hand first. |
+| `snapshot output must be a new or empty directory` | Captures are never overwritten. Use `captures/pre-2`, and keep the first one. |
+
+### After a real run
+
+Raw captures hold credentials and real addressing. `captures/` and `output/` are
+gitignored; keep them that way until you have read what is in them.
+
+If you decide to publish lab evidence, sanitize it, put it in its own directory such
+as `fixtures/lab-2026-10-01/`, and write a `SOURCE.md` beside it recording the
+environment, the collection date, and exactly what was sanitized. Never relabel the
+synthetic fixtures as a capture.
+
+Only then update the three places that currently say this has not happened:
+
+- `README.md`, both the line about bundled evidence and the paragraph about what the
+  tests do not establish.
+- This file, the sentence about the automated tests using mocks.
+- `HANDOFF.md`, the invariant "No real lab run has occurred."
+
+Change them to what actually happened, with the image and platform named. A capture
+against one image is evidence about that image, not about routers in general.
 
 ## Collection behavior
 

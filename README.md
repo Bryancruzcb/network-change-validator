@@ -31,6 +31,29 @@ and `output/demo/report.md`. Expect **8 findings across all four violation class
 | `V_ERR` | 1 | Required interface counters exist and do not exceed their limits |
 | `V_DRIFT` | 2 | Required devices and config evidence exist; required/forbidden lines match intent |
 
+Each finding names the rule that failed, the device, the evidence path, and both
+states, so the report is readable without the snapshots beside it:
+
+```json
+{
+  "policy_id": "V_ADJ",
+  "device": "r1",
+  "path": "bgp.neighbors.203.0.113.1",
+  "before": {
+    "state": "Established",
+    "vrf": "default",
+    "remote_as": 65100
+  },
+  "after": {
+    "state": "Idle",
+    "vrf": "default",
+    "remote_as": 65100
+  },
+  "why": "required BGP neighbor 203.0.113.1 must be Established in vrf default with remote AS 65100",
+  "action": "inspect the peer session, its vrf, and its remote AS in the lab"
+}
+```
+
 A clean comparison produces zero findings and exits **0**:
 
 ```bash
@@ -96,6 +119,10 @@ Pass `--features` to narrow that set to what a given lab actually runs.
 Unsupported shapes are rejected, as is the same neighbor seen twice: an OSPF peer
 across interfaces or VRFs, or a BGP peer across VRFs or instances.
 It is not a general multi-vendor framework.
+
+A step-by-step runbook for a first capture against a Cisco DevNet sandbox, including
+the reason it cannot run on native Windows, is in [docs/LIVE.md](docs/LIVE.md).
+[intents/lab.yaml.example](intents/lab.yaml.example) is the intent template to copy.
 
 Tests use synthetic data and mocked connections. They verify the lab flag,
 initialization safeguards, normalization, cleanup, and failure reporting **without

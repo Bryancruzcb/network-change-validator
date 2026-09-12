@@ -6,17 +6,18 @@ older note.
 
 ## Current state
 
-- `fix/offline-validation-and-lab-capture` merged into `main` on 2026-09-12 as
-  [PR #1](https://github.com/Bryancruzcb/network-change-validator/pull/1). The merge was
-  a fast-forward from `716feac`, so every hash quoted in these notes is the hash the
-  commit carries on `main`.
-- Built on `11ee5bd` ("Harden offline validation and fail incomplete lab captures"),
-  which is itself based on `716feac`.
+- Everything below is merged into `main`. PRs
+  [#1](https://github.com/Bryancruzcb/network-change-validator/pull/1),
+  [#2](https://github.com/Bryancruzcb/network-change-validator/pull/2), and
+  [#3](https://github.com/Bryancruzcb/network-change-validator/pull/3) went in on
+  2026-09-12, each as a fast-forward from `716feac` onward, so every hash quoted in
+  these notes is the hash the commit carries on `main`. No open PRs, no open issues,
+  and every merged branch is deleted locally and on `origin`.
+- The oldest work here is built on `11ee5bd` ("Harden offline validation and fail
+  incomplete lab captures"), itself based on `716feac`.
 - CI is green on all three jobs -- Ubuntu 3.10, Ubuntu 3.12, and Windows 3.11. Windows
-  had never been exercised before this branch, so that job is the first real signal for
-  the platform.
-- The branch was deleted locally and on `origin` after the merge. Nothing is lost: the
-  fast-forward kept the commits themselves.
+  had never been exercised before this work, so that job is the first real signal for
+  the platform. Each job now publishes its findings table to the run summary.
 
 ## Patch bases -- read this first
 
@@ -42,9 +43,9 @@ numbered after the first was ever applied.
 If a patch is ever needed again, base it on the current tip of `main`, not on
 `716feac` or any hash from a previous session's workspace.
 
-## Done in this round
+## What landed
 
-On top of `11ee5bd`:
+### PR #1, on top of `11ee5bd`
 
 1. **Refactor + tests** -- section validation extracted to `ncv/schema.py` (shared by
    the snapshot loader and the Genie normalizer); `_to_dict` renamed
@@ -67,11 +68,37 @@ On top of `11ee5bd`:
    runner's Node 24 fallback. The matrix, `fail-fast: false`, and the bash-pinned gate
    are untouched.
 
+### PR #2, BGP adjacencies and feature selection
+
+`V_ADJ` was OSPF-shaped. An intent adjacency now takes `protocol: bgp` with `vrf` and
+`remote_as`, both optional discriminators checked only when declared, the way
+`interface` already worked for OSPF; a field belonging to the other protocol is
+rejected by name. Snapshots gained a `bgp.json` section mirroring `ospf.json`, and the
+Genie adapter walks the instance/vrf/neighbor shape, refusing the same peer seen in two
+VRFs. A device with no BGP normalizes to no neighbors, because absence of the feature
+is not a failed capture.
+
+That raised the question the old code could not answer -- what happens in a lab that
+does not run BGP -- so `snapshot --testbed` takes `--features` to narrow the learned
+set. `show running-config` is always collected, an unknown or empty set is refused
+before the testbed loads, and the flag is an error on a `--from-dir` copy.
+
+The demo fixtures plant a peer that falls back to Idle, so the demo reports 8 findings
+instead of 7, still across the same four classes.
+
+### PR #3, report provenance and the CI summary
+
+`report.json` opens with `report_version` and `ncv_version`, `report.md` ends with the
+same pair, and `ncv --version` prints what a reader compares against. A test asserts
+the packaging metadata and the module constant agree. Each CI job appends its own
+findings table to the run summary instead of leaving it in a log.
+
 ## Test count
 
-**76 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
-the 2 policy regressions added in that round, the 21 that came with BGP support, and
-3 covering report provenance and the version flag.
+**77 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
+the 2 policy regressions from PR #1, the 21 that came with BGP support and feature
+selection, 3 covering report provenance and the version flag, and 1 that loads both
+bundled intents so the lab template cannot rot unnoticed.
 
 An earlier note claimed a 59-test baseline and a 61-test target. That was wrong for
 this tree: `11ee5bd`'s own commit message records 50 passing, and the extra 9 tests
@@ -83,7 +110,7 @@ belonged to the lost uncommitted work. Do not treat 59/61 as a regression target
 python3 -m pip install -e ".[dev]"
 python3 -m ruff check .
 python3 -m ruff format --check .
-python3 -m pytest                      # 76 passed
+python3 -m pytest                      # 77 passed
 git diff --check                       # clean
 
 python3 -m ncv diff fixtures/pre fixtures/post --intent intents/demo.yaml --report output/ci
@@ -114,5 +141,11 @@ python -m venv .venv
 
 ## Open
 
-- The live path is still covered only by mocked connections, because no real lab run
-  has happened. That is the one claim in this repo that only a lab you own can change.
+One item, and it is the only one.
+
+- **Run it against real gear.** The live path is still covered only by mocked
+  connections, because no real lab run has happened. Nothing in code can close that;
+  it needs a lab. `docs/LIVE.md` has a step-by-step runbook for a first capture
+  against a reserved Cisco DevNet sandbox, including why it cannot run on native
+  Windows, what to do with the evidence afterwards, and the three places in this repo
+  that must be corrected once it is real.

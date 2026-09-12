@@ -1,0 +1,55 @@
+# Copy to intents/lab.yaml, which is gitignored, and edit it for the devices in YOUR
+# lab. Isolated lab only. Do not point this file at production.
+#
+# Build this file from the PRE capture, not from memory. Interface names, neighbor
+# addresses, and VRF names have to match the strings the device itself reports:
+#
+#   python3 -m ncv snapshot --testbed testbeds/lab.yaml --output captures/pre --i-am-in-a-lab
+#   cat captures/pre/ospf.json captures/pre/bgp.json captures/pre/routing.json
+#
+# A name that looks right but reads GigabitEthernet1 instead of GigabitEthernet0/1
+# is a finding, not a bug.
+
+intent_id: lab-change-001
+version: 1
+
+devices:
+  # These must match the device names in testbeds/lab.yaml.
+  - r1
+  - r2
+
+adjacencies:
+  - device: r1
+    protocol: ospf
+    neighbor: 10.0.12.2
+    interface: GigabitEthernet0/1
+  # A BGP peer is identified by its vrf and remote AS instead of an interface.
+  # Delete this block if the lab runs no BGP, and pass
+  # --features ospf,routing,interface to the capture as well.
+  - device: r1
+    protocol: bgp
+    neighbor: 203.0.113.1
+    vrf: default
+    remote_as: 65100
+
+routes:
+  - device: r1
+    vrf: default
+    prefix: 10.20.0.0/24
+    protocol: ospf
+
+interfaces:
+  - device: r1
+    name: GigabitEthernet0/1
+    max_in_errors: 10
+    max_crc: 5
+
+config:
+  must_include:
+    - device: r1
+      lines:
+        - "ntp server 192.0.2.1"
+  must_absent:
+    - device: r1
+      lines:
+        - "username leftover privilege 15"

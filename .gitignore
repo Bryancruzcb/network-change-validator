@@ -5,6 +5,7 @@ __pycache__/
 output/
 captures/
 testbeds/lab.yaml
+intents/lab.yaml
 .env
 *.egg-info/
 dist/

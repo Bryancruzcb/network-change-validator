@@ -63,3 +63,10 @@ def test_bgp_adjacency_keeps_its_discriminators(tmp_path):
     (adjacency,) = load_intent(path).adjacencies
     assert (adjacency.protocol, adjacency.vrf, adjacency.remote_as) == ("bgp", "default", 65100)
     assert adjacency.interface == ""
+
+
+def test_bundled_intents_load(root):
+    # The template rots silently unless something loads it; the demo is the CI gate's
+    # input, so it is exercised anyway, and pairing them keeps the reason visible.
+    for name in ("demo.yaml", "lab.yaml.example"):
+        assert load_intent(root / "intents" / name).devices
