@@ -42,6 +42,10 @@ Exit codes: **0** = no findings / successful snapshot; **1** = policy findings;
 A report is meaningful only when its command exits 0 or 1; a failed rerun does not
 remove reports from a previous run.
 
+Both reports record the JSON format version and the `ncv` version that wrote them,
+so a saved report stays readable once the tool moves on. `python3 -m ncv --version`
+prints the same version.
+
 ## Intent and evidence
 
 Start with [intents/demo.yaml](intents/demo.yaml). Version 1 validates declared
@@ -116,6 +120,8 @@ so the snapshot loader and the Genie normalizer share one definition.
 
 CI runs both Ruff checks, the test suite, and the fixture diff gates on Ubuntu
 (Python 3.10 and 3.12) and Windows (Python 3.11), always with pyATS and Genie
-absent so the offline path is what gets exercised.
+absent so the offline path is what gets exercised. Each job publishes the findings
+table from its own fixture gate to the run summary, so what CI checked is readable
+without opening a log.
 
 For an interview walkthrough, see [docs/EXPLAIN.md](docs/EXPLAIN.md).

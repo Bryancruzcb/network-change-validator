@@ -2,9 +2,25 @@
 
 from __future__ import annotations
 
+from importlib.metadata import version
+
 import pytest
 
+from ncv import __version__
 from ncv.cli import main
+
+
+def test_version_flag_prints_the_package_version(capsys):
+    with pytest.raises(SystemExit) as error:
+        main(["--version"])
+    assert error.value.code == 0
+    assert capsys.readouterr().out.strip() == f"ncv {__version__}"
+
+
+def test_packaging_metadata_matches_the_module_version():
+    # The two versions are declared in different files; a report that stamps one of
+    # them is only useful while they agree.
+    assert version("network-change-validator") == __version__
 
 
 def test_diff_demo_exits_one(tmp_path, root):

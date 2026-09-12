@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+from . import __version__
 from .intent import load_intent
 from .policy import evaluate
 from .report import write_report
@@ -17,6 +18,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="ncv",
         description="Intent-based pre/post validator. Fixture path is default. Live pyATS is opt-in.",
     )
+    parser.add_argument("--version", action="version", version=f"ncv {__version__}")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     diff = sub.add_parser("diff", help="compare two snapshot dirs against intent")

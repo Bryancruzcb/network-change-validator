@@ -38,5 +38,12 @@ jobs:
           status=0
           python -m ncv diff fixtures/pre fixtures/post --intent intents/demo.yaml --report output/ci || status=$?
           test "$status" -eq 1
+          # Publish the findings table the gate just produced, so a reader sees what
+          # the run checked instead of digging through the job log.
+          {
+            echo "### ${{ matrix.os }} py${{ matrix.python-version }}"
+            echo
+            cat output/ci/report.md
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: clean fixture pair
         run: python -m ncv diff fixtures/pre fixtures/pre --intent intents/demo.yaml --report output/clean

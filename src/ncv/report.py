@@ -5,13 +5,19 @@ import json
 from pathlib import Path
 from typing import Any
 
+from . import __version__
 from .policy import Finding, findings_to_dicts
+
+# Bump only when the JSON layout changes in a way a reader must notice.
+REPORT_VERSION = 1
 
 
 def write_report(out_dir: str | Path, intent_id: str, findings: list[Finding]) -> Path:
     root = Path(out_dir)
     root.mkdir(parents=True, exist_ok=True)
     payload: dict[str, Any] = {
+        "report_version": REPORT_VERSION,
+        "ncv_version": __version__,
         "intent_id": intent_id,
         "finding_count": len(findings),
         "by_policy": _count(findings),
@@ -29,6 +35,7 @@ def write_report(out_dir: str | Path, intent_id: str, findings: list[Finding]) -
             md.append(
                 "| " + " | ".join(_escape(value) for value in (f.policy_id, f.device, f.path, f.why)) + " |"
             )
+    md += ["", f"_ncv {__version__}, report format {REPORT_VERSION}._"]
     (root / "report.md").write_text("\n".join(md) + "\n", encoding="utf-8")
     return json_path
 
