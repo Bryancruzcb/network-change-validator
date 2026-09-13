@@ -95,10 +95,11 @@ findings table to the run summary instead of leaving it in a log.
 
 ## Test count
 
-**77 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
+**79 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
 the 2 policy regressions from PR #1, the 21 that came with BGP support and feature
-selection, 3 covering report provenance and the version flag, and 1 that loads both
-bundled intents so the lab template cannot rot unnoticed.
+selection, 3 covering report provenance and the version flag, 1 that loads both
+bundled intents so the lab template cannot rot unnoticed, and 2 covering the interface
+shape Genie actually learns.
 
 An earlier note claimed a 59-test baseline and a 61-test target. That was wrong for
 this tree: `11ee5bd`'s own commit message records 50 passing, and the extra 9 tests
@@ -110,7 +111,7 @@ belonged to the lost uncommitted work. Do not treat 59/61 as a regression target
 python3 -m pip install -e ".[dev]"
 python3 -m ruff check .
 python3 -m ruff format --check .
-python3 -m pytest                      # 77 passed
+python3 -m pytest                      # 79 passed
 git diff --check                       # clean
 
 python3 -m ncv diff fixtures/pre fixtures/post --intent intents/demo.yaml --report output/ci
