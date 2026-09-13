@@ -4,7 +4,7 @@ A Python portfolio tool for Cisco-style change validation: compare saved pre/pos
 network snapshots against a YAML intent checklist and report which rule failed.
 
 - **Fixtures (default and CI):** synthetic, hand-authored snapshots; no SSH or pyATS needed.
-- **Lab evidence:** sanitized captures from one live run against a Cisco DevNet CML sandbox,
+- **Lab evidence:** sanitized captures from two live runs against a Cisco DevNet CML sandbox,
   replayed by the tests. See [fixtures/lab-2026-09-12](fixtures/lab-2026-09-12/SOURCE.md).
 - **Live (optional):** collect from a lab you own using pyATS/Genie. Requires
   `--i-am-in-a-lab` on every capture.
@@ -131,11 +131,12 @@ reaching CML nodes through the console server.
 
 Tests use synthetic data and mocked connections. They verify the lab flag,
 initialization safeguards, normalization, cleanup, and failure reporting **without
-pyATS installed**. One live run has happened: on
-2026-09-12 the live path captured two IOS XE 17.15 routers (IOL) in a Cisco DevNet CML
-sandbox, reached through its console server, and caught a deliberate link shutdown as two
-missing routes. `tests/test_lab_evidence.py` replays those sanitized captures. That is
-evidence about that image in that lab, not about routers in general.
+pyATS installed**. Two live runs have happened, both on
+2026-09-12 against two IOS XE 17.15 routers (IOL) in a Cisco DevNet CML sandbox, reached
+through its console server. Each caught a deliberate link shutdown: as two missing routes
+on static routing, and, with OSPF on the link, as both lost adjacencies plus those routes.
+`tests/test_lab_evidence.py` replays the sanitized captures. That is evidence about that
+image in that lab, not about routers in general.
 
 ## Development
 

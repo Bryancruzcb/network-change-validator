@@ -46,3 +46,21 @@ def test_route_run_is_clean_without_the_change(root, tmp_path, after):
     code, findings = _diff(root, tmp_path, "routes", "pre", after, "intent-routes.yaml")
     assert code == 0
     assert findings == []
+
+
+def test_ospf_run_catches_both_lost_adjacencies_and_routes(root, tmp_path):
+    code, findings = _diff(root, tmp_path, "ospf", "pre", "post", "intent-ospf.yaml")
+    assert code == 1
+    assert findings == [
+        ("V_ADJ", "R1", "ospf.neighbors.2.2.2.2"),
+        ("V_ADJ", "R2", "ospf.neighbors.1.1.1.1"),
+        ("V_ROUTE", "R1", "routing.vrfs.default.routes.1.1.1.0/24"),
+        ("V_ROUTE", "R1", "routing.vrfs.default.routes.20.20.20.0/24"),
+    ]
+
+
+@pytest.mark.parametrize("after", ["pre", "restored"])
+def test_ospf_run_is_clean_without_the_change(root, tmp_path, after):
+    code, findings = _diff(root, tmp_path, "ospf", "pre", after, "intent-ospf.yaml")
+    assert code == 0
+    assert findings == []

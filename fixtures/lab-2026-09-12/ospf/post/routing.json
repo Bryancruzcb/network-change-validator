@@ -1,0 +1,65 @@
+{
+  "R1": {
+    "vrfs": {
+      "Mgmt-intf": {
+        "routes": {
+          "10.10.20.171/32": {
+            "protocol": "local"
+          },
+          "10.10.20.0/24": {
+            "protocol": "connected"
+          },
+          "0.0.0.0/0": {
+            "protocol": "static"
+          }
+        }
+      },
+      "default": {
+        "routes": {
+          "10.10.10.100/32": {
+            "protocol": "local"
+          },
+          "10.10.10.0/24": {
+            "protocol": "connected"
+          }
+        }
+      }
+    }
+  },
+  "R2": {
+    "vrfs": {
+      "Mgmt-intf": {
+        "routes": {
+          "10.10.20.172/32": {
+            "protocol": "local"
+          },
+          "10.10.20.0/24": {
+            "protocol": "connected"
+          },
+          "0.0.0.0/0": {
+            "protocol": "static"
+          }
+        }
+      },
+      "default": {
+        "routes": {
+          "20.20.20.100/32": {
+            "protocol": "local"
+          },
+          "20.20.20.0/24": {
+            "protocol": "connected"
+          },
+          "10.10.10.0/24": {
+            "protocol": "static"
+          },
+          "1.1.1.2/32": {
+            "protocol": "local"
+          },
+          "1.1.1.0/24": {
+            "protocol": "connected"
+          }
+        }
+      }
+    }
+  }
+}

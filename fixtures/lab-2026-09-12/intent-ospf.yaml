@@ -1,0 +1,58 @@
+# Intent used for the OSPF run in fixtures/lab-2026-09-12/ospf (see SOURCE.md).
+# OSPF area 0 was set up on the R1-R2 link for this run with router IDs pinned to 1.1.1.1
+# and 2.2.2.2, and the no-change check proved the capture matched before any change.
+intent_id: devnet-default-lab-ospf
+version: 1
+
+devices:
+  - R1
+  - R2
+
+adjacencies:
+  - device: R1
+    protocol: ospf
+    neighbor: 2.2.2.2
+    interface: Ethernet0/1
+  - device: R2
+    protocol: ospf
+    neighbor: 1.1.1.1
+    interface: Ethernet0/1
+
+routes:
+  - device: R1
+    vrf: default
+    prefix: 20.20.20.0/24
+    protocol: static
+  - device: R1
+    vrf: default
+    prefix: 1.1.1.0/24
+    protocol: connected
+  - device: R2
+    vrf: default
+    prefix: 10.10.10.0/24
+    protocol: static
+  - device: R2
+    vrf: default
+    prefix: 1.1.1.0/24
+    protocol: connected
+
+interfaces:
+  - device: R1
+    name: Ethernet0/1
+    max_in_errors: 0
+    max_crc: 0
+  - device: R2
+    name: Ethernet0/1
+    max_in_errors: 0
+    max_crc: 0
+
+config:
+  must_include:
+    - device: R1
+      lines:
+        - "router ospf 1"
+        - "ip route 20.20.20.0 255.255.255.0 1.1.1.2"
+    - device: R2
+      lines:
+        - "router ospf 1"
+        - "ip route 10.10.10.0 255.255.255.0 1.1.1.1"

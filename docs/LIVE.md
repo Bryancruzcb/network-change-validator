@@ -128,8 +128,11 @@ The first real run followed this runbook with a few differences worth knowing:
   addresses did not answer over the VPN, while the CML controller did. The routers were
   reached through the CML console server with
   [testbeds/cml-console.yaml.example](../testbeds/cml-console.yaml.example).
-- `default-lab` runs static routes and neither OSPF nor BGP, so its captures used
-  `--features routing,interface`.
+- `default-lab` runs static routes and neither OSPF nor BGP, so the first run captured
+  `--features routing,interface`. For the adjacency check, a second run set up OSPF area 0
+  on the R1-R2 link with pinned router IDs and captured `--features ospf,routing,interface`.
+  R2 kept its neighbor until its dead timer expired, so that run waited for both neighbor
+  entries to clear before the post capture.
 - The first real interface learn exposed an adapter gap, fixed in PR #5.
 
 ### After a real run
@@ -142,7 +145,7 @@ as `fixtures/lab-2026-10-01/`, and write a `SOURCE.md` beside it recording the
 environment, the collection date, and exactly what was sanitized. Never relabel the
 synthetic fixtures as a capture.
 
-The 2026-09-12 run is recorded that way. When a new run adds evidence, update the places
+The 2026-09-12 runs are recorded that way. When a new run adds evidence, update the places
 that describe it: `README.md` (the evidence bullet and the paragraph on what the tests
 establish), this file, and `HANDOFF.md`. Say what actually happened, with the image and
 platform named. A capture against one image is evidence about that image, not about
@@ -172,7 +175,7 @@ OSPF neighbor occurring on multiple interfaces or in multiple VRFs; those captur
 are rejected rather than silently selecting one. A real router image may require
 adapter adjustments backed by sanitized evidence and offline regression tests.
 Live-capture tests use mocks; `tests/test_lab_evidence.py` replays sanitized
-captures from one real CML session.
+captures from real CML sessions.
 
 ## Evidence handling
 

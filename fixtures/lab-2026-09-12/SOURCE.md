@@ -30,6 +30,26 @@ fixtures in `fixtures/pre` and `fixtures/post` are unchanged and remain the demo
 
 `tests/test_lab_evidence.py` replays these comparisons on every commit.
 
+## OSPF run (`ospf/`), 23:26 to 23:33 PT
+
+The same lab, with OSPF added so the adjacency check had something to watch.
+
+1. Operator setup outside ncv: `router ospf 1` on R1 and R2 with router IDs pinned to
+   1.1.1.1 and 2.2.2.2, and `network 1.1.1.0 0.0.0.255 area 0`. Both neighbors reached
+   FULL about 30 seconds later.
+2. `pre` with `--features ospf,routing,interface`, then `ncv diff pre pre` against
+   `intent-ospf.yaml`: exit 0, no findings.
+3. `shutdown` on R1 Ethernet0/1. R1 dropped its neighbor at once, while R2 kept 1.1.1.1
+   until its dead timer expired about 35 seconds later, so the post capture waited for
+   both entries to clear.
+4. `post`, then `ncv diff pre post`: exit 1 with four findings, `V_ADJ` on R1 for neighbor
+   2.2.2.2 and on R2 for neighbor 1.1.1.1, plus the same two missing R1 routes as the
+   route run.
+5. `no shutdown`, both neighbors FULL again, then `restored` and `ncv diff pre restored`:
+   exit 0, no findings.
+
+The tests replay these comparisons too.
+
 ## What was sanitized
 
 Only `config.json` was edited. In each running config, the values after `enable
@@ -44,3 +64,5 @@ unedited configs, is not included.
 This is one image, IOS XE 17.15 on IOL, in one simulated lab, reached through a console
 server. It says nothing about other platforms, other Genie releases, or the management
 SSH and telnet path, which the sandbox did not route.
+The adjacency evidence is a single broadcast link in OSPF area 0, and BGP was not
+exercised.
