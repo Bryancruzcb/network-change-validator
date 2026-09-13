@@ -1,0 +1,46 @@
+# Intent used for the route-change run in fixtures/lab-2026-09-12/routes (see SOURCE.md).
+# Built from that run's pre capture: names, prefixes, and protocols as the routers reported them.
+# The lab ran no OSPF or BGP during this run, so there are no adjacency rules.
+intent_id: devnet-default-lab-r1-r2
+version: 1
+
+devices:
+  - R1
+  - R2
+
+routes:
+  - device: R1
+    vrf: default
+    prefix: 20.20.20.0/24
+    protocol: static
+  - device: R1
+    vrf: default
+    prefix: 1.1.1.0/24
+    protocol: connected
+  - device: R2
+    vrf: default
+    prefix: 10.10.10.0/24
+    protocol: static
+  - device: R2
+    vrf: default
+    prefix: 1.1.1.0/24
+    protocol: connected
+
+interfaces:
+  - device: R1
+    name: Ethernet0/1
+    max_in_errors: 0
+    max_crc: 0
+  - device: R2
+    name: Ethernet0/1
+    max_in_errors: 0
+    max_crc: 0
+
+config:
+  must_include:
+    - device: R1
+      lines:
+        - "ip route 20.20.20.0 255.255.255.0 1.1.1.2"
+    - device: R2
+      lines:
+        - "ip route 10.10.10.0 255.255.255.0 1.1.1.1"

@@ -1,0 +1,13 @@
+{
+  "source": "live-pyats",
+  "testbed": "testbeds/lab.yaml",
+  "devices": [
+    "R1",
+    "R2"
+  ],
+  "features": [
+    "routing",
+    "interface",
+    "config"
+  ]
+}

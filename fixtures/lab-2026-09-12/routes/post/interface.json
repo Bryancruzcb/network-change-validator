@@ -1,0 +1,50 @@
+{
+  "R1": {
+    "interfaces": {
+      "Ethernet0/2": {
+        "oper_status": "up",
+        "in_errors": 0,
+        "crc": 0
+      },
+      "Ethernet0/3": {
+        "oper_status": "down",
+        "in_errors": 0,
+        "crc": 0
+      },
+      "Ethernet0/1": {
+        "oper_status": "down",
+        "in_errors": 0,
+        "crc": 0
+      },
+      "Ethernet0/0": {
+        "oper_status": "up",
+        "in_errors": 0,
+        "crc": 0
+      }
+    }
+  },
+  "R2": {
+    "interfaces": {
+      "Ethernet0/2": {
+        "oper_status": "up",
+        "in_errors": 0,
+        "crc": 0
+      },
+      "Ethernet0/3": {
+        "oper_status": "down",
+        "in_errors": 0,
+        "crc": 0
+      },
+      "Ethernet0/1": {
+        "oper_status": "up",
+        "in_errors": 0,
+        "crc": 0
+      },
+      "Ethernet0/0": {
+        "oper_status": "up",
+        "in_errors": 0,
+        "crc": 0
+      }
+    }
+  }
+}

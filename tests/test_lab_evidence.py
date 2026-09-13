@@ -1,0 +1,48 @@
+"""The first live lab captures, sanitized, replayed offline.
+
+fixtures/lab-2026-09-12 holds real captures from a Cisco DevNet CML sandbox (see its
+SOURCE.md). These tests pin what that run showed, so an adapter or policy change that
+would have missed the real change fails here first.
+"""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from ncv.cli import main
+
+
+def _diff(root, tmp_path, run, before, after, intent):
+    lab = root / "fixtures" / "lab-2026-09-12"
+    report = tmp_path / f"{run}-{before}-{after}"
+    code = main(
+        [
+            "diff",
+            str(lab / run / before),
+            str(lab / run / after),
+            "--intent",
+            str(lab / intent),
+            "--report",
+            str(report),
+        ]
+    )
+    findings = json.loads((report / "report.json").read_text(encoding="utf-8"))["findings"]
+    return code, sorted((f["policy_id"], f["device"], f["path"]) for f in findings)
+
+
+def test_route_run_catches_the_shut_link(root, tmp_path):
+    code, findings = _diff(root, tmp_path, "routes", "pre", "post", "intent-routes.yaml")
+    assert code == 1
+    assert findings == [
+        ("V_ROUTE", "R1", "routing.vrfs.default.routes.1.1.1.0/24"),
+        ("V_ROUTE", "R1", "routing.vrfs.default.routes.20.20.20.0/24"),
+    ]
+
+
+@pytest.mark.parametrize("after", ["pre", "restored"])
+def test_route_run_is_clean_without_the_change(root, tmp_path, after):
+    code, findings = _diff(root, tmp_path, "routes", "pre", after, "intent-routes.yaml")
+    assert code == 0
+    assert findings == []

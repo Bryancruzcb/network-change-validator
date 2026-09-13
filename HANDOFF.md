@@ -6,12 +6,9 @@ older note.
 
 ## Current state
 
-- Everything below is merged into `main`. PRs
-  [#1](https://github.com/Bryancruzcb/network-change-validator/pull/1),
-  [#2](https://github.com/Bryancruzcb/network-change-validator/pull/2), and
-  [#3](https://github.com/Bryancruzcb/network-change-validator/pull/3) went in on
-  2026-09-12, each as a fast-forward from `716feac` onward, so every hash quoted in
-  these notes is the hash the commit carries on `main`. No open PRs, no open issues,
+- Everything below is merged into `main`. PRs [#1](https://github.com/Bryancruzcb/network-change-validator/pull/1) through
+  [#6](https://github.com/Bryancruzcb/network-change-validator/pull/6) went in on 2026-09-12, each as a fast-forward, so every hash quoted
+  in these notes is the hash the commit carries on `main`. No open PRs, no open issues,
   and every merged branch is deleted locally and on `origin`.
 - The oldest work here is built on `11ee5bd` ("Harden offline validation and fail
   incomplete lab captures"), itself based on `716feac`.
@@ -93,13 +90,35 @@ same pair, and `ncv --version` prints what a reader compares against. A test ass
 the packaging metadata and the module constant agree. Each CI job appends its own
 findings table to the run summary instead of leaving it in a log.
 
+### PR #4, the live runbook
+
+`docs/LIVE.md` gained a step-by-step runbook for a first capture against a reserved
+Cisco DevNet sandbox.
+
+### PR #5, the interface shape Genie actually learns
+
+The first real interface learn could not normalize: Genie's iosxe Interface ops key
+their info by interface name and add a `vrf` summary, while the adapter only accepted a
+hand-authored `interfaces` mapping. The adapter now accepts that shape, skips the `vrf`
+summary, and still rejects records that do not look like interfaces. Two tests.
+
+### PR #6, lab evidence
+
+The first live run, on 2026-09-12, captured two IOS XE 17.15 IOL routers in a DevNet CML
+sandbox through the CML console server. The sanitized captures live in
+`fixtures/lab-2026-09-12` with a `SOURCE.md`, and `tests/test_lab_evidence.py` replays
+them: shutting R1 Ethernet0/1 yields exactly two `V_ROUTE` findings on R1, and the
+no-change and restored comparisons are clean. `testbeds/cml-console.yaml.example`
+documents the console-server path, and the README, `docs/LIVE.md`, and this file now say
+what happened.
+
 ## Test count
 
-**79 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
+**82 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
 the 2 policy regressions from PR #1, the 21 that came with BGP support and feature
 selection, 3 covering report provenance and the version flag, 1 that loads both
-bundled intents so the lab template cannot rot unnoticed, and 2 covering the interface
-shape Genie actually learns.
+bundled intents so the lab template cannot rot unnoticed, 2 covering the interface shape
+Genie actually learns, and 3 that replay the lab evidence.
 
 An earlier note claimed a 59-test baseline and a 61-test target. That was wrong for
 this tree: `11ee5bd`'s own commit message records 50 passing, and the extra 9 tests
@@ -111,7 +130,7 @@ belonged to the lost uncommitted work. Do not treat 59/61 as a regression target
 python3 -m pip install -e ".[dev]"
 python3 -m ruff check .
 python3 -m ruff format --check .
-python3 -m pytest                      # 79 passed
+python3 -m pytest                      # 82 passed
 git diff --check                       # clean
 
 python3 -m ncv diff fixtures/pre fixtures/post --intent intents/demo.yaml --report output/ci
@@ -138,15 +157,13 @@ python -m venv .venv
   `PermissionError` without it, before importing Genie and before creating output.
 - **No configuration push.** There is no `configure`/push path, and the fake-lab test
   asserts `device.configure` is never called.
-- **No real lab run has occurred.** Nothing in the repo may claim otherwise.
+- **Claims match the evidence.** One live run has happened, on 2026-09-12 against IOS XE
+  17.15 IOL in a DevNet CML sandbox (`fixtures/lab-2026-09-12`). Nothing in the repo may
+  claim more than that evidence shows, and synthetic fixtures are never relabeled as
+  captures.
 
 ## Open
 
-One item, and it is the only one.
-
-- **Run it against real gear.** The live path is still covered only by mocked
-  connections, because no real lab run has happened. Nothing in code can close that;
-  it needs a lab. `docs/LIVE.md` has a step-by-step runbook for a first capture
-  against a reserved Cisco DevNet sandbox, including why it cannot run on native
-  Windows, what to do with the evidence afterwards, and the three places in this repo
-  that must be corrected once it is real.
+Nothing is open. Ideas that would widen the evidence, none of them started: a second
+image or platform (IOS XE on Cat8kv, NX-OS), the management SSH path instead of a console
+server, and adjacency checks on real gear.

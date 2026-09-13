@@ -1,0 +1,41 @@
+# Copy to testbeds/lab.yaml (gitignored) for a lab reached through the Cisco Modeling
+# Labs console server instead of router management addresses. This is the path the
+# 2026-09-12 DevNet sandbox run used, because the sandbox VPN did not route to the
+# routers' management interfaces. Never point this at a work production network.
+#
+# Each router is opened with the console server's one-shot form:
+#   ssh -tt <cml user>@<cml address> "open /<lab title>/<node label>/0"
+# Replace 10.10.20.161, default-lab, and R1/R2 with your controller, lab title, and node
+# labels (case-sensitive). The first password prompt is the CML login ("default"); the
+# router console in that lab had no login, and enable uses the "enable" credential.
+#
+#   export NCV_CML_USER=... NCV_CML_PASS=... NCV_LAB_PASS=...
+
+testbed:
+  name: cml-console-lab
+  credentials:
+    default:
+      username: "%ENV{NCV_CML_USER}"
+      password: "%ENV{NCV_CML_PASS}"
+    enable:
+      password: "%ENV{NCV_LAB_PASS}"
+
+devices:
+  R1:
+    os: iosxe
+    type: router
+    connections:
+      cli:
+        command: 'ssh -tt -o StrictHostKeyChecking=accept-new %ENV{NCV_CML_USER}@10.10.20.161 "open /default-lab/R1/0"'
+        arguments:
+          learn_hostname: true
+          prompt_recovery: true
+  R2:
+    os: iosxe
+    type: router
+    connections:
+      cli:
+        command: 'ssh -tt -o StrictHostKeyChecking=accept-new %ENV{NCV_CML_USER}@10.10.20.161 "open /default-lab/R2/0"'
+        arguments:
+          learn_hostname: true
+          prompt_recovery: true

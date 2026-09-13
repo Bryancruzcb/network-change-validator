@@ -4,12 +4,15 @@ A Python portfolio tool for Cisco-style change validation: compare saved pre/pos
 network snapshots against a YAML intent checklist and report which rule failed.
 
 - **Fixtures (default and CI):** synthetic, hand-authored snapshots; no SSH or pyATS needed.
+- **Lab evidence:** sanitized captures from one live run against a Cisco DevNet CML sandbox,
+  replayed by the tests. See [fixtures/lab-2026-09-12](fixtures/lab-2026-09-12/SOURCE.md).
 - **Live (optional):** collect from a lab you own using pyATS/Genie. Requires
   `--i-am-in-a-lab` on every capture.
 
 This is not a home Wi-Fi tool or a production change tool. It has no configuration
-push or fault-application command. The bundled evidence is not a CML capture and
-does not demonstrate a production deployment. See [fixture provenance](fixtures/SOURCE.md).
+push or fault-application command. The demo fixtures are synthetic
+([provenance](fixtures/SOURCE.md)); the lab evidence comes from one simulated lab. Neither
+demonstrates a production deployment.
 
 ## Run the offline demo
 
@@ -122,12 +125,17 @@ It is not a general multi-vendor framework.
 
 A step-by-step runbook for a first capture against a Cisco DevNet sandbox, including
 the reason it cannot run on native Windows, is in [docs/LIVE.md](docs/LIVE.md).
-[intents/lab.yaml.example](intents/lab.yaml.example) is the intent template to copy.
+[intents/lab.yaml.example](intents/lab.yaml.example) is the intent template to copy, and
+[testbeds/cml-console.yaml.example](testbeds/cml-console.yaml.example) is the testbed for
+reaching CML nodes through the console server.
 
 Tests use synthetic data and mocked connections. They verify the lab flag,
 initialization safeguards, normalization, cleanup, and failure reporting **without
-pyATS installed**. They do not establish compatibility with a particular router
-image or claim a successful live lab run.
+pyATS installed**. One live run has happened: on
+2026-09-12 the live path captured two IOS XE 17.15 routers (IOL) in a Cisco DevNet CML
+sandbox, reached through its console server, and caught a deliberate link shutdown as two
+missing routes. `tests/test_lab_evidence.py` replays those sanitized captures. That is
+evidence about that image in that lab, not about routers in general.
 
 ## Development
 

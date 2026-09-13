@@ -31,8 +31,8 @@ reruns. Both `testbeds/lab.yaml` and `intents/lab.yaml` are gitignored.
 
 ## Runbook: a first capture against a Cisco DevNet sandbox
 
-No real lab run has happened yet. This is the shortest honest path to one, written so
-it can be followed in order.
+This is the path the first live run followed on 2026-09-12 (evidence in
+`fixtures/lab-2026-09-12`), written so it can be followed in order.
 
 **Before anything else: pyATS does not install on native Windows.** Run the live path
 from WSL, Linux, or macOS. The offline path in this repo runs fine on Windows, and CI
@@ -117,6 +117,21 @@ proves that on every commit; only the `lab` extra is the problem.
 | Connect timeouts | VPN down, wrong port, or a console that needs a terminal-server port. Prove `ssh` works by hand first. |
 | `snapshot output must be a new or empty directory` | Captures are never overwritten. Use `captures/pre-2`, and keep the first one. |
 
+### What the 2026-09-12 sandbox run needed
+
+The first real run followed this runbook with a few differences worth knowing:
+
+- The reservation email showed one VPN password web-encoded: `%3C` stood for `<`.
+- From WSL, `openconnect --useragent="AnyConnect Linux_64 4.7.00136"` connected when run as
+  root (`wsl -u root`). Leave that terminal open for the whole session.
+- The sandbox's preloaded `default-lab` (CML 2.7.2) has IOL XE routers whose management
+  addresses did not answer over the VPN, while the CML controller did. The routers were
+  reached through the CML console server with
+  [testbeds/cml-console.yaml.example](../testbeds/cml-console.yaml.example).
+- `default-lab` runs static routes and neither OSPF nor BGP, so its captures used
+  `--features routing,interface`.
+- The first real interface learn exposed an adapter gap, fixed in PR #5.
+
 ### After a real run
 
 Raw captures hold credentials and real addressing. `captures/` and `output/` are
@@ -127,15 +142,11 @@ as `fixtures/lab-2026-10-01/`, and write a `SOURCE.md` beside it recording the
 environment, the collection date, and exactly what was sanitized. Never relabel the
 synthetic fixtures as a capture.
 
-Only then update the three places that currently say this has not happened:
-
-- `README.md`, both the line about bundled evidence and the paragraph about what the
-  tests do not establish.
-- This file, the sentence about the automated tests using mocks.
-- `HANDOFF.md`, the invariant "No real lab run has occurred."
-
-Change them to what actually happened, with the image and platform named. A capture
-against one image is evidence about that image, not about routers in general.
+The 2026-09-12 run is recorded that way. When a new run adds evidence, update the places
+that describe it: `README.md` (the evidence bullet and the paragraph on what the tests
+establish), this file, and `HANDOFF.md`. Say what actually happened, with the image and
+platform named. A capture against one image is evidence about that image, not about
+routers in general.
 
 ## Collection behavior
 
@@ -160,7 +171,8 @@ The adapter handles a limited set of Genie shapes. It does not resolve the same
 OSPF neighbor occurring on multiple interfaces or in multiple VRFs; those captures
 are rejected rather than silently selecting one. A real router image may require
 adapter adjustments backed by sanitized evidence and offline regression tests.
-Current automated tests use mocks, not a real CML session.
+Live-capture tests use mocks; `tests/test_lab_evidence.py` replays sanitized
+captures from one real CML session.
 
 ## Evidence handling
 
