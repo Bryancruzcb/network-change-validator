@@ -134,14 +134,17 @@ The first real run followed this runbook with a few differences worth knowing:
   R2 kept its neighbor until its dead timer expired, so that run waited for both neighbor
   entries to clear before the post capture.
 - The first real interface learn exposed an adapter gap, fixed in PR #5.
+- The scripts that drove both runs, and the sanitizer that prepared their evidence for
+  publishing, are in [scripts/lab](../scripts/lab/README.md).
 
 ### After a real run
 
 Raw captures hold credentials and real addressing. `captures/` and `output/` are
 gitignored; keep them that way until you have read what is in them.
 
-If you decide to publish lab evidence, sanitize it, put it in its own directory such
-as `fixtures/lab-2026-10-01/`, and write a `SOURCE.md` beside it recording the
+If you decide to publish lab evidence, run it through `scripts/lab/sanitize_capture.py`,
+read what it left, put it in its own directory such as `fixtures/lab-2026-10-01/`, and
+write a `SOURCE.md` beside it recording the
 environment, the collection date, and exactly what was sanitized. Never relabel the
 synthetic fixtures as a capture.
 

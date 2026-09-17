@@ -119,13 +119,25 @@ Shutting R1 Ethernet0/1 yielded `V_ADJ` on both routers plus the two R1 route fi
 the no-change and restored comparisons were clean. The sanitized captures are in
 `fixtures/lab-2026-09-12/ospf` with `intent-ospf.yaml`, and three more tests replay them.
 
+### PR #8, the lab scripts
+
+The scripts that drove the 2026-09-12 runs from WSL, and the sanitizer that prepared the
+evidence for publishing, moved from a home directory into `scripts/lab/` with a README.
+On the way in they learned to find the repository root from their own location, to compare
+against the intents recorded with the evidence, and to log under `output/lab/`; the three
+copies of the shut/no shut step became one `labctl.py` command. They push configuration
+to the lab by design, which `ncv` never does, and the README says so.
+`tests/test_lab_scripts.py` pins the sanitizer's rules on a synthetic config and checks
+that every published `config.json` is the sanitizer's own fixed point. `.gitattributes`
+keeps the shell scripts LF on Windows checkouts.
+
 ## Test count
 
-**85 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
+**87 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
 the 2 policy regressions from PR #1, the 21 that came with BGP support and feature
 selection, 3 covering report provenance and the version flag, 1 that loads both
 bundled intents so the lab template cannot rot unnoticed, 2 covering the interface shape
-Genie actually learns, and 6 that replay the lab evidence.
+Genie actually learns, 6 that replay the lab evidence, and 2 that pin the lab sanitizer.
 
 An earlier note claimed a 59-test baseline and a 61-test target. That was wrong for
 this tree: `11ee5bd`'s own commit message records 50 passing, and the extra 9 tests
@@ -137,7 +149,7 @@ belonged to the lost uncommitted work. Do not treat 59/61 as a regression target
 python3 -m pip install -e ".[dev]"
 python3 -m ruff check .
 python3 -m ruff format --check .
-python3 -m pytest                      # 85 passed
+python3 -m pytest                      # 87 passed
 git diff --check                       # clean
 
 python3 -m ncv diff fixtures/pre fixtures/post --intent intents/demo.yaml --report output/ci

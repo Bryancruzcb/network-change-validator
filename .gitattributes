@@ -1,0 +1,2 @@
+# The lab scripts run in WSL or Linux, so they stay LF even on a Windows checkout.
+*.sh text eol=lf

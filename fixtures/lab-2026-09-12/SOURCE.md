@@ -20,8 +20,8 @@ fixtures in `fixtures/pre` and `fixtures/post` are unchanged and remain the demo
 ## Route run (`routes/`), 22:55 to 22:58 PT
 
 1. `pre`, then `ncv diff pre pre` against `intent-routes.yaml`: exit 0, no findings.
-2. The one change, applied by an operator script outside ncv: `shutdown` on R1
-   Ethernet0/1.
+2. The one change, applied by an operator script outside ncv (kept as
+   `scripts/lab/run-lab.sh`): `shutdown` on R1 Ethernet0/1.
 3. `post`, then `ncv diff pre post`: exit 1 with two findings, both on R1, for the missing
    routes 1.1.1.0/24 and 20.20.20.0/24. R2's end of the link stayed up in the simulation,
    so R2's route and interface rules stayed compliant.
@@ -34,7 +34,8 @@ fixtures in `fixtures/pre` and `fixtures/post` are unchanged and remain the demo
 
 The same lab, with OSPF added so the adjacency check had something to watch.
 
-1. Operator setup outside ncv: `router ospf 1` on R1 and R2 with router IDs pinned to
+1. Operator setup outside ncv (`scripts/lab/labctl.py setup-ospf`, driven by
+   `scripts/lab/run-ospf.sh`): `router ospf 1` on R1 and R2 with router IDs pinned to
    1.1.1.1 and 2.2.2.2, and `network 1.1.1.0 0.0.0.255 area 0`. Both neighbors reached
    FULL about 30 seconds later.
 2. `pre` with `--features ospf,routing,interface`, then `ncv diff pre pre` against
@@ -57,7 +58,9 @@ password`, `username ... password 0`, and the console and vty `password` lines w
 replaced with `<removed>`, and the self-signed certificate body was replaced with
 `<certificate body removed>`. Addresses, interface names, and routes are as captured.
 The `raw/` directory the collector writes, which holds Genie's learned objects and the
-unedited configs, is not included.
+unedited configs, is not included. The script that did this is
+`scripts/lab/sanitize_capture.py`, and `tests/test_lab_scripts.py` checks that these
+configs are its fixed point.
 
 ## What this does not establish
 

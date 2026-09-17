@@ -127,7 +127,8 @@ A step-by-step runbook for a first capture against a Cisco DevNet sandbox, inclu
 the reason it cannot run on native Windows, is in [docs/LIVE.md](docs/LIVE.md).
 [intents/lab.yaml.example](intents/lab.yaml.example) is the intent template to copy, and
 [testbeds/cml-console.yaml.example](testbeds/cml-console.yaml.example) is the testbed for
-reaching CML nodes through the console server.
+reaching CML nodes through the console server. The scripts that drove the 2026-09-12 runs,
+and the sanitizer that prepared their evidence, are in [scripts/lab](scripts/lab/README.md).
 
 Tests use synthetic data and mocked connections. They verify the lab flag,
 initialization safeguards, normalization, cleanup, and failure reporting **without
