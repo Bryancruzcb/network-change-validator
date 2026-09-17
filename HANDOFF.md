@@ -131,13 +131,26 @@ to the lab by design, which `ncv` never does, and the README says so.
 that every published `config.json` is the sanitizer's own fixed point. `.gitattributes`
 keeps the shell scripts LF on Windows checkouts.
 
+### PR #9, the BGP run, prepared and not run
+
+`scripts/lab/run-bgp.sh`, new `labctl.py` commands (`setup-bgp`, `bgp-shut`, `bgp-noshut`,
+`wait-bgp-up`, `wait-bgp-down`), and `scripts/lab/intent-bgp.yaml` prepare the one live path
+with no evidence yet: eBGP between R1 and R2 over the 1.1.1.0/24 link, with an
+administrative `neighbor 1.1.1.2 shutdown` on R1 as the planned change. `labctl.py` now
+imports Genie only when a command runs, so its show-output parsers are tested without the
+lab extra, and `change.sh` gained `bgp-apply|bgp-undo`. Three tests pin the parsers, the
+draft intent, and the predicted findings on synthetic snapshots (`V_ADJ` on both routers
+plus `V_DRIFT` on R1). Nothing was run against a lab and no document claims otherwise;
+`scripts/lab/README.md` says what happens when it is run and recorded.
+
 ## Test count
 
-**87 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
+**90 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
 the 2 policy regressions from PR #1, the 21 that came with BGP support and feature
 selection, 3 covering report provenance and the version flag, 1 that loads both
 bundled intents so the lab template cannot rot unnoticed, 2 covering the interface shape
-Genie actually learns, 6 that replay the lab evidence, and 2 that pin the lab sanitizer.
+Genie actually learns, 6 that replay the lab evidence, 2 that pin the lab sanitizer, and 3
+that pin the BGP run's parsers, draft intent, and predicted findings.
 
 An earlier note claimed a 59-test baseline and a 61-test target. That was wrong for
 this tree: `11ee5bd`'s own commit message records 50 passing, and the extra 9 tests
@@ -149,7 +162,7 @@ belonged to the lost uncommitted work. Do not treat 59/61 as a regression target
 python3 -m pip install -e ".[dev]"
 python3 -m ruff check .
 python3 -m ruff format --check .
-python3 -m pytest                      # 87 passed
+python3 -m pytest                      # 90 passed
 git diff --check                       # clean
 
 python3 -m ncv diff fixtures/pre fixtures/post --intent intents/demo.yaml --report output/ci
@@ -184,6 +197,8 @@ python -m venv .venv
 
 ## Open
 
-Nothing is open. Ideas that would widen the evidence, none of them started: a second
-image or platform (IOS XE on Cat8kv, NX-OS), the management SSH path instead of a console
-server, and a BGP adjacency on real gear.
+The BGP run is prepared and not run. `scripts/lab/run-bgp.sh` needs a reserved DevNet CML
+sandbox and the VPN; when it has run, record it the way the 2026-09-12 runs were
+(`scripts/lab/README.md`, "BGP run"), and only then may any document say BGP was exercised
+live. Other ideas that would widen the evidence, none of them started: a second image or
+platform (IOS XE on Cat8kv, NX-OS), and the management SSH path instead of a console server.

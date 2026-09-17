@@ -1,0 +1,70 @@
+# Draft intent for the BGP run on the DevNet CML default-lab. Prepared 2026-09-17 and NOT yet
+# run against a lab: no BGP evidence exists in this repository. scripts/lab/run-bgp.sh sets up
+# eBGP between R1 (AS 65001) and R2 (AS 65002) over the 1.1.1.0/24 link, and its no-change check
+# must exit 0 against this file before the planned change (`neighbor 1.1.1.2 shutdown` on R1).
+# Routes and interfaces are the ones the 2026-09-12 captures reported; the static routes outrank
+# the learned prefixes, so the routing table does not change with the session.
+# When the run is recorded, this file moves next to its captures under fixtures/lab-<date>/.
+intent_id: devnet-default-lab-bgp
+version: 1
+
+devices:
+  - R1
+  - R2
+
+adjacencies:
+  - device: R1
+    protocol: bgp
+    neighbor: 1.1.1.2
+    vrf: default
+    remote_as: 65002
+  - device: R2
+    protocol: bgp
+    neighbor: 1.1.1.1
+    vrf: default
+    remote_as: 65001
+
+routes:
+  - device: R1
+    vrf: default
+    prefix: 20.20.20.0/24
+    protocol: static
+  - device: R1
+    vrf: default
+    prefix: 1.1.1.0/24
+    protocol: connected
+  - device: R2
+    vrf: default
+    prefix: 10.10.10.0/24
+    protocol: static
+  - device: R2
+    vrf: default
+    prefix: 1.1.1.0/24
+    protocol: connected
+
+interfaces:
+  - device: R1
+    name: Ethernet0/1
+    max_in_errors: 0
+    max_crc: 0
+  - device: R2
+    name: Ethernet0/1
+    max_in_errors: 0
+    max_crc: 0
+
+config:
+  must_include:
+    - device: R1
+      lines:
+        - "router bgp 65001"
+        - "neighbor 1.1.1.2 remote-as 65002"
+        - "ip route 20.20.20.0 255.255.255.0 1.1.1.2"
+    - device: R2
+      lines:
+        - "router bgp 65002"
+        - "neighbor 1.1.1.1 remote-as 65001"
+        - "ip route 10.10.10.0 255.255.255.0 1.1.1.1"
+  must_absent:
+    - device: R1
+      lines:
+        - "neighbor 1.1.1.2 shutdown"

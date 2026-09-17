@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# The one planned lab change, applied by hand outside ncv: shut R1 Ethernet0/1 (the R1-R2
-# link), or bring it back. Prompts for the logins, so the passwords stay in this terminal,
-# then hands the work to labctl.py.
-# Usage: change.sh apply|undo
+# The one planned lab change, applied by hand outside ncv. Prompts for the logins, so the
+# passwords stay in this terminal, then hands the work to labctl.py.
+# Usage: change.sh apply|undo          shut / no shut R1 Ethernet0/1 (the R1-R2 link)
+#        change.sh bgp-apply|bgp-undo  neighbor 1.1.1.2 shutdown / no shutdown on R1
 set -uo pipefail
-action="${1:?usage: change.sh apply|undo}"
+action="${1:?usage: change.sh apply|undo|bgp-apply|bgp-undo}"
 case "$action" in
   apply) cmd=shut ;;
   undo) cmd=noshut ;;
-  *) echo "usage: change.sh apply|undo"; exit 2 ;;
+  bgp-apply) cmd=bgp-shut ;;
+  bgp-undo) cmd=bgp-noshut ;;
+  *) echo "usage: change.sh apply|undo|bgp-apply|bgp-undo"; exit 2 ;;
 esac
 here=$(cd "$(dirname "$0")" && pwd)
 cd "$here/../.." || exit 2
@@ -20,7 +22,7 @@ read -rsp "Router enable password (the cisco one): " rp; echo; export NCV_LAB_PA
 py="${NCV_PYTHON:-.venv/bin/python}"
 mkdir -p output/lab
 log=output/lab/last-change.log
-echo "$(date +%T) change.sh $action: R1 Ethernet0/1 $cmd" | tee "$log"
+echo "$(date +%T) change.sh $action: labctl.py $cmd" | tee "$log"
 "$py" "$here/labctl.py" "$cmd" 2>&1 | tee -a "$log"
 rc=${PIPESTATUS[0]}
 echo "change exit=$rc" | tee -a "$log"
