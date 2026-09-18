@@ -4,8 +4,9 @@ A Python portfolio tool for Cisco-style change validation: compare saved pre/pos
 network snapshots against a YAML intent checklist and report which rule failed.
 
 - **Fixtures (default and CI):** synthetic, hand-authored snapshots; no SSH or pyATS needed.
-- **Lab evidence:** sanitized captures from two live runs against a Cisco DevNet CML sandbox,
-  replayed by the tests. See [fixtures/lab-2026-09-12](fixtures/lab-2026-09-12/SOURCE.md).
+- **Lab evidence:** sanitized captures from three live runs against a Cisco DevNet CML sandbox,
+  replayed by the tests. See [fixtures/lab-2026-09-12](fixtures/lab-2026-09-12/SOURCE.md) and
+  [fixtures/lab-2026-09-18](fixtures/lab-2026-09-18/SOURCE.md).
 - **Live (optional):** collect from a lab you own using pyATS/Genie. Requires
   `--i-am-in-a-lab` on every capture.
 
@@ -127,17 +128,19 @@ A step-by-step runbook for a first capture against a Cisco DevNet sandbox, inclu
 the reason it cannot run on native Windows, is in [docs/LIVE.md](docs/LIVE.md).
 [intents/lab.yaml.example](intents/lab.yaml.example) is the intent template to copy, and
 [testbeds/cml-console.yaml.example](testbeds/cml-console.yaml.example) is the testbed for
-reaching CML nodes through the console server. The scripts that drove the 2026-09-12 runs,
-and the sanitizer that prepared their evidence, are in [scripts/lab](scripts/lab/README.md).
+reaching CML nodes through the console server. The scripts that drove the lab runs, and
+the sanitizer that prepared their evidence, are in [scripts/lab](scripts/lab/README.md).
 
 Tests use synthetic data and mocked connections. They verify the lab flag,
 initialization safeguards, normalization, cleanup, and failure reporting **without
-pyATS installed**. Two live runs have happened, both on
-2026-09-12 against two IOS XE 17.15 routers (IOL) in a Cisco DevNet CML sandbox, reached
-through its console server. Each caught a deliberate link shutdown: as two missing routes
-on static routing, and, with OSPF on the link, as both lost adjacencies plus those routes.
-`tests/test_lab_evidence.py` replays the sanitized captures. That is evidence about that
-image in that lab, not about routers in general.
+pyATS installed**. Three live runs have happened, two on 2026-09-12 and one on
+2026-09-18, all against two IOS XE 17.15 routers (IOL) in a Cisco DevNet CML sandbox, reached
+through its console server. The first two caught a deliberate link shutdown: as two missing
+routes on static routing, and, with OSPF on the link, as both lost adjacencies plus those
+routes. The third set up eBGP between the routers and caught an administrative peer shutdown
+as both lost sessions plus the forbidden config line, matching findings that were written
+down before the run. `tests/test_lab_evidence.py` replays the sanitized captures. That is
+evidence about that image in that lab, not about routers in general.
 
 ## Development
 

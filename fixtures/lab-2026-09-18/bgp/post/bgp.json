@@ -1,0 +1,20 @@
+{
+  "R1": {
+    "neighbors": {
+      "1.1.1.2": {
+        "state": "Idle",
+        "vrf": "default",
+        "remote_as": 65002
+      }
+    }
+  },
+  "R2": {
+    "neighbors": {
+      "1.1.1.1": {
+        "state": "Idle",
+        "vrf": "default",
+        "remote_as": 65001
+      }
+    }
+  }
+}

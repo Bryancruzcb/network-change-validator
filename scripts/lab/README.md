@@ -1,7 +1,7 @@
 # Lab scripts
 
-The operator side of the 2026-09-12 lab runs, kept here so the evidence in
-`fixtures/lab-2026-09-12` can be reproduced and its sanitization rerun. They are written
+The operator side of the 2026-09-12 and 2026-09-18 lab runs, kept here so the evidence in
+`fixtures/lab-2026-09-12` and `fixtures/lab-2026-09-18` can be reproduced and its sanitization rerun. They are written
 for the Cisco DevNet "Cisco Modeling Labs" sandbox and its preloaded `default-lab` (R1 and
 R2 joined on Ethernet0/1), for an isolated lab you are authorized to use, and they are
 deliberately outside `ncv`: `ncv` never pushes configuration, and these scripts do, to make
@@ -11,46 +11,37 @@ the one planned change the captures are meant to catch.
 |---|---|
 | `run-lab.sh` | The static-route run in one command: pre capture, no-change check, `shutdown` on R1 Ethernet0/1, post capture and compare, `no shutdown`, restored capture and compare. |
 | `run-ospf.sh` | The OSPF run: sets up OSPF area 0 on the R1-R2 link, waits for FULL, then the same sequence, waiting for both neighbor entries to clear before the post capture. |
-| `run-bgp.sh` | The BGP run, prepared and not yet run (see below): sets up eBGP between R1 and R2, waits for Established, then the same sequence around `neighbor 1.1.1.2 shutdown` on R1. |
+| `run-bgp.sh` | The BGP run: sets up eBGP between R1 and R2, waits for Established, then the same sequence around `neighbor 1.1.1.2 shutdown` on R1. |
 | `capture.sh` | One capture (`pre`, `post`, or `restored`) for a run driven by hand. |
 | `change.sh` | The planned change by hand: `apply` shuts R1 Ethernet0/1 and `undo` brings it back; `bgp-apply` shuts the R1 peer and `bgp-undo` brings it back. |
 | `labctl.py` | The lab actions the scripts above call: `setup-ospf`, `shut`, `noshut`, `wait-full`, `wait-gone`, `setup-bgp`, `bgp-shut`, `bgp-noshut`, `wait-bgp-up`, `wait-bgp-down`. |
-| `intent-bgp.yaml` | The draft intent for the BGP run; it moves next to its captures once the run is recorded. |
 | `sanitize_capture.py` | Copies a run's `pre/`, `post/`, `restored/` for publishing with passwords and certificate bodies replaced and `raw/` left out. |
 
-The two recorded runs compare against the intents kept with their evidence
-(`fixtures/lab-2026-09-12/intent-routes.yaml` and `intent-ospf.yaml`), so a rerun on the
+The runs compare against the intents kept with their evidence
+(`fixtures/lab-2026-09-12/intent-routes.yaml` and `intent-ospf.yaml`, and
+`fixtures/lab-2026-09-18/intent-bgp.yaml`), so a rerun on the
 same sandbox is checked against the same rules.
 
-## BGP run, prepared and not yet run
+## The BGP run
 
-`run-bgp.sh` was written on 2026-09-17 from the recorded captures and has not been run
-against a lab, so there is no BGP evidence in this repository. It sets up eBGP between R1
-(AS 65001, router-id 1.1.1.1) and R2 (AS 65002, router-id 2.2.2.2) over the 1.1.1.0/24 link,
-each router advertising its own LAN, waits for Established, takes the pre capture with
-`--features bgp,routing,interface`, and checks it against `intent-bgp.yaml` before anything
-changes. The static routes the lab ships with outrank the learned prefixes, so the routing
-table does not change with the session, and the route and interface rules are the ones the
-route run used. The planned change is `neighbor 1.1.1.2 shutdown` on R1: an administrative
-peer shutdown rather than a link shutdown, so both routers drop the session at once, the
-routes and interfaces stay compliant, and the findings isolate the BGP path.
-`tests/test_lab_scripts.py` pins this prediction on synthetic snapshots shaped like the
-recorded captures:
+`run-bgp.sh` sets up eBGP between R1 (AS 65001, router-id 1.1.1.1) and R2 (AS 65002,
+router-id 2.2.2.2) over the 1.1.1.0/24 link, each router advertising its own LAN, waits for
+Established, takes the pre capture with `--features bgp,routing,interface`, and checks it
+against the intent before anything changes. The static routes the lab ships with outrank the
+learned prefixes, so the routing table does not change with the session. The planned change
+is `neighbor 1.1.1.2 shutdown` on R1: an administrative peer shutdown rather than a link
+shutdown, so both routers drop the session at once, the routes and interfaces stay
+compliant, and the findings isolate the BGP path.
+
+The script, the intent, and this table were written on 2026-09-17, before any BGP capture
+existed, and `tests/test_lab_scripts.py` pinned the table on synthetic snapshots. The run on
+2026-09-18 matched it (`fixtures/lab-2026-09-18/SOURCE.md`):
 
 | Comparison | Exit | Findings |
 |---|---|---|
 | pre vs pre | 0 | none |
 | pre vs post (`neighbor 1.1.1.2 shutdown` on R1) | 1 | `V_ADJ` R1 neighbor 1.1.1.2, `V_ADJ` R2 neighbor 1.1.1.1, `V_DRIFT` R1 (the forbidden line is present) |
 | pre vs restored | 0 | none |
-
-A real capture can disagree with that prediction, and finding out is the point of running
-it: the first real interface learn disagreed with the adapter too (PR #5). If the no-change
-check exits 1, the intent or the adapter is wrong, and the script stops before the change.
-When the run happens, record it the way the 2026-09-12 runs were: sanitize the captures,
-put them in `fixtures/lab-<date>/bgp/` with `intent-bgp.yaml` beside them, write the
-`SOURCE.md`, replay the comparisons in `tests/test_lab_evidence.py`, and update the claims in
-README, `docs/LIVE.md`, and `HANDOFF.md`. Until then, nothing in the repository may say BGP
-was exercised live.
 
 ## Running a session
 

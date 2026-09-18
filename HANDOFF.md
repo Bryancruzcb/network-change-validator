@@ -143,14 +143,24 @@ draft intent, and the predicted findings on synthetic snapshots (`V_ADJ` on both
 plus `V_DRIFT` on R1). Nothing was run against a lab and no document claims otherwise;
 `scripts/lab/README.md` says what happens when it is run and recorded.
 
+### PR #10, BGP evidence
+
+The BGP run happened on 2026-09-18 in a fresh reservation of the same sandbox, driven by
+`run-bgp.sh` unattended. Genie's BGP learn normalized with no adapter change, the no-change
+check was clean, `neighbor 1.1.1.2 shutdown` on R1 yielded `V_ADJ` on both routers plus
+`V_DRIFT` on R1, and the restored comparison was clean: the findings PR #9 predicted. The
+sanitized captures are in `fixtures/lab-2026-09-18/bgp` with `intent-bgp.yaml` and a
+`SOURCE.md`, and three more tests replay them.
+
 ## Test count
 
-**90 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
+**93 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
 the 2 policy regressions from PR #1, the 21 that came with BGP support and feature
 selection, 3 covering report provenance and the version flag, 1 that loads both
 bundled intents so the lab template cannot rot unnoticed, 2 covering the interface shape
 Genie actually learns, 6 that replay the lab evidence, 2 that pin the lab sanitizer, and 3
-that pin the BGP run's parsers, draft intent, and predicted findings.
+that pin the BGP run's parsers, intent, and predicted findings, and 3 that replay the BGP
+evidence.
 
 An earlier note claimed a 59-test baseline and a 61-test target. That was wrong for
 this tree: `11ee5bd`'s own commit message records 50 passing, and the extra 9 tests
@@ -162,7 +172,7 @@ belonged to the lost uncommitted work. Do not treat 59/61 as a regression target
 python3 -m pip install -e ".[dev]"
 python3 -m ruff check .
 python3 -m ruff format --check .
-python3 -m pytest                      # 90 passed
+python3 -m pytest                      # 93 passed
 git diff --check                       # clean
 
 python3 -m ncv diff fixtures/pre fixtures/post --intent intents/demo.yaml --report output/ci
@@ -189,16 +199,14 @@ python -m venv .venv
   `PermissionError` without it, before importing Genie and before creating output.
 - **No configuration push.** There is no `configure`/push path, and the fake-lab test
   asserts `device.configure` is never called.
-- **Claims match the evidence.** Two live runs have happened, both on 2026-09-12
-  against IOS XE 17.15 IOL in a DevNet CML sandbox (`fixtures/lab-2026-09-12`): one on static
-  routes and one with OSPF. Nothing in the repo may
+- **Claims match the evidence.** Three live runs have happened against IOS XE 17.15 IOL in a
+  DevNet CML sandbox: two on 2026-09-12 (`fixtures/lab-2026-09-12`), one on static routes and
+  one with OSPF, and one on 2026-09-18 (`fixtures/lab-2026-09-18`) with eBGP. Nothing in the repo may
   claim more than that evidence shows, and synthetic fixtures are never relabeled as
   captures.
 
 ## Open
 
-The BGP run is prepared and not run. `scripts/lab/run-bgp.sh` needs a reserved DevNet CML
-sandbox and the VPN; when it has run, record it the way the 2026-09-12 runs were
-(`scripts/lab/README.md`, "BGP run"), and only then may any document say BGP was exercised
-live. Other ideas that would widen the evidence, none of them started: a second image or
-platform (IOS XE on Cat8kv, NX-OS), and the management SSH path instead of a console server.
+Nothing is open. Ideas that would widen the evidence, none of them started: a second image
+or platform (IOS XE on Cat8kv, NX-OS), the management SSH path instead of a console server,
+and BGP beyond one eBGP session in the default VRF (iBGP, a VRF, a hold-timer loss).

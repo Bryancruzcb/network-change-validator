@@ -68,4 +68,4 @@ This is one image, IOS XE 17.15 on IOL, in one simulated lab, reached through a 
 server. It says nothing about other platforms, other Genie releases, or the management
 SSH and telnet path, which the sandbox did not route.
 The adjacency evidence is a single broadcast link in OSPF area 0, and BGP was not
-exercised.
+exercised in these runs; `fixtures/lab-2026-09-18` holds the later BGP run.

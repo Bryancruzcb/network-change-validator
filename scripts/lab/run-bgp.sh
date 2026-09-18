@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
-# The BGP run on the DevNet CML default-lab in one command. PREPARED 2026-09-17, NOT YET RUN
-# AGAINST A LAB, so no BGP evidence exists in this repository (scripts/lab/README.md, "BGP run").
-#
-# Set up eBGP between R1 (AS 65001) and R2 (AS 65002) over the 1.1.1.0/24 link, wait for
-# Established, pre capture, no-change check, `neighbor 1.1.1.2 shutdown` on R1, wait for both
-# sessions to leave Established, post capture and compare, `no neighbor 1.1.1.2 shutdown`, wait
-# for Established, restored capture and compare. The planned change is an administrative peer
-# shutdown rather than a link shutdown, so both routers drop the session at once, the routes and
-# interfaces stay compliant, and the findings isolate the BGP path: expect V_ADJ on both routers
-# plus V_DRIFT on R1 for the forbidden `neighbor 1.1.1.2 shutdown` line.
+# The BGP run on the DevNet CML default-lab in one command: set up eBGP between R1 (AS 65001)
+# and R2 (AS 65002) over the 1.1.1.0/24 link, wait for Established, pre capture, no-change check,
+# `neighbor 1.1.1.2 shutdown` on R1, wait for both sessions to leave Established, post capture and
+# compare, `no neighbor 1.1.1.2 shutdown`, wait for Established, restored capture and compare.
+# This is the run recorded in fixtures/lab-2026-09-18/bgp. The planned change is an administrative
+# peer shutdown rather than a link shutdown, so both routers drop the session at once and the
+# routes and interfaces stay compliant.
 #
 # Asks for the logins once, so the passwords stay in this terminal. Stops before touching
 # the lab if the no-change check fails. Captures go to captures/bgp-<stamp>/, reports and
@@ -26,7 +23,7 @@ stamp=$(date +%Y%m%d-%H%M)
 run="captures/bgp-$stamp"
 out="output/lab/bgp-$stamp"
 log="$out.log"
-intent="$here/intent-bgp.yaml"
+intent=fixtures/lab-2026-09-18/intent-bgp.yaml
 mkdir -p "$run" output/lab
 
 step() { echo "== $(date +%T) $*" | tee -a "$log"; }

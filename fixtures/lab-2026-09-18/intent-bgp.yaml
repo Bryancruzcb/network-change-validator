@@ -1,10 +1,7 @@
-# Draft intent for the BGP run on the DevNet CML default-lab. Prepared 2026-09-17 and NOT yet
-# run against a lab: no BGP evidence exists in this repository. scripts/lab/run-bgp.sh sets up
-# eBGP between R1 (AS 65001) and R2 (AS 65002) over the 1.1.1.0/24 link, and its no-change check
-# must exit 0 against this file before the planned change (`neighbor 1.1.1.2 shutdown` on R1).
-# Routes and interfaces are the ones the 2026-09-12 captures reported; the static routes outrank
-# the learned prefixes, so the routing table does not change with the session.
-# When the run is recorded, this file moves next to its captures under fixtures/lab-<date>/.
+# Intent used for the BGP run in fixtures/lab-2026-09-18/bgp (see SOURCE.md).
+# eBGP was set up for this run between R1 (AS 65001) and R2 (AS 65002) over the 1.1.1.0/24 link,
+# and the no-change check proved the capture matched before the planned change
+# (`neighbor 1.1.1.2 shutdown` on R1). It was written before the run, from the 2026-09-12 captures.
 intent_id: devnet-default-lab-bgp
 version: 1
 

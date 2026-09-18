@@ -1,8 +1,8 @@
-"""The first live lab captures, sanitized, replayed offline.
+"""The live lab captures, sanitized, replayed offline.
 
-fixtures/lab-2026-09-12 holds real captures from a Cisco DevNet CML sandbox (see its
-SOURCE.md). These tests pin what that run showed, so an adapter or policy change that
-would have missed the real change fails here first.
+fixtures/lab-2026-09-12 and fixtures/lab-2026-09-18 hold real captures from a Cisco DevNet
+CML sandbox (see each SOURCE.md). These tests pin what those runs showed, so an adapter or
+policy change that would have missed the real change fails here first.
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ import pytest
 from ncv.cli import main
 
 
-def _diff(root, tmp_path, run, before, after, intent):
-    lab = root / "fixtures" / "lab-2026-09-12"
+def _diff(root, tmp_path, run, before, after, intent, lab="lab-2026-09-12"):
+    lab = root / "fixtures" / lab
     report = tmp_path / f"{run}-{before}-{after}"
     code = main(
         [
@@ -62,5 +62,22 @@ def test_ospf_run_catches_both_lost_adjacencies_and_routes(root, tmp_path):
 @pytest.mark.parametrize("after", ["pre", "restored"])
 def test_ospf_run_is_clean_without_the_change(root, tmp_path, after):
     code, findings = _diff(root, tmp_path, "ospf", "pre", after, "intent-ospf.yaml")
+    assert code == 0
+    assert findings == []
+
+
+def test_bgp_run_catches_both_lost_sessions_and_the_shutdown_line(root, tmp_path):
+    code, findings = _diff(root, tmp_path, "bgp", "pre", "post", "intent-bgp.yaml", lab="lab-2026-09-18")
+    assert code == 1
+    assert findings == [
+        ("V_ADJ", "R1", "bgp.neighbors.1.1.1.2"),
+        ("V_ADJ", "R2", "bgp.neighbors.1.1.1.1"),
+        ("V_DRIFT", "R1", "config.running.must_absent"),
+    ]
+
+
+@pytest.mark.parametrize("after", ["pre", "restored"])
+def test_bgp_run_is_clean_without_the_change(root, tmp_path, after):
+    code, findings = _diff(root, tmp_path, "bgp", "pre", after, "intent-bgp.yaml", lab="lab-2026-09-18")
     assert code == 0
     assert findings == []

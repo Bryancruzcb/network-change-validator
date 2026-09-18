@@ -1,16 +1,15 @@
-"""The lab-side scripts: the sanitizer that produced the published evidence, and the BGP run
-that is prepared but not yet run.
+"""The lab-side scripts: the sanitizer that produced the published evidence, and the BGP run.
 
 scripts/lab/sanitize_capture.py is what removed the passwords and certificate bodies from
-fixtures/lab-2026-09-12 before it was committed. The first tests pin its rules on a synthetic
-config and check that every published config.json is its own fixed point, so the evidence
-in the repository is exactly what those rules leave behind.
+the captures under fixtures/lab-* before they were committed. The first tests pin its rules on
+a synthetic config and check that every published config.json is its own fixed point, so the
+evidence in the repository is exactly what those rules leave behind.
 
-scripts/lab/labctl.py reads router show output to know when a change has taken, and
-scripts/lab/intent-bgp.yaml is the intent the BGP run will check against. The rest pin the
-parsers on sample output and the findings the planned change should produce on synthetic
-snapshots shaped like the recorded captures. That is a prediction, not evidence: no BGP
-capture exists until the run happens and is recorded.
+scripts/lab/labctl.py reads router show output to know when a change has taken. The rest pin
+its parsers on sample output, and the findings the BGP run's planned change was predicted to
+produce, on synthetic snapshots shaped like the 2026-09-12 captures. That prediction was
+written before the run; the 2026-09-18 run matched it, and tests/test_lab_evidence.py replays
+the real captures.
 """
 
 from __future__ import annotations
@@ -76,8 +75,8 @@ def test_sanitizer_replaces_passwords_and_certificate_bodies_only(root):
 
 def test_published_lab_configs_are_the_sanitizers_fixed_point(root):
     sanitize = _load_script(root, "sanitize_capture.py").sanitize
-    configs = sorted((root / "fixtures" / "lab-2026-09-12").rglob("config.json"))
-    assert len(configs) == 6
+    configs = sorted((root / "fixtures").glob("lab-*/**/config.json"))
+    assert len(configs) == 9
     for path in configs:
         for device, record in json.loads(path.read_text(encoding="utf-8")).items():
             sanitized, secrets, _ = sanitize(record["running"])
@@ -111,8 +110,8 @@ def test_labctl_parsers_read_the_show_output(root):
     assert labctl.bgp_session_state(BGP_SUMMARY, "1.1.1.5") is None
 
 
-def test_bgp_draft_intent_names_both_peers(root):
-    intent = load_intent(root / "scripts" / "lab" / "intent-bgp.yaml")
+def test_bgp_intent_names_both_peers(root):
+    intent = load_intent(root / "fixtures" / "lab-2026-09-18" / "intent-bgp.yaml")
     peers = [(a.device, a.protocol, a.neighbor, a.vrf, a.remote_as) for a in intent.adjacencies]
     assert peers == [("R1", "bgp", "1.1.1.2", "default", 65002), ("R2", "bgp", "1.1.1.1", "default", 65001)]
 
@@ -161,7 +160,7 @@ def _write_snapshot(path, states, r1_extra=()):
 
 def _bgp_diff(root, tmp_path, before, after, label):
     report = tmp_path / f"report-{label}"
-    intent = root / "scripts" / "lab" / "intent-bgp.yaml"
+    intent = root / "fixtures" / "lab-2026-09-18" / "intent-bgp.yaml"
     code = main(["diff", str(before), str(after), "--intent", str(intent), "--report", str(report)])
     findings = json.loads((report / "report.json").read_text(encoding="utf-8"))["findings"]
     return code, sorted((f["policy_id"], f["device"], f["path"]) for f in findings)

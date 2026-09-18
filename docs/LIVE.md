@@ -134,7 +134,12 @@ The first real run followed this runbook with a few differences worth knowing:
   R2 kept its neighbor until its dead timer expired, so that run waited for both neighbor
   entries to clear before the post capture.
 - The first real interface learn exposed an adapter gap, fixed in PR #5.
-- The scripts that drove both runs, and the sanitizer that prepared their evidence for
+- A third run, on 2026-09-18 in a fresh reservation of the same sandbox, set up eBGP between R1
+  and R2 and captured `--features bgp,routing,interface`. The real BGP learn normalized with no
+  adapter change, and an administrative `neighbor 1.1.1.2 shutdown` on R1 showed up as `V_ADJ`
+  on both routers plus `V_DRIFT` on R1, the findings predicted the day before
+  (`fixtures/lab-2026-09-18/SOURCE.md`).
+- The scripts that drove the runs, and the sanitizer that prepared their evidence for
   publishing, are in [scripts/lab](../scripts/lab/README.md).
 
 ### After a real run
@@ -148,7 +153,7 @@ write a `SOURCE.md` beside it recording the
 environment, the collection date, and exactly what was sanitized. Never relabel the
 synthetic fixtures as a capture.
 
-The 2026-09-12 runs are recorded that way. When a new run adds evidence, update the places
+The 2026-09-12 and 2026-09-18 runs are recorded that way. When a new run adds evidence, update the places
 that describe it: `README.md` (the evidence bullet and the paragraph on what the tests
 establish), this file, and `HANDOFF.md`. Say what actually happened, with the image and
 platform named. A capture against one image is evidence about that image, not about
