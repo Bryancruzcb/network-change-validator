@@ -1,44 +1,22 @@
 # Handoff
 
-Working notes for whoever picks this up next. The work is on `main`; fetch it rather
-than applying a patch. Read "Patch bases" before trusting any commit hash quoted in an
-older note.
+Working notes for whoever picks this up next. The work is on `main`; fetch it.
 
 ## Current state
 
-- Everything below is merged into `main`. PRs [#1](https://github.com/Bryancruzcb/network-change-validator/pull/1) through
-  [#7](https://github.com/Bryancruzcb/network-change-validator/pull/7) went in on 2026-09-12, each as a fast-forward, so every hash quoted
-  in these notes is the hash the commit carries on `main`. No open PRs, no open issues,
-  and every merged branch is deleted locally and on `origin`.
+- Everything below is on `main`. PRs [#1](https://github.com/Bryancruzcb/network-change-validator/pull/1)
+  through [#11](https://github.com/Bryancruzcb/network-change-validator/pull/11) went in as
+  fast-forwards, so every hash quoted in these notes is the hash the commit carries on
+  `main`. Six commits on 2026-09-18 went straight to `main` without a PR (see "Direct
+  commits"). No open PRs, no open issues, and every merged branch is deleted.
+- `main` is protected: a commit reaches it only after the three CI jobs passed on that
+  exact commit, admins included, and force pushes and deletion are refused. Push a
+  branch, let CI finish, then fast-forward `main` to it (or merge the PR).
+- CI runs Ruff, pytest, and the fixture gates on Ubuntu 3.10, Ubuntu 3.12, and Windows
+  3.11, with pyATS and Genie absent. Each job publishes its findings table to the run
+  summary.
 - The oldest work here is built on `11ee5bd` ("Harden offline validation and fail
-  incomplete lab captures"), itself based on `716feac`.
-- CI is green on all three jobs -- Ubuntu 3.10, Ubuntu 3.12, and Windows 3.11. Windows
-  had never been exercised before this work, so that job is the first real signal for
-  the platform. Each job now publishes its findings table to the run summary.
-
-## Patch bases -- read this first
-
-This work is on `main` now, so fetch it. What follows is history, kept only
-because it explains why the same change carries different hashes in different notes.
-
-Before the push, the branch moved between machines as `git format-patch` files
-applied with `git am`. Pushes attempted from the Claude cloud sessions failed with
-**403** -- an egress-proxy restriction on that environment, not GitHub refusing the
-write. The same push succeeded from the Windows machine on 2026-09-12.
-
-`git am` re-commits, so **the same change has a different hash on each machine.**
-The Windows clone's first applied patch became `11ee5bd`; the cloud workspace knew
-that same content as `f95af0e`. Do not match patches to commits by hash.
-
-Exactly one patch had been applied on Windows before this round of work. A second
-cloud-side commit (`dc775ce`) and a set of uncommitted changes never left the cloud
-container, and that container was reclaimed before they were committed or exported.
-**They are gone.** The work they described was redone on top of `11ee5bd` and is
-now in the work recorded below; there is nothing left to recover, and no patch
-numbered after the first was ever applied.
-
-If a patch is ever needed again, base it on the current tip of `main`, not on
-`716feac` or any hash from a previous session's workspace.
+  incomplete lab captures").
 
 ## What landed
 
@@ -72,8 +50,8 @@ If a patch is ever needed again, base it on the current tip of `main`, not on
 `interface` already worked for OSPF; a field belonging to the other protocol is
 rejected by name. Snapshots gained a `bgp.json` section mirroring `ospf.json`, and the
 Genie adapter walks the instance/vrf/neighbor shape, refusing the same peer seen in two
-VRFs. A device with no BGP normalizes to no neighbors, because absence of the feature
-is not a failed capture.
+VRFs. It also claimed a device with no BGP normalizes to no neighbors; that held only for
+a hand-built empty mapping, and PR #11 corrected it.
 
 That raised the question the old code could not answer -- what happens in a lab that
 does not run BGP -- so `snapshot --testbed` takes `--features` to narrow the learned
@@ -152,19 +130,48 @@ check was clean, `neighbor 1.1.1.2 shutdown` on R1 yielded `V_ADJ` on both route
 sanitized captures are in `fixtures/lab-2026-09-18/bgp` with `intent-bgp.yaml` and a
 `SOURCE.md`, and three more tests replay them.
 
+### Direct commits on 2026-09-18, README and artifacts
+
+Six commits went straight to `main` between 19:50 and 20:07 PT, without a PR: the README
+now leads with the flow, the four policies, and the reports `ncv` wrote; `EXPLAIN.md`
+names the lab evidence; `docs/artifacts` holds the four reports and two SVG summaries;
+and `scripts/render_artifacts.py` rebuilds them. The last commit failed Ruff on all three
+CI jobs, so `main` stayed red until PR #11.
+
+### PR #11, review fixes
+
+- `scripts/render_artifacts.py` passes Ruff again. It reads and writes UTF-8 with LF
+  endings, so it runs on Windows (it used to crash writing the first SVG there), works in
+  a temporary directory instead of a hard-coded `/tmp`, runs this checkout's `ncv`
+  in-process without `PYTHONPATH`, and keeps building the files apart from writing them.
+  Its output is the checked-in files byte for byte.
+- `tests/test_artifacts.py` rebuilds every file in `docs/artifacts` and fails when one
+  falls behind the code.
+- A learn that returns no `info` now fails the capture with a message that names the
+  feature and says to leave it out of `--features`. Genie 26.8's own ops test harness
+  showed that a device which does not run BGP or OSPF returns an ops object with no
+  `info`, and the adapter used to fall back to that object's internals and report an
+  "unsupported" shape. Recording "no neighbors" instead would be unsafe: Genie cannot tell
+  "not configured" from "every show command failed to parse". The empty-BGP special case
+  that only a hand-built `{}` could reach is gone, and LIVE.md says what really happens.
+- An empty `--features` value is refused instead of quietly learning all four features,
+  and a repeated name is learned once.
+- README and `EXPLAIN.md` no longer hard-code a test count, `fixtures/lab-2026-09-12/SOURCE.md`
+  notes the unexplained configuration timestamps in the route run's pre capture, and
+  `main` is protected (see "Current state").
+
 ## Test count
 
-**93 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
+**105 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
 the 2 policy regressions from PR #1, the 21 that came with BGP support and feature
 selection, 3 covering report provenance and the version flag, 1 that loads both
 bundled intents so the lab template cannot rot unnoticed, 2 covering the interface shape
-Genie actually learns, 6 that replay the lab evidence, 2 that pin the lab sanitizer, and 3
-that pin the BGP run's parsers, intent, and predicted findings, and 3 that replay the BGP
-evidence.
-
-An earlier note claimed a 59-test baseline and a 61-test target. That was wrong for
-this tree: `11ee5bd`'s own commit message records 50 passing, and the extra 9 tests
-belonged to the lost uncommitted work. Do not treat 59/61 as a regression target.
+Genie actually learns, 6 that replay the lab evidence, 2 that pin the lab sanitizer, 3
+that pin the BGP run's parsers, intent, and predicted findings, 3 that replay the BGP
+evidence, and 12 more from PR #11 (13 new, one replaced): the artifact rebuild, a learn
+with no `info` in the adapter and in a capture, a BGP shape with no neighbors in place of
+the old empty-mapping test, an empty mapping refused for each of the five feature names,
+three empty `--features` values, and a repeated feature.
 
 ## Verify
 
@@ -172,8 +179,11 @@ belonged to the lost uncommitted work. Do not treat 59/61 as a regression target
 python3 -m pip install -e ".[dev]"
 python3 -m ruff check .
 python3 -m ruff format --check .
-python3 -m pytest                      # 93 passed
+python3 -m pytest                      # 105 passed
 git diff --check                       # clean
+python3 scripts/render_artifacts.py    # rewrites docs/artifacts with identical bytes
+git status --short docs/artifacts      # lists nothing (on Windows, run git diff instead;
+                                       # the rewrite swaps a CRLF checkout for LF)
 
 python3 -m ncv diff fixtures/pre fixtures/post --intent intents/demo.yaml --report output/ci
 # exits 1, 8 findings: V_ADJ 3, V_ROUTE 2, V_ERR 1, V_DRIFT 2
@@ -199,6 +209,11 @@ python -m venv .venv
   `PermissionError` without it, before importing Genie and before creating output.
 - **No configuration push.** There is no `configure`/push path, and the fake-lab test
   asserts `device.configure` is never called.
+- **A learn that returns nothing fails the capture.** Never turn a missing Genie `info`
+  into an empty section: it would hide a parser failure as a lost neighbor.
+- **`docs/artifacts` is what the code writes.** Rebuild it with
+  `scripts/render_artifacts.py` whenever a report changes; `tests/test_artifacts.py`
+  enforces it.
 - **Claims match the evidence.** Three live runs have happened against IOS XE 17.15 IOL in a
   DevNet CML sandbox: two on 2026-09-12 (`fixtures/lab-2026-09-12`), one on static routes and
   one with OSPF, and one on 2026-09-18 (`fixtures/lab-2026-09-18`) with eBGP. Nothing in the repo may

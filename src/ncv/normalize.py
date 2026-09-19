@@ -32,12 +32,13 @@ def learned_to_mapping(blob: Any) -> dict[str, Any]:
     info = getattr(blob, "info", None)
     if isinstance(info, dict):
         return info
-    method = getattr(blob, "to_dict", None)
-    if callable(method):
-        result = method()
-        if isinstance(result, dict):
-            return result
-    raise ValueError("learn returned no supported mapping")
+    # Genie leaves `info` unset when it learned nothing. A device that does not run the
+    # feature looks exactly like one whose show commands all failed to parse, so this is a
+    # failed capture, not an empty result.
+    raise ValueError(
+        "learn returned no info (the device does not run this feature, or its show commands "
+        "did not parse); if the lab does not run it, leave it out of --features"
+    )
 
 
 def _ospf_neighbors(data: dict[str, Any]) -> dict[str, Any]:
@@ -73,9 +74,7 @@ def _ospf_neighbors(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _bgp_neighbors(data: dict[str, Any]) -> dict[str, Any]:
-    # A device with BGP configured but no session still reports a shape; a device with
-    # no BGP at all reports nothing, and that is evidence of absence, not a bad capture.
-    if data and not any(key in data for key in ("instance", "vrf", "neighbor", "neighbors")):
+    if not any(key in data for key in ("instance", "vrf", "neighbor", "neighbors")):
         raise ValueError("unsupported BGP data: expected instance, vrf, or neighbor")
     found: dict[str, Any] = {}
 

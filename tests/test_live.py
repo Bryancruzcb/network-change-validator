@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import builtins
 import json
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -111,6 +112,16 @@ def test_unknown_features_are_refused_before_connecting(tmp_path, fake_lab, feat
     load.assert_not_called()
     device.connect.assert_not_called()
     assert not (tmp_path / "out").exists()
+
+
+def test_a_feature_the_device_does_not_run_fails_the_capture_by_name(tmp_path, fake_lab):
+    device, _ = fake_lab
+    device.learn.side_effect = lambda feature: SimpleNamespace()  # Genie learned nothing: no `info`
+    out = tmp_path / "out"
+    with pytest.raises(RuntimeError, match="during learn ospf: learn returned no info.*--features"):
+        snapshot_live("lab.yaml", str(out), True)
+    device.disconnect.assert_called_once()
+    assert not out.exists()
 
 
 @pytest.mark.parametrize("response", ["", None, "% Invalid input detected at '^' marker."])

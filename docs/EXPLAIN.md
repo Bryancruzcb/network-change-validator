@@ -9,7 +9,7 @@ Point at those pictures rather than narrating them.
 
 1. Intent is the checklist. Snapshots are evidence. A raw diff is not the same thing.
 2. Four rules: adjacency up (OSPF neighbor FULL on its intended interface, BGP peer Established in its VRF), route present, error counters under a limit, config lines present or absent.
-3. CI runs on saved fixtures so it does not need a live router. `pytest` is 93 tests today.
+3. CI runs on saved fixtures so it does not need a live router.
 4. Live capture is optional, requires `--testbed`, `--output`, and `--i-am-in-a-lab`, and is never aimed at production. Automated tests for that path use mocks. The demo snapshots in `fixtures/pre` and `fixtures/post` are synthetic. The snapshots under `fixtures/lab-2026-09-12` and `fixtures/lab-2026-09-18` are sanitized captures from three DevNet CML runs.
 
 ## What not to say

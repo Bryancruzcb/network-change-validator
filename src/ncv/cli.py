@@ -68,13 +68,13 @@ def _snapshot(args: argparse.Namespace) -> int:
     if args.testbed:
         from .live import snapshot_live
 
-        features = tuple(part.strip() for part in (args.features or "").split(",") if part.strip())
-        snapshot_live(
-            args.testbed,
-            str(out),
-            i_am_in_a_lab=args.i_am_in_a_lab,
-            features=features or LEARNED_FEATURES,
-        )
+        features = LEARNED_FEATURES
+        if args.features is not None:
+            names = [part.strip() for part in args.features.split(",") if part.strip()]
+            if not names:
+                raise ValueError(f"--features needs at least one of {', '.join(LEARNED_FEATURES)}")
+            features = tuple(dict.fromkeys(names))  # a repeated name is learned once
+        snapshot_live(args.testbed, str(out), i_am_in_a_lab=args.i_am_in_a_lab, features=features)
         mode = "live"
     else:
         if args.features is not None:

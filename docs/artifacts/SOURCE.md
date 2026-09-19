@@ -36,7 +36,10 @@ python3 -m ncv diff fixtures/lab-2026-09-18/bgp/pre \
 # exit 1, finding_count 3
 ```
 
-`scripts/render_artifacts.py` runs those diffs and overwrites this directory.
+`python3 scripts/render_artifacts.py` runs those diffs with this checkout's `ncv`,
+draws the two SVGs from the reports, and overwrites this directory with the same bytes
+on every platform. `tests/test_artifacts.py` rebuilds all of it and fails when a file
+here falls behind the code.
 
 ## What each file is
 

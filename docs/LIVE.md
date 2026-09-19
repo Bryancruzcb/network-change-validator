@@ -70,7 +70,9 @@ proves that on every commit; only the `lab` extra is the problem.
    ./.venv/bin/python -m ncv snapshot --testbed testbeds/lab.yaml        --output captures/pre --i-am-in-a-lab
    ```
 
-   Add `--features ospf,routing,interface` if the lab runs no BGP.
+   Leave out every protocol the lab does not run: `--features ospf,routing,interface`
+   without BGP, `--features routing,interface` with neither OSPF nor BGP. A learned
+   feature the device does not run fails the capture and names that feature.
 
 5. **Write the intent from that capture, not from memory.**
 
@@ -111,7 +113,9 @@ proves that on every commit; only the `lab` extra is the problem.
 
 | Symptom | Cause and fix |
 |---|---|
-| `lab capture failed ... during learn bgp` | The image reports no usable BGP shape. Re-run with `--features` minus `bgp`. |
+| `lab capture failed ... during learn <feature>: learn returned no info` | The device does not run that feature, or its show commands did not parse; Genie reports both the same way. If the lab does not run it, leave it out of `--features`. |
+| `unsupported <feature> data` | Genie learned a shape the adapter does not know. Keep the raw capture and extend the adapter with a test, the way PR #5 did for interfaces. |
+| `--features needs at least one of ...` | The value was empty. Name at least one feature, or drop the flag to learn all four. |
 | `ambiguous OSPF neighbor` / `ambiguous BGP neighbor` | The same peer appears on two interfaces, VRFs, or instances. The adapter refuses to guess; narrow the topology or extend the adapter with evidence. |
 | `unsupported lab device name` | Testbed device names allow letters, digits, `_`, and `-` only. |
 | Connect timeouts | VPN down, wrong port, or a console that needs a terminal-server port. Prove `ssh` works by hand first. |
@@ -164,9 +168,11 @@ routers in general.
 The collector learns `ospf`, `bgp`, `routing`, and `interface`, then executes
 `show running-config`. It has no configuration push or fault-application path.
 `--features` narrows the learned set, for example `--features ospf,interface` on a
-lab with no BGP; `show running-config` is always collected. A device that simply has
-no BGP configured returns nothing to normalize and records no neighbors, which is
-evidence of absence rather than a failed capture.
+lab with no BGP; `show running-config` is always collected, and an empty value is
+refused. A device that does not run a learned feature fails the capture during that
+learn: Genie returns nothing for it, exactly as it does when every show command for the
+feature fails to parse, and `ncv` does not guess which happened or record the
+feature as empty. Leave such a feature out of `--features`.
 Unicon's initialization command lists are set to empty, including overrides in
 connection arguments, to avoid default configuration initialization. Device
 plugins and testbeds are trusted executable dependencies: this is not a security

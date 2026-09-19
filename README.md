@@ -43,7 +43,8 @@ not proof that the change *caused* the break.
 
 The pictures and tables below are the reports `ncv` 0.1.0 wrote from the committed
 fixtures. They are checked in under [docs/artifacts](docs/artifacts/SOURCE.md).
-Rebuild them with `PYTHONPATH=src python3 scripts/render_artifacts.py`.
+Rebuild them with `python3 scripts/render_artifacts.py`; `tests/test_artifacts.py`
+fails when a checked-in copy falls behind the code.
 
 ### Offline demo (synthetic fixtures)
 
@@ -53,7 +54,7 @@ python3 -m pytest
 python3 -m ncv diff fixtures/pre fixtures/post --intent intents/demo.yaml --report output/demo
 ```
 
-`pytest` is **93 tests**. The last command exits **1** and writes
+The last command exits **1** and writes
 `output/demo/report.md`. That run produced **8 findings** —
 `V_ADJ` 3, `V_ROUTE` 2, `V_ERR` 1, `V_DRIFT` 2:
 

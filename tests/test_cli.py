@@ -92,6 +92,36 @@ def test_features_is_refused_for_a_directory_copy(tmp_path, root, capsys):
     assert not (tmp_path / "out").exists()
 
 
+@pytest.mark.parametrize("value", ["", ",", " , "])
+def test_an_empty_features_list_is_refused(tmp_path, capsys, value):
+    out = tmp_path / "out"
+    code = main(
+        ["snapshot", "--testbed", "lab.yaml", "--output", str(out), "--features", value, "--i-am-in-a-lab"]
+    )
+    assert code == 2
+    assert "--features needs at least one of ospf, bgp, routing, interface" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_a_repeated_feature_is_learned_once(tmp_path, fake_lab):
+    device, _ = fake_lab
+    out = tmp_path / "out"
+    code = main(
+        [
+            "snapshot",
+            "--testbed",
+            "lab.yaml",
+            "--output",
+            str(out),
+            "--features",
+            "interface, interface",
+            "--i-am-in-a-lab",
+        ]
+    )
+    assert code == 0
+    assert [call.args[0] for call in device.learn.call_args_list] == ["interface"]
+
+
 @pytest.mark.parametrize("sources", [[], ["--from-dir", "fixtures/pre", "--testbed", "lab.yaml"]])
 def test_snapshot_requires_exactly_one_source(tmp_path, sources):
     with pytest.raises(SystemExit) as error:

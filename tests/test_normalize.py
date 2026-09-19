@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
-from ncv.normalize import normalize_learn
+from ncv.normalize import learned_to_mapping, normalize_learn
 
 
 def test_ospf_preserves_parent_interface():
@@ -88,8 +90,16 @@ def test_bgp_duplicate_neighbor_across_vrfs_is_rejected():
         normalize_learn("r1", "bgp", data)
 
 
-def test_a_device_without_bgp_reports_no_neighbors():
-    assert normalize_learn("r1", "bgp", {}) == {"r1": {"neighbors": {}}}
+def test_bgp_shape_without_neighbors_normalizes_to_none():
+    data = {"instance": {"default": {"bgp_id": 65001, "vrf": {"default": {}}}}}
+    assert normalize_learn("r1", "bgp", data) == {"r1": {"neighbors": {}}}
+
+
+def test_a_learn_that_returned_no_info_is_a_failed_capture():
+    # Genie's ops object for a feature the device does not run: internals, but no `info`.
+    learned_nothing = SimpleNamespace(to_dict=lambda: {"attributes": None, "commands": None})
+    with pytest.raises(ValueError, match="no info.*leave it out of --features"):
+        learned_to_mapping(learned_nothing)
 
 
 def test_routing_uses_source_protocol_not_route_preference():
@@ -141,7 +151,8 @@ def test_interface_genie_shape_rejects_non_interface_records():
         normalize_learn("r1", "interface", data)
 
 
+@pytest.mark.parametrize("data", [{"unexpected": {}}, {}])
 @pytest.mark.parametrize("feature", ["ospf", "bgp", "routing", "interface", "unknown"])
-def test_unsupported_learn_shapes_rejected(feature):
+def test_unsupported_learn_shapes_rejected(feature, data):
     with pytest.raises(ValueError, match="unsupported"):
-        normalize_learn("r1", feature, {"unexpected": {}})
+        normalize_learn("r1", feature, data)

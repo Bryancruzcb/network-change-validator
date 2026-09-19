@@ -62,6 +62,17 @@ unedited configs, is not included. The script that did this is
 `scripts/lab/sanitize_capture.py`, and `tests/test_lab_scripts.py` checks that these
 configs are its fixed point.
 
+## Configuration timestamps
+
+In `routes/pre`, both running configs carry a `Last configuration change` stamp from
+inside the pre capture itself: R1 05:55:10 and R2 05:55:33 UTC, while that capture ran
+from 05:55:02 to 05:55:53 and nothing had been changed on the routers yet. The saved
+evidence does not show what set them. Their configuration lines match a capture taken
+from the day's first reservation (not published here) apart from one `!` separator
+line, R2 kept its stamp through the post and restored captures, and in that first
+reservation `ncv`'s first connection to R2 left no stamp at all, so it is not something
+every `ncv` connection does. No rule reads the stamp.
+
 ## What this does not establish
 
 This is one image, IOS XE 17.15 on IOL, in one simulated lab, reached through a console
