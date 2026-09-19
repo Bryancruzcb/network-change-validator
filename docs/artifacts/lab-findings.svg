@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="584" viewBox="0 0 980 584" role="img" aria-label="Lab evidence findings">
+  <rect width="980" height="584" fill="#f8fafc"/>
+  <rect x="0" y="0" width="980" height="88" fill="#0f172a"/>
+  <text x="24" y="34" font-size="20" font-family="ui-sans-serif, system-ui, sans-serif" fill="#f8fafc" font-weight="700">Lab evidence — three DevNet CML runs</text>
+  <text x="24" y="56" font-size="13" font-family="ui-sans-serif, system-ui, sans-serif" fill="#cbd5e1">IOS XE 17.15 IOL R1–R2 in Cisco Modeling Labs 2.7.2 default-lab. Sanitized captures replayed by tests/test_lab_evidence.py.</text>
+  <text x="24" y="76" font-size="12" font-family="ui-sans-serif, system-ui, sans-serif" fill="#94a3b8">pre vs pre and pre vs restored were clean (exit 0) on every run. ncv 0.1.0, report format 1.</text>
+  <rect x="16" y="96" width="948" height="100" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="32" y="118" font-size="15" font-family="ui-sans-serif, system-ui, sans-serif" font-weight="700" fill="#0f172a">2026-09-12 routes — 2 findings</text>
+  <text x="32" y="136" font-size="12" font-family="ui-sans-serif, system-ui, sans-serif" fill="#475569">Change: shutdown R1 Ethernet0/1 · intent devnet-default-lab-r1-r2</text>
+  <rect x="32" y="142" width="72" height="18" rx="5" fill="#1d4ed8"/>
+  <text x="68" y="155" text-anchor="middle" font-size="10" font-family="ui-sans-serif, system-ui, sans-serif" fill="#fff" font-weight="700">V_ROUTE</text>
+  <text x="114" y="156" font-size="12" font-family="ui-sans-serif, system-ui, sans-serif" fill="#0f172a">R1 — required prefix 20.20.20.0/24 missing from R1 vrf default</text>
+  <rect x="32" y="168" width="72" height="18" rx="5" fill="#1d4ed8"/>
+  <text x="68" y="181" text-anchor="middle" font-size="10" font-family="ui-sans-serif, system-ui, sans-serif" fill="#fff" font-weight="700">V_ROUTE</text>
+  <text x="114" y="182" font-size="12" font-family="ui-sans-serif, system-ui, sans-serif" fill="#0f172a">R1 — required prefix 1.1.1.0/24 missing from R1 vrf default</text>
+  <rect x="16" y="212" width="948" height="152" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="32" y="234" font-size="15" font-family="ui-sans-serif, system-ui, sans-serif" font-weight="700" fill="#0f172a">2026-09-12 OSPF — 4 findings</text>
+  <text x="32" y="252" font-size="12" font-family="ui-sans-serif, system-ui, sans-serif" fill="#475569">Change: same shutdown after OSPF area 0 · intent devnet-default-lab-ospf</text>
+  <rect x="32" y="258" width="72" height="18" rx="5" fill="#b45309"/>
+  <text x="68" y="271" text-anchor="middle" font-size="10" font-family="ui-sans-serif, system-ui, sans-serif" fill="#fff" font-weight="700">V_ADJ</text>
+  <text x="114" y="272" font-size="12" font-family="ui-sans-serif, system-ui, sans-serif" fill="#0f172a">R1 — required OSPF neighbor 2.2.2.2 must be FULL on Ethernet0/1</text>
+  <rect x="32" y="284" width="72" height="18" rx="5" fill="#b45309"/>
+  <text x="68" y="297" text-anchor="middle" font-size="10" font-family="ui-sans-serif, system-ui, sans-serif" fill="#fff" font-weight="700">V_ADJ</text>
+  <text x="114" y="298" font-size="12" font-family="ui-sans-serif, system-ui, sans-serif" fill="#0f172a">R2 — required OSPF neighbor 1.1.1.1 must be FULL on Ethernet0/1</text>
+  <rect x="32" y="310" width="72" height="18" rx="5" fill="#1d4ed8"/>
+  <text x="68" y="323" text-anchor="middle" font-size="10" font-family="ui-sans-serif, system-ui, sans-serif" fill="#fff" font-weight="700">V_ROUTE</text>
+  <text x="114" y="324" font-size="12" font-family="ui-sans-serif, system-ui, sans-serif" fill="#0f172a">R1 — required prefix 20.20.20.0/24 missing from R1 vrf default</text>
+  <rect x="32" y="336" width="72" height="18" rx="5" fill="#1d4ed8"/>
+  <text x="68" y="349" text-anchor="middle" font-size="10" font-family="ui-sans-serif, system-ui, sans-serif" fill="#fff" font-weight="700">V_ROUTE</text>
+  <text x="114" y="350" font-size="12" font-family="ui-sans-serif, system-ui, sans-serif" fill="#0f172a">R1 — required prefix 1.1.1.0/24 missing from R1 vrf default</text>
+  <rect x="16" y="380" width="948" height="126" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="32" y="402" font-size="15" font-family="ui-sans-serif, system-ui, sans-serif" font-weight="700" fill="#0f172a">2026-09-18 BGP — 3 findings</text>
+  <text x="32" y="420" font-size="12" font-family="ui-sans-serif, system-ui, sans-serif" fill="#475569">Change: neighbor 1.1.1.2 shutdown on R1 · intent devnet-default-lab-bgp</text>
+  <rect x="32" y="426" width="72" height="18" rx="5" fill="#b45309"/>
+  <text x="68" y="439" text-anchor="middle" font-size="10" font-family="ui-sans-serif, system-ui, sans-serif" fill="#fff" font-weight="700">V_ADJ</text>
+  <text x="114" y="440" font-size="12" font-family="ui-sans-serif, system-ui, sans-serif" fill="#0f172a">R1 — required BGP neighbor 1.1.1.2 must be Established in vrf default with remote AS 65002</text>
+  <rect x="32" y="452" width="72" height="18" rx="5" fill="#b45309"/>
+  <text x="68" y="465" text-anchor="middle" font-size="10" font-family="ui-sans-serif, system-ui, sans-serif" fill="#fff" font-weight="700">V_ADJ</text>
+  <text x="114" y="466" font-size="12" font-family="ui-sans-serif, system-ui, sans-serif" fill="#0f172a">R2 — required BGP neighbor 1.1.1.1 must be Established in vrf default with remote AS 65001</text>
+  <rect x="32" y="478" width="72" height="18" rx="5" fill="#6d28d9"/>
+  <text x="68" y="491" text-anchor="middle" font-size="10" font-family="ui-sans-serif, system-ui, sans-serif" fill="#fff" font-weight="700">V_DRIFT</text>
+  <text x="114" y="492" font-size="12" font-family="ui-sans-serif, system-ui, sans-serif" fill="#0f172a">R1 — forbidden line present: neighbor 1.1.1.2 shutdown</text>
+  <text x="24" y="574" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#64748b">Rows are the findings ncv wrote from fixtures/lab-2026-09-12 and fixtures/lab-2026-09-18. One image, one simulated lab — not routers in general.</text>
+</svg>

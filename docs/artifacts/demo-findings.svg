@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="508" viewBox="0 0 980 508" role="img" aria-label="Offline demo — 8 findings">
+  <rect width="980" height="508" fill="#ffffff"/>
+  <rect x="0" y="0" width="980" height="92" fill="#0f172a"/>
+  <text x="24" y="36" font-size="20" font-family="ui-sans-serif, system-ui, sans-serif" fill="#f8fafc" font-weight="700">Offline demo — 8 findings</text>
+  <text x="24" y="60" font-size="13" font-family="ui-sans-serif, system-ui, sans-serif" fill="#cbd5e1">fixtures/pre vs fixtures/post against intents/demo.yaml (synthetic snapshots)</text>
+  <text x="24" y="80" font-size="12" font-family="ui-sans-serif, system-ui, sans-serif" fill="#94a3b8">ncv 0.1.0 · report format 1 · intent demo-campus-core · V_ADJ 3   V_ROUTE 2   V_ERR 1   V_DRIFT 2</text>
+  <rect x="16" y="100" width="948" height="38" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+  <rect x="28" y="110" width="86" height="22" rx="6" fill="#b45309"/>
+  <text x="71" y="126" text-anchor="middle" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#fff" font-weight="700">V_ADJ</text>
+  <text x="128" y="118" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#0f172a">r1 · ospf.neighbors.10.0.12.2</text>
+  <text x="128" y="134" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#334155">required OSPF neighbor 10.0.12.2 must be FULL on GigabitEthernet0/1</text>
+  <text x="952" y="126" text-anchor="end" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#475569">FULL · GigabitEthernet0/1 → missing</text>
+  <rect x="16" y="144" width="948" height="38" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
+  <rect x="28" y="154" width="86" height="22" rx="6" fill="#b45309"/>
+  <text x="71" y="170" text-anchor="middle" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#fff" font-weight="700">V_ADJ</text>
+  <text x="128" y="162" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#0f172a">r2 · ospf.neighbors.10.0.12.1</text>
+  <text x="128" y="178" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#334155">required OSPF neighbor 10.0.12.1 must be FULL on GigabitEthernet0/1</text>
+  <text x="952" y="170" text-anchor="end" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#475569">FULL · GigabitEthernet0/1 → DOWN · GigabitEthernet0/1</text>
+  <rect x="16" y="188" width="948" height="38" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+  <rect x="28" y="198" width="86" height="22" rx="6" fill="#b45309"/>
+  <text x="71" y="214" text-anchor="middle" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#fff" font-weight="700">V_ADJ</text>
+  <text x="128" y="206" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#0f172a">r1 · bgp.neighbors.203.0.113.1</text>
+  <text x="128" y="222" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#334155">required BGP neighbor 203.0.113.1 must be Established in vrf default with remote AS 65100</text>
+  <text x="952" y="214" text-anchor="end" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#475569">Established · vrf default, AS 65100 → Idle · vrf default, AS 65100</text>
+  <rect x="16" y="232" width="948" height="38" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
+  <rect x="28" y="242" width="86" height="22" rx="6" fill="#1d4ed8"/>
+  <text x="71" y="258" text-anchor="middle" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#fff" font-weight="700">V_ROUTE</text>
+  <text x="128" y="250" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#0f172a">r1 · routing.vrfs.default.routes.10.20.0.0/24</text>
+  <text x="128" y="266" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#334155">required prefix 10.20.0.0/24 missing from r1 vrf default</text>
+  <text x="952" y="258" text-anchor="end" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#475569">ospf → missing</text>
+  <rect x="16" y="276" width="948" height="38" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+  <rect x="28" y="286" width="86" height="22" rx="6" fill="#1d4ed8"/>
+  <text x="71" y="302" text-anchor="middle" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#fff" font-weight="700">V_ROUTE</text>
+  <text x="128" y="294" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#0f172a">r2 · routing.vrfs.default.routes.10.10.0.0/24</text>
+  <text x="128" y="310" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#334155">required prefix 10.10.0.0/24 missing from r2 vrf default</text>
+  <text x="952" y="302" text-anchor="end" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#475569">ospf → missing</text>
+  <rect x="16" y="320" width="948" height="38" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
+  <rect x="28" y="330" width="86" height="22" rx="6" fill="#b91c1c"/>
+  <text x="71" y="346" text-anchor="middle" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#fff" font-weight="700">V_ERR</text>
+  <text x="128" y="338" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#0f172a">r1 · interface.GigabitEthernet0/1.counters</text>
+  <text x="128" y="354" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#334155">GigabitEthernet0/1 errors in_errors=42 (max 10), crc=9 (max 5)</text>
+  <text x="952" y="346" text-anchor="end" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#475569">in_errors=0, crc=0 → in_errors=42, crc=9</text>
+  <rect x="16" y="364" width="948" height="38" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+  <rect x="28" y="374" width="86" height="22" rx="6" fill="#6d28d9"/>
+  <text x="71" y="390" text-anchor="middle" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#fff" font-weight="700">V_DRIFT</text>
+  <text x="128" y="382" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#0f172a">r1 · config.running.must_include</text>
+  <text x="128" y="398" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#334155">required line missing: ntp server 192.0.2.1</text>
+  <text x="952" y="390" text-anchor="end" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#475569">true → false</text>
+  <rect x="16" y="408" width="948" height="38" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
+  <rect x="28" y="418" width="86" height="22" rx="6" fill="#6d28d9"/>
+  <text x="71" y="434" text-anchor="middle" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#fff" font-weight="700">V_DRIFT</text>
+  <text x="128" y="426" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#0f172a">r1 · config.running.must_absent</text>
+  <text x="128" y="442" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#334155">forbidden line present: username leftover privilege 15</text>
+  <text x="952" y="434" text-anchor="end" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#475569">false → true</text>
+  <text x="24" y="494" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#64748b">Generated from the committed fixtures by python3 -m ncv diff. Not a mock.</text>
+</svg>
