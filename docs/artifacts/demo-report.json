@@ -1,0 +1,109 @@
+{
+  "report_version": 1,
+  "ncv_version": "0.1.0",
+  "intent_id": "demo-campus-core",
+  "finding_count": 8,
+  "by_policy": {
+    "V_ADJ": 3,
+    "V_ROUTE": 2,
+    "V_ERR": 1,
+    "V_DRIFT": 2
+  },
+  "findings": [
+    {
+      "policy_id": "V_ADJ",
+      "device": "r1",
+      "path": "ospf.neighbors.10.0.12.2",
+      "before": {
+        "state": "FULL",
+        "interface": "GigabitEthernet0/1"
+      },
+      "after": null,
+      "why": "required OSPF neighbor 10.0.12.2 must be FULL on GigabitEthernet0/1",
+      "action": "inspect peer state and interface configuration in the lab"
+    },
+    {
+      "policy_id": "V_ADJ",
+      "device": "r2",
+      "path": "ospf.neighbors.10.0.12.1",
+      "before": {
+        "state": "FULL",
+        "interface": "GigabitEthernet0/1"
+      },
+      "after": {
+        "state": "DOWN",
+        "interface": "GigabitEthernet0/1"
+      },
+      "why": "required OSPF neighbor 10.0.12.1 must be FULL on GigabitEthernet0/1",
+      "action": "inspect peer state and interface configuration in the lab"
+    },
+    {
+      "policy_id": "V_ADJ",
+      "device": "r1",
+      "path": "bgp.neighbors.203.0.113.1",
+      "before": {
+        "state": "Established",
+        "vrf": "default",
+        "remote_as": 65100
+      },
+      "after": {
+        "state": "Idle",
+        "vrf": "default",
+        "remote_as": 65100
+      },
+      "why": "required BGP neighbor 203.0.113.1 must be Established in vrf default with remote AS 65100",
+      "action": "inspect the peer session, its vrf, and its remote AS in the lab"
+    },
+    {
+      "policy_id": "V_ROUTE",
+      "device": "r1",
+      "path": "routing.vrfs.default.routes.10.20.0.0/24",
+      "before": "ospf",
+      "after": null,
+      "why": "required prefix 10.20.0.0/24 missing from r1 vrf default",
+      "action": "in lab, restore the originating advertisement and re-learn routing"
+    },
+    {
+      "policy_id": "V_ROUTE",
+      "device": "r2",
+      "path": "routing.vrfs.default.routes.10.10.0.0/24",
+      "before": "ospf",
+      "after": null,
+      "why": "required prefix 10.10.0.0/24 missing from r2 vrf default",
+      "action": "in lab, restore the originating advertisement and re-learn routing"
+    },
+    {
+      "policy_id": "V_ERR",
+      "device": "r1",
+      "path": "interface.GigabitEthernet0/1.counters",
+      "before": {
+        "in_errors": 0,
+        "crc": 0
+      },
+      "after": {
+        "in_errors": 42,
+        "crc": 9
+      },
+      "why": "GigabitEthernet0/1 errors in_errors=42 (max 10), crc=9 (max 5)",
+      "action": "inspect interface counters and cabling in the lab"
+    },
+    {
+      "policy_id": "V_DRIFT",
+      "device": "r1",
+      "path": "config.running.must_include",
+      "before": true,
+      "after": false,
+      "why": "required line missing: ntp server 192.0.2.1",
+      "action": "review the intended configuration in the lab"
+    },
+    {
+      "policy_id": "V_DRIFT",
+      "device": "r1",
+      "path": "config.running.must_absent",
+      "before": false,
+      "after": true,
+      "why": "forbidden line present: username leftover privilege 15",
+      "action": "review the intended configuration in the lab"
+    }
+  ]
+}

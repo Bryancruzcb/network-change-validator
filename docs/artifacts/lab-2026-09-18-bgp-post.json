@@ -1,0 +1,55 @@
+{
+  "report_version": 1,
+  "ncv_version": "0.1.0",
+  "intent_id": "devnet-default-lab-bgp",
+  "finding_count": 3,
+  "by_policy": {
+    "V_ADJ": 2,
+    "V_DRIFT": 1
+  },
+  "findings": [
+    {
+      "policy_id": "V_ADJ",
+      "device": "R1",
+      "path": "bgp.neighbors.1.1.1.2",
+      "before": {
+        "state": "Established",
+        "vrf": "default",
+        "remote_as": 65002
+      },
+      "after": {
+        "state": "Idle",
+        "vrf": "default",
+        "remote_as": 65002
+      },
+      "why": "required BGP neighbor 1.1.1.2 must be Established in vrf default with remote AS 65002",
+      "action": "inspect the peer session, its vrf, and its remote AS in the lab"
+    },
+    {
+      "policy_id": "V_ADJ",
+      "device": "R2",
+      "path": "bgp.neighbors.1.1.1.1",
+      "before": {
+        "state": "Established",
+        "vrf": "default",
+        "remote_as": 65001
+      },
+      "after": {
+        "state": "Idle",
+        "vrf": "default",
+        "remote_as": 65001
+      },
+      "why": "required BGP neighbor 1.1.1.1 must be Established in vrf default with remote AS 65001",
+      "action": "inspect the peer session, its vrf, and its remote AS in the lab"
+    },
+    {
+      "policy_id": "V_DRIFT",
+      "device": "R1",
+      "path": "config.running.must_absent",
+      "before": false,
+      "after": true,
+      "why": "forbidden line present: neighbor 1.1.1.2 shutdown",
+      "action": "review the intended configuration in the lab"
+    }
+  ]
+}

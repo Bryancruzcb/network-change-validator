@@ -1,0 +1,29 @@
+{
+  "report_version": 1,
+  "ncv_version": "0.1.0",
+  "intent_id": "devnet-default-lab-r1-r2",
+  "finding_count": 2,
+  "by_policy": {
+    "V_ROUTE": 2
+  },
+  "findings": [
+    {
+      "policy_id": "V_ROUTE",
+      "device": "R1",
+      "path": "routing.vrfs.default.routes.20.20.20.0/24",
+      "before": "static",
+      "after": null,
+      "why": "required prefix 20.20.20.0/24 missing from R1 vrf default",
+      "action": "in lab, restore the originating advertisement and re-learn routing"
+    },
+    {
+      "policy_id": "V_ROUTE",
+      "device": "R1",
+      "path": "routing.vrfs.default.routes.1.1.1.0/24",
+      "before": "connected",
+      "after": null,
+      "why": "required prefix 1.1.1.0/24 missing from R1 vrf default",
+      "action": "in lab, restore the originating advertisement and re-learn routing"
+    }
+  ]
+}
