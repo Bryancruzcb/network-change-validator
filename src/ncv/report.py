@@ -40,6 +40,11 @@ def write_report(out_dir: str | Path, intent_id: str, findings: list[Finding]) -
     return json_path
 
 
+def finding_identity(finding: dict[str, Any]) -> tuple[str, str, str]:
+    """Device, evidence path, and reason (`why` in the report)."""
+    return (finding["device"], finding["path"], finding["why"])
+
+
 def _count(findings: list[Finding]) -> dict[str, int]:
     out: dict[str, int] = {}
     for f in findings:

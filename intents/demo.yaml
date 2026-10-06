@@ -59,10 +59,3 @@ config:
     - device: r2
       lines:
         - "username leftover privilege 15"
-
-exclude_volatile:
-  - uptime
-  - in_octets
-  - out_octets
-  - last_change
-  - hello_timer

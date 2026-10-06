@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from importlib.metadata import version
 
 import pytest
 
 from ncv import __version__
 from ncv.cli import main
+from ncv.report import finding_identity
+from scripts.check_demo_findings import main as check_findings
 
 
 def test_version_flag_prints_the_package_version(capsys):
@@ -36,7 +39,26 @@ def test_diff_demo_exits_one(tmp_path, root):
         ]
     )
     assert code == 1
-    assert (tmp_path / "report" / "report.json").exists()
+    report_json = tmp_path / "report" / "report.json"
+    assert report_json.exists()
+    got = json.loads(report_json.read_text(encoding="utf-8"))["findings"]
+    expected_path = root / "docs" / "artifacts" / "demo-report.json"
+    expected = json.loads(expected_path.read_text(encoding="utf-8"))["findings"]
+    assert [finding_identity(row) for row in got] == [finding_identity(row) for row in expected]
+    assert check_findings(["check_demo_findings.py", str(report_json), str(expected_path)]) == 0
+
+
+@pytest.mark.parametrize("field", ["device", "path", "why"])
+def test_demo_lock_rejects_a_swapped_field(tmp_path, root, field):
+    expected_path = root / "docs" / "artifacts" / "demo-report.json"
+    report = json.loads(expected_path.read_text(encoding="utf-8"))
+    report["findings"][0][field], report["findings"][1][field] = (
+        report["findings"][1][field],
+        report["findings"][0][field],
+    )
+    swapped = tmp_path / "report.json"
+    swapped.write_text(json.dumps(report), encoding="utf-8")
+    assert check_findings(["check_demo_findings.py", str(swapped), str(expected_path)]) == 1
 
 
 def test_diff_clean_exits_zero(tmp_path, root):
