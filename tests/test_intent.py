@@ -14,6 +14,7 @@ from ncv.intent import load_intent
         ({"devices": "r1"}, "expected a list"),
         ({"version": 2}, "only version 1"),
         ({"rouets": []}, "unknown field"),
+        ({"exclude_volatile": ["uptime"]}, "unknown field"),
         ({"interfaces": [{"device": "r1", "name": "Gi1", "max_crc": -1}]}, "non-negative"),
         ({"interfaces": [{"device": "r1", "name": "Gi1", "max_crc": True}]}, "non-negative"),
         ({"routes": [{"device": "r3", "prefix": "10.0.0.0/24"}]}, "not declared"),

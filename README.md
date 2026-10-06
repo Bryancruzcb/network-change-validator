@@ -186,7 +186,6 @@ flowchart TB
 - An entirely empty snapshot is an **input error**.
 - Snapshot output must be a new or empty directory. Publication happens only after
   every write succeeds, so a failed capture does not leave a partial snapshot.
-- `exclude_volatile` is accepted for compatibility and does not filter anything.
 
 ## Intent and evidence
 
@@ -263,7 +262,9 @@ so the snapshot loader and the Genie normalizer share one definition.
 
 CI runs both Ruff checks, the test suite, and the fixture diff gates on Ubuntu
 (Python 3.10 and 3.12) and Windows (Python 3.11), always with pyATS and Genie
-absent so the offline path is what gets exercised. Each job publishes the findings
+absent so the offline path is what gets exercised. The fixture diff fails when a
+finding's device, path, or why differs from the checked-in
+[demo report](docs/artifacts/demo-report.json). Each job publishes the findings
 table from its own fixture gate to the run summary.
 
 For an interview walkthrough, see [docs/EXPLAIN.md](docs/EXPLAIN.md).

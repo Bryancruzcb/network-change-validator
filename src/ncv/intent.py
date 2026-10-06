@@ -55,7 +55,6 @@ class Intent:
     interfaces: tuple[InterfaceLimit, ...] = field(default_factory=tuple)
     must_include: tuple[ConfigRule, ...] = field(default_factory=tuple)
     must_absent: tuple[ConfigRule, ...] = field(default_factory=tuple)
-    exclude_volatile: tuple[str, ...] = field(default_factory=tuple)
 
 
 _ADJACENCY_KEYS = {field for fields in ADJACENCY_FIELDS.values() for field in fields}
@@ -127,7 +126,6 @@ def load_intent(path: str | Path) -> Intent:
             "routes",
             "interfaces",
             "config",
-            "exclude_volatile",
         },
     )
     version = _integer(data.get("version", 1), f"{where}.version")
@@ -201,8 +199,4 @@ def load_intent(path: str | Path) -> Intent:
         interfaces=tuple(interfaces),
         must_include=_rules(cfg.get("must_include", []), f"{where}.config.must_include", devices),
         must_absent=_rules(cfg.get("must_absent", []), f"{where}.config.must_absent", devices),
-        exclude_volatile=tuple(
-            _text(x, f"{where}.exclude_volatile[{i}]")
-            for i, x in enumerate(_list(data.get("exclude_volatile", []), f"{where}.exclude_volatile"))
-        ),
     )

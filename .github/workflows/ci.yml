@@ -38,6 +38,7 @@ jobs:
           status=0
           python -m ncv diff fixtures/pre fixtures/post --intent intents/demo.yaml --report output/ci || status=$?
           test "$status" -eq 1
+          python scripts/check_demo_findings.py output/ci/report.json docs/artifacts/demo-report.json
           # Publish the findings table the gate just produced, so a reader sees what
           # the run checked instead of digging through the job log.
           {
