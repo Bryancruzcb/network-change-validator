@@ -160,9 +160,37 @@ CI jobs, so `main` stayed red until PR #11.
   notes the unexplained configuration timestamps in the route run's pre capture, and
   `main` is protected (see "Current state").
 
+### Branch `lab/bgp-hold-timer`, the hold-timer run, prepared and not run
+
+The fourth live path, prepared the way PR #9 prepared the BGP run. Nothing has run against a
+lab and no document claims otherwise.
+
+- `labctl.py setup-bgp-fast` is `setup-bgp` plus `neighbor <peer> timers 3 9` on both
+  routers, and `check-hold-time` reads the negotiated timers from `show bgp ipv4 unicast
+  neighbors` and stops the run unless both sessions run a 9 s hold time. Timers take effect
+  only when a session starts, so this matters on a reservation where BGP was already up.
+  `setup-bgp`'s lines moved into `bgp_setup_lines()`, and a test pins them to what the
+  2026-09-18 run sent.
+- The change is `labctl.py bgp-block`: an inbound ACL, `NCV-BLOCK-BGP`, on R1 Ethernet0/1
+  that drops TCP port 179 from R2 in both directions of the session and permits everything
+  else. Nothing is shut down, so R1 stops hearing R2's keepalives and its hold timer
+  expires. `bgp-unblock` unbinds and deletes the ACL; `change.sh holdtimer-apply|holdtimer-undo`
+  does either by hand.
+- `run-bgp-holdtimer.sh` drives it, against the draft `scripts/lab/intent-bgp-holdtimer.yaml`
+  (the BGP intent plus the timers line on both routers). It pauses before the change and at
+  the end so the operator can run a packet capture on the R1-R2 link in the CML UI.
+- `scripts/lab/bgp_pcap.py` lists the BGP messages in a classic pcap (standard library only,
+  outside ncv): TCP flags, retransmissions, OPEN timers, and NOTIFICATION codes by name. It
+  is the packet side of the evidence: the hold-timer run should show NOTIFICATION code 4,
+  where the admin shutdown would show code 6. Whether the DevNet sandbox lets a reservation
+  capture on a link has not been checked.
+- Predicted findings, pinned on synthetic snapshots: `V_ADJ` on both routers and nothing
+  else. No rule names the ACL, so the config rules stay clean; that the adjacency rules
+  catch a cause no rule anticipated is the point of the run.
+
 ## Test count
 
-**105 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
+**121 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
 the 2 policy regressions from PR #1, the 21 that came with BGP support and feature
 selection, 3 covering report provenance and the version flag, 1 that loads both
 bundled intents so the lab template cannot rot unnoticed, 2 covering the interface shape
@@ -171,7 +199,11 @@ that pin the BGP run's parsers, intent, and predicted findings, 3 that replay th
 evidence, and 12 more from PR #11 (13 new, one replaced): the artifact rebuild, a learn
 with no `info` in the adapter and in a capture, a BGP shape with no neighbors in place of
 the old empty-mapping test, an empty mapping refused for each of the five feature names,
-three empty `--features` values, and a repeated feature.
+three empty `--features` values, and a repeated feature. PR #12 brought `main` to 109. The
+hold-timer branch adds 12: 6 in `tests/test_lab_scripts.py` (the timers parser, the setup,
+block, and unblock lines, the draft intent, the predicted findings, and a pre capture without
+the timers failing the no-change check) and 6 in `tests/test_bgp_pcap.py` on captures built
+byte by byte.
 
 ## Verify
 
@@ -179,7 +211,7 @@ three empty `--features` values, and a repeated feature.
 python3 -m pip install -e ".[dev]"
 python3 -m ruff check .
 python3 -m ruff format --check .
-python3 -m pytest                      # 105 passed
+python3 -m pytest                      # 121 passed
 git diff --check                       # clean
 python3 scripts/render_artifacts.py    # rewrites docs/artifacts with identical bytes
 git status --short docs/artifacts      # lists nothing (on Windows, run git diff instead;
@@ -222,6 +254,9 @@ python -m venv .venv
 
 ## Open
 
-Nothing is open. Ideas that would widen the evidence, none of them started: a second image
-or platform (IOS XE on Cat8kv, NX-OS), the management SSH path instead of a console server,
-and BGP beyond one eBGP session in the default VRF (iBGP, a VRF, a hold-timer loss).
+The hold-timer run is prepared on `lab/bgp-hold-timer` and waits for a sandbox reservation:
+run `scripts/lab/run-bgp-holdtimer.sh`, then publish the sanitized captures (and the pcap,
+once it is checked to hold nothing but lab addresses) as PR #10 did. Ideas not started: an
+OSPF dead-timer loss (an ACL dropping IP protocol 89, the OSPF twin of the hold-timer run),
+iBGP and a VRF, a second image or platform (IOS XE on Cat8kv, NX-OS), and the management SSH
+path instead of a console server.

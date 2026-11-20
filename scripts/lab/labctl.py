@@ -12,12 +12,16 @@ Usage, with the logins in the NCV_* environment (the run-*.sh scripts prompt for
   labctl.py bgp-shut | bgp-noshut     neighbor 1.1.1.2 shutdown / no shutdown on R1
   labctl.py wait-bgp-up [seconds]     poll until both BGP sessions are Established
   labctl.py wait-bgp-down [seconds]   poll until neither BGP session is Established
+  labctl.py setup-bgp-fast            setup-bgp with a 3 s keepalive and a 9 s hold time on both peers
+  labctl.py check-hold-time           exit 1 unless both sessions negotiated the 9 s hold time
+  labctl.py bgp-block | bgp-unblock   add / remove an inbound ACL on R1 Ethernet0/1 that drops BGP from R2
 
 The testbed is testbeds/lab.yaml under the repository root, wherever this is run from.
-Genie is imported only when a command runs, so the show-output parsers here can be tested
-without the lab extra installed.
+Genie is imported only when a command runs, so the show-output parsers and the planned
+configuration lines here can be tested without the lab extra installed.
 """
 
+import re
 import sys
 import time
 from pathlib import Path
@@ -31,9 +35,18 @@ BGP = {
     "R1": {"asn": 65001, "peer": "1.1.1.2", "peer_asn": 65002, "network": "10.10.10.0"},
     "R2": {"asn": 65002, "peer": "1.1.1.1", "peer_asn": 65001, "network": "20.20.20.0"},
 }
+# The hold-timer run: keepalive and hold time in seconds. 9 s instead of IOS's default 180 s, so
+# the session drops seconds after BGP stops arriving rather than three minutes later.
+FAST_TIMERS = (3, 9)
+# The hold-timer run's change: an inbound ACL on R1's side of the link that drops TCP port 179
+# from R2 in both directions of the session, whichever router opened the TCP connection, and
+# passes everything else. Inbound interface ACLs also filter traffic addressed to the router.
+BLOCK_ACL = "NCV-BLOCK-BGP"
+BLOCK_INTERFACE = "Ethernet0/1"
 USAGE = (
     "usage: labctl.py setup-ospf | shut | noshut | wait-full [seconds] | wait-gone [seconds]"
     " | setup-bgp | bgp-shut | bgp-noshut | wait-bgp-up [seconds] | wait-bgp-down [seconds]"
+    " | setup-bgp-fast | check-hold-time | bgp-block | bgp-unblock"
 )
 
 
@@ -56,6 +69,69 @@ def bgp_session_state(output: str, peer: str):
         if fields and fields[0] == peer:
             return fields[-1].isdigit()
     return None
+
+
+_NEGOTIATED_TIMERS = re.compile(r"hold time is (\d+), keepalive interval is (\d+) seconds")
+
+
+def bgp_negotiated_timers(output: str):
+    """From `show bgp ipv4 unicast neighbors <peer>`: the (hold time, keepalive) the session
+    negotiated, read from the line that starts `Last read`, or None if the output has no such
+    line. The `Configured hold time is ...` line IOS adds when the timers differ from the
+    defaults is skipped: it says what was asked for, not what the session runs with."""
+    for line in output.splitlines():
+        if line.strip().startswith("Last read"):
+            match = _NEGOTIATED_TIMERS.search(line)
+            if match:
+                return int(match.group(1)), int(match.group(2))
+    return None
+
+
+def bgp_setup_lines(name: str, timers=None) -> list[str]:
+    """The configuration setup-bgp sends to one router; with `timers` (keepalive, hold time),
+    also the per-neighbor timers line setup-bgp-fast adds."""
+    cfg = BGP[name]
+    peer = cfg["peer"]
+    lines = [
+        f"router bgp {cfg['asn']}",
+        f"bgp router-id {ROUTER_IDS[name]}",
+        "bgp log-neighbor-changes",
+        f"neighbor {peer} remote-as {cfg['peer_asn']}",
+    ]
+    if timers:
+        lines.append(f"neighbor {peer} timers {timers[0]} {timers[1]}")
+    return lines + [
+        "address-family ipv4",
+        f"network {cfg['network']} mask 255.255.255.0",
+        f"neighbor {peer} activate",
+        # lets Genie's learn read received-routes instead of an error line
+        f"neighbor {peer} soft-reconfiguration inbound",
+        "exit-address-family",
+    ]
+
+
+def bgp_block_lines() -> list[str]:
+    """The hold-timer run's change on R1: the ACL, then its inbound binding on the link."""
+    local, remote = BGP["R2"]["peer"], BGP["R1"]["peer"]
+    return [
+        f"ip access-list extended {BLOCK_ACL}",
+        f"deny tcp host {remote} host {local} eq bgp",
+        f"deny tcp host {remote} eq bgp host {local}",
+        "permit ip any any",
+        "exit",
+        f"interface {BLOCK_INTERFACE}",
+        f"ip access-group {BLOCK_ACL} in",
+    ]
+
+
+def bgp_unblock_lines() -> list[str]:
+    """The undo for bgp_block_lines: unbind the ACL first, then delete it."""
+    return [
+        f"interface {BLOCK_INTERFACE}",
+        f"no ip access-group {BLOCK_ACL} in",
+        "exit",
+        f"no ip access-list extended {BLOCK_ACL}",
+    ]
 
 
 def ospf_check(dev, name):
@@ -104,6 +180,27 @@ def wait(tb, names, check, want, seconds, label) -> int:
             dev.disconnect()
 
 
+def check_hold_time(tb) -> int:
+    """Exit 0 only if both sessions run FAST_TIMERS. Timers change at the next session start,
+    so a session that was already up when setup-bgp-fast ran keeps the 180 s default."""
+    keepalive, hold = FAST_TIMERS
+    ok = True
+    for name, cfg in BGP.items():
+        dev = connect(tb, name)
+        try:
+            got = bgp_negotiated_timers(dev.execute(f"show bgp ipv4 unicast neighbors {cfg['peer']}"))
+        finally:
+            dev.disconnect()
+        print(f"{name}: negotiated (hold, keepalive) = {got}")
+        ok = ok and got == (hold, keepalive)
+    if not ok:
+        print(
+            f"expected hold {hold} s and keepalive {keepalive} s on both peers; reset the session with "
+            f"`clear ip bgp {BGP['R1']['peer']}` on R1 or use a fresh reservation"
+        )
+    return 0 if ok else 1
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print(USAGE)
@@ -125,24 +222,16 @@ def main() -> int:
         return wait(tb, OSPF_PEERS, ospf_check, lambda s: s is True, seconds, "both OSPF neighbors FULL")
     if cmd == "wait-gone":
         return wait(tb, OSPF_PEERS, ospf_check, lambda s: s is None, seconds, "the OSPF neighbors to clear")
-    if cmd == "setup-bgp":
-        for name, cfg in BGP.items():
-            configure(
-                tb,
-                name,
-                [
-                    f"router bgp {cfg['asn']}",
-                    f"bgp router-id {ROUTER_IDS[name]}",
-                    "bgp log-neighbor-changes",
-                    f"neighbor {cfg['peer']} remote-as {cfg['peer_asn']}",
-                    "address-family ipv4",
-                    f"network {cfg['network']} mask 255.255.255.0",
-                    f"neighbor {cfg['peer']} activate",
-                    # lets Genie's learn read received-routes instead of an error line
-                    f"neighbor {cfg['peer']} soft-reconfiguration inbound",
-                    "exit-address-family",
-                ],
-            )
+    if cmd in ("setup-bgp", "setup-bgp-fast"):
+        timers = FAST_TIMERS if cmd == "setup-bgp-fast" else None
+        for name in BGP:
+            configure(tb, name, bgp_setup_lines(name, timers))
+        return 0
+    if cmd == "check-hold-time":
+        return check_hold_time(tb)
+    if cmd in ("bgp-block", "bgp-unblock"):
+        lines = bgp_block_lines() if cmd == "bgp-block" else bgp_unblock_lines()
+        configure(tb, "R1", lines, show="show bgp ipv4 unicast summary")
         return 0
     if cmd in ("bgp-shut", "bgp-noshut"):
         line = ("" if cmd == "bgp-shut" else "no ") + f"neighbor {BGP['R1']['peer']} shutdown"

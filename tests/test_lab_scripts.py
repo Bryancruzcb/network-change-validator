@@ -132,15 +132,15 @@ R2_CONFIG = [
 ]
 
 
-def _write_snapshot(path, states, r1_extra=()):
-    """A snapshot shaped like the recorded captures, with the BGP states and R1 config given."""
+def _write_snapshot(path, states, r1_extra=(), r2_extra=()):
+    """A snapshot shaped like the recorded captures, with the BGP states and extra config given."""
     path.mkdir()
     routes = {
         "R1": {"20.20.20.0/24": {"protocol": "static"}, "1.1.1.0/24": {"protocol": "connected"}},
         "R2": {"10.10.10.0/24": {"protocol": "static"}, "1.1.1.0/24": {"protocol": "connected"}},
     }
     peers = {"R1": ("1.1.1.2", 65002), "R2": ("1.1.1.1", 65001)}
-    configs = {"R1": R1_CONFIG + list(r1_extra), "R2": R2_CONFIG}
+    configs = {"R1": R1_CONFIG + list(r1_extra), "R2": R2_CONFIG + list(r2_extra)}
     sections = {
         "ospf.json": {},
         "bgp.json": {
@@ -158,9 +158,9 @@ def _write_snapshot(path, states, r1_extra=()):
         (path / name).write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-def _bgp_diff(root, tmp_path, before, after, label):
+def _bgp_diff(root, tmp_path, before, after, label, intent=None):
     report = tmp_path / f"report-{label}"
-    intent = root / "fixtures" / "lab-2026-09-18" / "intent-bgp.yaml"
+    intent = intent or root / "fixtures" / "lab-2026-09-18" / "intent-bgp.yaml"
     code = main(["diff", str(before), str(after), "--intent", str(intent), "--report", str(report)])
     findings = json.loads((report / "report.json").read_text(encoding="utf-8"))["findings"]
     return code, sorted((f["policy_id"], f["device"], f["path"]) for f in findings)
@@ -179,3 +179,118 @@ def test_bgp_run_prediction_on_synthetic_snapshots(root, tmp_path):
             ("V_DRIFT", "R1", "config.running.must_absent"),
         ],
     )
+
+
+# The hold-timer run, prepared on 2026-11-20 and not run yet: the same eBGP session with a
+# 9 s hold time, and an inbound ACL on R1 that drops BGP from R2 as the planned change.
+
+NEIGHBOR_STALE_TIMERS = """\
+BGP neighbor is 1.1.1.2,  remote AS 65002, external link
+  BGP version 4, remote router ID 2.2.2.2
+  BGP state = Established, up for 00:01:12
+  Last read 00:00:21, last write 00:00:40, hold time is 180, keepalive interval is 60 seconds
+  Configured hold time is 9, keepalive interval is 3 seconds
+  Minimum holdtime from neighbor is 0 seconds
+"""
+
+NEIGHBOR_FAST_TIMERS = """\
+BGP neighbor is 1.1.1.1,  remote AS 65001, external link
+  BGP version 4, remote router ID 1.1.1.1
+  BGP state = Established, up for 00:00:41
+  Last read 00:00:01, last write 00:00:02, hold time is 9, keepalive interval is 3 seconds
+  Configured hold time is 9, keepalive interval is 3 seconds
+"""
+
+
+def test_labctl_reads_the_negotiated_timers_not_the_configured_ones(root):
+    labctl = _load_script(root, "labctl.py")
+    assert labctl.bgp_negotiated_timers(NEIGHBOR_FAST_TIMERS) == (9, 3)
+    # Timers configured on a session that was already up take effect only at its next start.
+    assert labctl.bgp_negotiated_timers(NEIGHBOR_STALE_TIMERS) == (180, 60)
+    assert labctl.bgp_negotiated_timers("% No such neighbor or address family") is None
+
+
+def test_labctl_setup_bgp_lines_are_unchanged_and_fast_adds_only_the_timers(root):
+    labctl = _load_script(root, "labctl.py")
+    recorded = [  # what setup-bgp sent to R1 for the 2026-09-18 run
+        "router bgp 65001",
+        "bgp router-id 1.1.1.1",
+        "bgp log-neighbor-changes",
+        "neighbor 1.1.1.2 remote-as 65002",
+        "address-family ipv4",
+        "network 10.10.10.0 mask 255.255.255.0",
+        "neighbor 1.1.1.2 activate",
+        "neighbor 1.1.1.2 soft-reconfiguration inbound",
+        "exit-address-family",
+    ]
+    assert labctl.bgp_setup_lines("R1") == recorded
+    fast = labctl.bgp_setup_lines("R2", labctl.FAST_TIMERS)
+    assert "neighbor 1.1.1.1 timers 3 9" in fast
+    assert fast.index("neighbor 1.1.1.1 timers 3 9") < fast.index("address-family ipv4")
+    assert [line for line in fast if "timers" not in line] == labctl.bgp_setup_lines("R2")
+
+
+def test_labctl_block_drops_bgp_from_r2_in_both_directions_and_nothing_else(root):
+    labctl = _load_script(root, "labctl.py")
+    assert labctl.bgp_block_lines() == [
+        "ip access-list extended NCV-BLOCK-BGP",
+        "deny tcp host 1.1.1.2 host 1.1.1.1 eq bgp",
+        "deny tcp host 1.1.1.2 eq bgp host 1.1.1.1",
+        "permit ip any any",
+        "exit",
+        "interface Ethernet0/1",
+        "ip access-group NCV-BLOCK-BGP in",
+    ]
+    assert labctl.bgp_unblock_lines() == [
+        "interface Ethernet0/1",
+        "no ip access-group NCV-BLOCK-BGP in",
+        "exit",
+        "no ip access-list extended NCV-BLOCK-BGP",
+    ]
+
+
+def test_holdtimer_intent_requires_the_fast_timers_on_both_routers(root):
+    intent = load_intent(root / "scripts" / "lab" / "intent-bgp-holdtimer.yaml")
+    peers = [(a.device, a.protocol, a.neighbor, a.vrf, a.remote_as) for a in intent.adjacencies]
+    assert peers == [("R1", "bgp", "1.1.1.2", "default", 65002), ("R2", "bgp", "1.1.1.1", "default", 65001)]
+    required = {rule.device: rule.lines for rule in intent.must_include}
+    assert "neighbor 1.1.1.2 timers 3 9" in required["R1"]
+    assert "neighbor 1.1.1.1 timers 3 9" in required["R2"]
+
+
+ACL_ON_R1 = [
+    "ip access-list extended NCV-BLOCK-BGP",
+    " deny   tcp host 1.1.1.2 host 1.1.1.1 eq bgp",
+    " deny   tcp host 1.1.1.2 eq bgp host 1.1.1.1",
+    " permit ip any any",
+    "interface Ethernet0/1",
+    " ip access-group NCV-BLOCK-BGP in",
+]
+
+
+def test_holdtimer_run_prediction_on_synthetic_snapshots(root, tmp_path):
+    """Both adjacencies fail and nothing else does: no rule names the ACL, and the routes,
+    interface counters, and required lines do not move."""
+    intent = root / "scripts" / "lab" / "intent-bgp-holdtimer.yaml"
+    r1_timers, r2_timers = [" neighbor 1.1.1.2 timers 3 9"], [" neighbor 1.1.1.1 timers 3 9"]
+    pre, post = tmp_path / "pre", tmp_path / "post"
+    _write_snapshot(pre, {"R1": "Established", "R2": "Established"}, r1_timers, r2_timers)
+    _write_snapshot(post, {"R1": "Active", "R2": "Active"}, r1_timers + ACL_ON_R1, r2_timers)
+    assert _bgp_diff(root, tmp_path, pre, pre, "baseline", intent) == (0, [])
+    assert _bgp_diff(root, tmp_path, pre, post, "change", intent) == (
+        1,
+        [("V_ADJ", "R1", "bgp.neighbors.1.1.1.2"), ("V_ADJ", "R2", "bgp.neighbors.1.1.1.1")],
+    )
+
+
+def test_holdtimer_intent_refuses_a_session_without_the_fast_timers(root, tmp_path):
+    """The no-change check is what proves the timers are configured before the change."""
+    intent = root / "scripts" / "lab" / "intent-bgp-holdtimer.yaml"
+    pre = tmp_path / "pre"
+    _write_snapshot(pre, {"R1": "Established", "R2": "Established"})
+    code, findings = _bgp_diff(root, tmp_path, pre, pre, "baseline", intent)
+    assert code == 1
+    assert findings == [
+        ("V_DRIFT", "R1", "config.running.must_include"),
+        ("V_DRIFT", "R2", "config.running.must_include"),
+    ]

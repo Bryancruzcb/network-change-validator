@@ -1,0 +1,72 @@
+# Draft intent for the BGP hold-timer run, written on 2026-11-20 before any capture exists.
+# Once the run is recorded it moves next to its evidence under fixtures/, as intent-bgp.yaml did.
+#
+# The same rules as fixtures/lab-2026-09-18/intent-bgp.yaml, plus the timers line on both
+# routers, so the no-change check proves the 9 s hold time is configured before the change.
+# The change (an inbound ACL on R1 that drops BGP from R2) is deliberately not named here: no
+# rule anticipates it, and the run shows whether the adjacency rules catch it anyway.
+intent_id: devnet-default-lab-bgp-holdtimer
+version: 1
+
+devices:
+  - R1
+  - R2
+
+adjacencies:
+  - device: R1
+    protocol: bgp
+    neighbor: 1.1.1.2
+    vrf: default
+    remote_as: 65002
+  - device: R2
+    protocol: bgp
+    neighbor: 1.1.1.1
+    vrf: default
+    remote_as: 65001
+
+routes:
+  - device: R1
+    vrf: default
+    prefix: 20.20.20.0/24
+    protocol: static
+  - device: R1
+    vrf: default
+    prefix: 1.1.1.0/24
+    protocol: connected
+  - device: R2
+    vrf: default
+    prefix: 10.10.10.0/24
+    protocol: static
+  - device: R2
+    vrf: default
+    prefix: 1.1.1.0/24
+    protocol: connected
+
+interfaces:
+  - device: R1
+    name: Ethernet0/1
+    max_in_errors: 0
+    max_crc: 0
+  - device: R2
+    name: Ethernet0/1
+    max_in_errors: 0
+    max_crc: 0
+
+config:
+  must_include:
+    - device: R1
+      lines:
+        - "router bgp 65001"
+        - "neighbor 1.1.1.2 remote-as 65002"
+        - "neighbor 1.1.1.2 timers 3 9"
+        - "ip route 20.20.20.0 255.255.255.0 1.1.1.2"
+    - device: R2
+      lines:
+        - "router bgp 65002"
+        - "neighbor 1.1.1.1 remote-as 65001"
+        - "neighbor 1.1.1.1 timers 3 9"
+        - "ip route 10.10.10.0 255.255.255.0 1.1.1.1"
+  must_absent:
+    - device: R1
+      lines:
+        - "neighbor 1.1.1.2 shutdown"

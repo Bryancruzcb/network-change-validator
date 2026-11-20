@@ -3,14 +3,18 @@
 # passwords stay in this terminal, then hands the work to labctl.py.
 # Usage: change.sh apply|undo          shut / no shut R1 Ethernet0/1 (the R1-R2 link)
 #        change.sh bgp-apply|bgp-undo  neighbor 1.1.1.2 shutdown / no shutdown on R1
+#        change.sh holdtimer-apply|holdtimer-undo  add / remove the ACL on R1 that drops BGP from R2
 set -uo pipefail
-action="${1:?usage: change.sh apply|undo|bgp-apply|bgp-undo}"
+usage="usage: change.sh apply|undo|bgp-apply|bgp-undo|holdtimer-apply|holdtimer-undo"
+action="${1:?$usage}"
 case "$action" in
   apply) cmd=shut ;;
   undo) cmd=noshut ;;
   bgp-apply) cmd=bgp-shut ;;
   bgp-undo) cmd=bgp-noshut ;;
-  *) echo "usage: change.sh apply|undo|bgp-apply|bgp-undo"; exit 2 ;;
+  holdtimer-apply) cmd=bgp-block ;;
+  holdtimer-undo) cmd=bgp-unblock ;;
+  *) echo "$usage"; exit 2 ;;
 esac
 here=$(cd "$(dirname "$0")" && pwd)
 cd "$here/../.." || exit 2
