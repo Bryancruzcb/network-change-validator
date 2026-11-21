@@ -14,7 +14,8 @@ same way and have not run: their predictions are pinned here on synthetic snapsh
 through ncv's own adapter from Genie-shaped data, and the predicted change findings are read
 from the scripts/lab/expect-<run>.txt file each run script checks its report against. The last
 tests pin what `labctl.py reset` would send, on the published configs and on ones built here;
-tests/test_labctl_commands.py runs the commands on a fake lab.
+tests/test_labctl_commands.py runs the commands on a fake lab. The very last ones pin the SSH
+testbed example, the read-only probe, and the order of the prepared SSH path run.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ import json
 import re
 
 import pytest
+import yaml
 
 from ncv.cli import main
 from ncv.intent import load_intent
@@ -1268,3 +1270,81 @@ def test_each_prepared_run_checks_its_change_findings_against_its_expected_file(
     assert "ctl reset" not in text
     assert "cap_start " in text and "\ncap_stop\nlab_finish\n" in text
     assert "cap start" not in text and "cap stop" not in text
+
+
+def _credential_values(node):
+    """Every username and password value anywhere in a parsed testbed."""
+    if isinstance(node, dict):
+        found = [v for k, v in node.items() if k in ("username", "password")]
+        return found + [v for item in node.values() for v in _credential_values(item)]
+    if isinstance(node, list):
+        return [v for item in node for v in _credential_values(item)]
+    return []
+
+
+def test_the_ssh_testbed_example_names_both_routers_by_management_address_and_holds_no_password(root):
+    text = (root / "testbeds" / "cml-ssh.yaml.example").read_text(encoding="utf-8")
+    testbed = yaml.safe_load(text)
+    devices = testbed["devices"]
+    assert {name: device["connections"]["cli"]["ip"] for name, device in devices.items()} == {
+        "R1": "10.10.20.171",
+        "R2": "10.10.20.172",
+    }
+    for device in devices.values():
+        cli = device["connections"]["cli"]
+        assert (device["os"], cli["protocol"], cli["port"]) == ("iosxe", "ssh", 22)
+        assert cli["ssh_options"].split() == [
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            "UserKnownHostsFile=output/lab/known_hosts",
+            "-o",
+            "ConnectTimeout=10",
+        ]
+        assert cli["arguments"] == {"learn_hostname": True, "connection_timeout": 60}
+    assert testbed["testbed"]["credentials"] == {
+        "default": {"username": "%ENV{NCV_SSH_USER}", "password": "%ENV{NCV_SSH_PASS}"},
+        "enable": {"password": "%ENV{NCV_LAB_PASS}"},
+    }
+    values = _credential_values(testbed)
+    assert len(values) == 3
+    assert all(re.fullmatch(r"%ENV\{NCV_\w+\}", value) for value in values)
+    assert "NCV_SSH_PASS" in text  # what makes _lib.sh ask for the SSH login
+
+
+def test_the_probe_only_reads(root):
+    text = (root / "scripts" / "lab" / "probe.sh").read_text(encoding="utf-8")
+    assert "Read-only." in text.splitlines()[1]
+    assert "\nlab_init probe\n" in text
+    assert re.findall(r"\bctl (\S+)", text) == ["probe"]
+    assert '"$here/cml_lab.py" inspect "$out-cml"' in text
+    for action in ("snap ", "compare ", "cap ", "cap_start", "lab_reset", "configure", "change.sh"):
+        assert action not in text
+    assert 'exit "$failed"' in text
+
+
+def test_the_ssh_path_run_checks_the_port_before_it_resets_and_captures_both_paths_in_order(root):
+    text = (root / "scripts" / "lab" / "run-ssh-path.sh").read_text(encoding="utf-8")
+    assert "Prepared, not run yet." in text.splitlines()[1]
+    steps = [
+        "export NCV_TESTBED=testbeds/lab.yaml",
+        '. "$here/_lib.sh"',
+        "lab_init ssh-path",
+        "lab_ssh_login",
+        'lab_tcp "$address" 22',
+        "lab_not_reachable ",
+        "\nlab_reset\n",
+        "snap console",
+        "rm -f output/lab/known_hosts",
+        "testbed=$ssh_testbed",
+        "snap ssh",
+        '"$here/compare_captures.py" "$run/console" "$run/ssh"',
+        "expect_exit same-data 0",
+        'compare console ssh access-path; expect_exit access-path 0 "$?"',
+        "\nlab_finish\n",
+    ]
+    positions = [text.index(step) for step in steps]
+    assert positions == sorted(positions)
+    assert "intent=fixtures/lab-2026-09-12/intent-routes.yaml\n" in text
+    assert "features=routing,interface\n" in text
+    assert re.findall(r"\bctl ", text) == []  # nothing but lab_reset touches the routers' configuration

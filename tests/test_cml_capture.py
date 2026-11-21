@@ -145,3 +145,16 @@ def test_start_sends_the_filter_to_the_capture_and_names_it(cml, monkeypatch, ca
     start = f"/labs/{LAB}/links/link-r1r2/capture/start"
     assert sent[-1] == ("PUT", start, {"maxtime": 900, "bpfilter": bpfilter})
     assert f"capturing {bpfilter} on the R1-R2 link of default-lab" in capsys.readouterr().out
+
+
+def test_login_from_reads_the_controller_the_lab_and_the_login(cml):
+    login = {"NCV_CML_USER": "developer", "NCV_CML_PASS": "unused"}
+    assert cml.login_from(login) == (
+        "10.10.20.161",
+        "default-lab",
+        {"username": "developer", "password": "unused"},
+    )
+    other = dict(login, NCV_CML_HOST="192.0.2.5", NCV_CML_LAB="other-lab")
+    assert cml.login_from(other)[:2] == ("192.0.2.5", "other-lab")
+    with pytest.raises(KeyError, match="NCV_CML_PASS"):
+        cml.login_from({"NCV_CML_USER": "developer"})

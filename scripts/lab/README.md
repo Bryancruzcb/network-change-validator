@@ -17,16 +17,20 @@ each run up, make the one planned change the captures are meant to catch, and
 | `run-ospf-deadtimer.sh` | The OSPF dead-timer run, prepared and not run: OSPF with a 1 s hello (so a 4 s dead interval), then the same sequence around an inbound ACL on R1 that drops OSPF from R2, with a packet capture of `ip proto 89`. It sources `_lib.sh` and exits 0 only when every comparison exits as predicted and the change comparison finds exactly the findings in its `expect-*.txt` file. |
 | `run-ibgp.sh` | The iBGP run, prepared and not run: iBGP between the routers' loopbacks, which reach each other only over OSPF, then the same sequence around the dead-timer run's OSPF ACL on R1, with a packet capture of `ip proto 89 or tcp port 179`. It sources `_lib.sh` and exits 0 only when every comparison exits as predicted and the change comparison finds exactly the findings in its `expect-*.txt` file. |
 | `run-bgp-vrf.sh` | The BGP VRF run, prepared and not run: the hold-timer run's eBGP session plus a second one to the same peer address in vrf NCV on the dot1Q subinterface Ethernet0/1.100, then the same sequence around `shutdown` on R1's subinterface, with a packet capture of `tcp port 179 or (vlan and tcp port 179)`. It sources `_lib.sh` and exits 0 only when every comparison exits as predicted and the change comparison finds exactly the findings in its `expect-*.txt` file. |
+| `run-ssh-path.sh` | The SSH path run, prepared and not run: captures the routers through the console server and then over SSH to their management addresses, and expects `compare_captures.py` and `ncv diff` against the shipped lab's intent to find no difference between the two. It exits 4, a result rather than a failure, when the management addresses do not accept TCP port 22. Its only change to the lab is `labctl.py reset`. |
+| `probe.sh` | The read-only probe: from this machine, the VPN route, a TCP test of ports 22 and 23, and a ping to both management addresses; then `cml_lab.py inspect`; then `labctl.py probe` on both routers; then three answers, each with the line it came from. It changes nothing on any device or in CML. |
 | `capture.sh` | One capture (`pre`, `post`, or `restored`) for a run driven by hand. |
 | `change.sh` | The planned change by hand: `apply` shuts R1 Ethernet0/1 and `undo` brings it back; `bgp-apply` shuts the R1 peer and `bgp-undo` brings it back; `holdtimer-apply` adds the BGP ACL and `holdtimer-undo` removes it; `deadtimer-apply` adds the OSPF ACL and `deadtimer-undo` removes it; `vrf-apply` shuts R1 Ethernet0/1.100 and `vrf-undo` brings it back. |
-| `_lib.sh` | Sourced, not run: what new run scripts share. `lab_init` checks the VPN and the testbed file, asks for each login that is not set (again until it is not empty, and without `bash -x` printing it), sets the capture and report paths (`NCV_STAMP` fixes the stamp), and installs an exit trap that stops a packet capture an early exit left running. Then `step`, `ctl`, `cap`, `snap`, `compare`, `lab_reset` (stops the run when `labctl.py reset` fails), `cap_start` and `cap_stop`, `expect_exit` and `expect_findings`, and `lab_finish`, which ends a run with exit 0 when every comparison gave its predicted exit and the change comparison its predicted findings, 3 when one did not, and warns if a password value reached the log. The four published runs keep their own copy, since they reproduce recorded runs. |
+| `_lib.sh` | Sourced, not run: what new run scripts share. `lab_init` checks the VPN and the testbed file, asks for each login that is not set (again until it is not empty, and without `bash -x` printing it; the routers' SSH login too when the testbed names `NCV_SSH_PASS`), sets the capture and report paths (`NCV_STAMP` fixes the stamp), and installs an exit trap that stops a packet capture an early exit left running. Then `step`, `ctl`, `cap`, `snap`, `compare`, `lab_reset` (stops the run when `labctl.py reset` fails), `cap_start` and `cap_stop`, `expect_exit` and `expect_findings`, `lab_tcp` (a 3 s TCP test that tells an open port from a refused one and from no answer), `lab_not_reachable` (exit 4: the devices do not answer on the path a run tests), and `lab_finish`, which ends a run with exit 0 when every comparison gave its predicted exit and the change comparison its predicted findings, 3 when one did not, and warns if a password value reached the log. The four published runs keep their own copy, since they reproduce recorded runs. |
 | `check_findings.py` | Compares a report's findings, as (policy, device, path), with an expected file: exit 0 when they are the same, 1 with a `missing:` or `unexpected:` line for each difference, 2 on bad usage or input it cannot read. `_lib.sh`'s `expect_findings` runs it. |
+| `compare_captures.py` | Whether two snapshots hold the same data: exit 0 when they do, 1 with a `<section>.<path>: <a> != <b>` line per difference (at most 40, then the count), 2 on bad usage or a section file it cannot read. It ignores `SOURCE.json` and `raw/`, compares running configs line by line, and never prints a config line that may hold a secret. |
 | `expect-ospf-deadtimer.txt`, `expect-ibgp.txt`, `expect-bgp-vrf.txt` | The predicted findings of each prepared run's change comparison, one `<policy> <device> <path>` per line, written before any capture exists. The run script checks its report against its file, and `tests/test_lab_scripts.py` reads the same file to pin the prediction. Each moves next to its evidence with the draft intent once a run is recorded. |
-| `labctl.py` | The lab actions the scripts above call: `setup-ospf`, `shut`, `noshut`, `wait-full`, `wait-gone`, `setup-bgp`, `bgp-shut`, `bgp-noshut`, `wait-bgp-up`, `wait-bgp-down`, `setup-bgp-fast`, `check-hold-time`, `bgp-block`, `bgp-unblock`, `setup-ospf-fast`, `check-dead-time`, `ospf-block`, `ospf-unblock`, `wait-ospf-lost`, `setup-ibgp`, `wait-ibgp-up`, `wait-ibgp-down`, `check-ibgp-hold-time`, `wait-vrf-gone`, `setup-vrf`, `wait-vrf-bgp-up`, `wait-vrf-bgp-down`, `check-vrf-hold-time`, `vrf-shut`, `vrf-noshut`, and `reset`, which removes what these scripts add from both routers. |
+| `labctl.py` | The lab actions the scripts above call: `setup-ospf`, `shut`, `noshut`, `wait-full`, `wait-gone`, `setup-bgp`, `bgp-shut`, `bgp-noshut`, `wait-bgp-up`, `wait-bgp-down`, `setup-bgp-fast`, `check-hold-time`, `bgp-block`, `bgp-unblock`, `setup-ospf-fast`, `check-dead-time`, `ospf-block`, `ospf-unblock`, `wait-ospf-lost`, `setup-ibgp`, `wait-ibgp-up`, `wait-ibgp-down`, `check-ibgp-hold-time`, `wait-vrf-gone`, `setup-vrf`, `wait-vrf-bgp-up`, `wait-vrf-bgp-down`, `check-vrf-hold-time`, `vrf-shut`, `vrf-noshut`, `reset`, which removes what these scripts add from both routers, and `probe`, which only reads. |
 | `sanitize_capture.py` | Copies a run's `pre/`, `post/`, `restored/` for publishing with passwords and certificate bodies replaced and `raw/` left out. |
 | `bgp_pcap.py` | Lists the BGP messages in a pcap of the lab link: TCP flags, retransmissions, and each message by name, with NOTIFICATION error codes spelled out. |
 | `link_pcap.py` | One timeline of the OSPF packets and BGP segments in a pcap of the lab link: each OSPF packet by type (a hello's timers, DR, BDR, and neighbor list; a database description's flags; an update's LSA count) and each BGP segment as `bgp_pcap.py` shows it, tagged with its VLAN when it has one. |
 | `cml_capture.py` | Starts and saves a packet capture of the R1-R2 link through the CML API (`start [--filter "<bpf expression>"]`, default `tcp port 179`, and `stop <file.pcap>`), with the CML login the run scripts already hold. |
+| `cml_lab.py` | A read-only inventory of the CML controller (`inspect [<output dir>]`): its version, node and image definitions, memory and CPU in use, and default-lab's nodes, interfaces, and links, ending with whether R1 Ethernet0/3 is free and which of `nxosv9000`, `cat8000v`, and `iosv` are available. Every call is a GET, and configurations, notes, and descriptions are dropped before anything is printed or saved. `check-login` exits 0 when CML accepts the login and 1 when it does not. |
 
 The runs compare against the intents kept with their evidence
 (`fixtures/lab-2026-09-12/intent-routes.yaml` and `intent-ospf.yaml`,
@@ -412,6 +416,95 @@ What only the run can confirm:
 - that R1's session resets at once and R2's on its hold timer;
 - that CML accepts the `vlan` capture filter.
 
+## The probe
+
+Two things decide what the next runs can do, and nothing here may guess them: whether the
+routers' management addresses (10.10.20.171 and .172, on Ethernet0/2 in vrf Mgmt-intf) answer
+over the sandbox VPN, and which node images the controller has. On 2026-09-12 the management
+addresses did not answer, and nobody recorded why. `probe.sh` asks, and changes nothing: it
+sends no configuration to any device, every CML call is a GET, and `show running-config` is
+not among the router commands.
+
+1. From this machine: `ip -brief addr show tun0`, `ip route get 10.10.20.171`, and for each
+   management address a TCP test of ports 22 and 23 and `ping -c 2 -W 2`. The TCP test has
+   three outcomes, and the difference is the question 2026-09-12 left open: `open`, `refused`
+   (the host answered), and `no answer in 3 s` (filtered or not routed).
+2. `cml_lab.py inspect output/lab/probe-<stamp>-cml`: the CML version, the node and image
+   definitions, memory and CPU in use, and default-lab's nodes, interfaces, and links. Each
+   response is saved there as JSON, without configurations, notes, or descriptions. Several
+   response shapes are unverified, so a missing field prints as unknown and a call that fails
+   is reported and skipped.
+3. `labctl.py probe`, through the console testbed: on R1 and then R2, the management path
+   (`show ip interface brief`, `show vrf`, the Mgmt-intf route and ARP tables, `show ip ssh`,
+   `show users`, and pings in vrf Mgmt-intf to the gateway 10.10.20.254 and the controller
+   10.10.20.161), what Ethernet0/0 and Ethernet0/3 connect to (`show cdp neighbors`,
+   `show interfaces Ethernet0/3`), and `show version | include Version`. A command the router
+   rejects is printed with its error and the probe goes on. It asks nothing about OSPF or BGP:
+   a fresh or reset lab runs neither, and the gate commands print that text during the runs.
+4. Three answers, each with the line it came from: do the management addresses answer on port
+   22; is R1 Ethernet0/3 free; which of `nxosv9000`, `cat8000v`, and `iosv` have a node
+   definition and at least one image.
+
+Everything goes to the screen and to `output/lab/probe-<stamp>.log`. It exits 1 when the CML
+login or the console connection to a router fails, since every run needs both, and 0
+otherwise.
+
+## The SSH path (prepared, not run)
+
+Every capture so far reached the routers through the CML console server. `run-ssh-path.sh`
+tests one claim: the access path does not change the evidence. It captures the same routers
+twice in a row, through the console server and then over SSH to their management addresses,
+and changes nothing in the lab except `labctl.py reset`, which returns a used reservation to
+the shipped configuration.
+
+Set up: `cp testbeds/cml-ssh.yaml.example testbeds/lab-ssh.yaml` (gitignored). It reaches R1 at
+10.10.20.171 and R2 at 10.10.20.172 on port 22, logs in as the router's local user
+(`NCV_SSH_USER`, default `cisco`, and `NCV_SSH_PASS`), and answers the `enable` prompt Unicon
+always sends on IOS XE with `NCV_LAB_PASS`. Host keys go to `output/lab/known_hosts`, which the
+run deletes before its SSH capture: a new reservation gives the routers new keys, and ssh
+refuses a changed one. With that file in place, any run script works over SSH with
+`NCV_TESTBED=testbeds/lab-ssh.yaml`, because `_lib.sh` asks for the SSH login whenever the
+testbed names it.
+
+The steps:
+
+1. Check that `testbeds/lab-ssh.yaml` exists and ask for the logins, the SSH one included.
+2. Port check: both management addresses must accept TCP port 22. If not, the script exits 4
+   before anything is reset or captured.
+3. `labctl.py reset` through the console testbed, so the routers carry the configuration the
+   published intent describes. If it fails, the run stops as the other runs do.
+4. Capture `console` through `testbeds/lab.yaml`, with `routing,interface`.
+5. Capture `ssh` through `testbeds/lab-ssh.yaml`, with the same features.
+6. `compare_captures.py captures/ssh-path-<stamp>/console captures/ssh-path-<stamp>/ssh`.
+7. `ncv diff` of the two against `fixtures/lab-2026-09-12/intent-routes.yaml`, the intent of
+   the shipped lab.
+
+There is no draft intent: the run reuses that published one and makes no change. The prediction:
+
+| Comparison | Exit | Findings |
+|---|---|---|
+| `compare_captures.py` console vs ssh | 0 | none: the same data in all five sections |
+| `ncv diff` console vs ssh, against `intent-routes.yaml` | 0 | none |
+
+The script exits 0 only when both give 0, 3 when it ran to the end but one did not, 4 when the
+management addresses do not answer, 1 when it stopped early, and 2 when it could not start.
+`tests/test_compare_captures.py` pins the comparison on invented snapshots, and
+`tests/test_lab_scripts.py` pins the testbed example and the order of the steps; no capture
+over SSH exists yet.
+
+If the port check fails, the result is "not reachable in this sandbox". That is a finding about
+the sandbox, not a failure of the script: run `probe.sh` again to record its reasons in the
+log, and the console server stays the only path.
+
+What only the run can confirm:
+
+- whether the management addresses answer over the VPN at all;
+- whether the routers' SSH server accepts the client's key exchange and host key algorithms;
+- whether the local user lands in user EXEC and needs `enable`, and whether Unicon handles it
+  with the `enable` credential as it did against a mock;
+- whether the two captures are identical, or differ in some field the console path renders
+  differently.
+
 ## Running a session
 
 Run from WSL or Linux: pyATS does not install on native Windows, and the VPN check uses
@@ -432,6 +525,11 @@ directory works.
    the end but did not, 1 when it stopped early, and 2 when it could not start (no VPN, no
    testbed file, or no answer to a login prompt). One that stops early still stops and saves
    its packet capture on the way out.
+
+`probe.sh` takes the same logins and is safe to run first on any reservation: it only reads.
+`run-ssh-path.sh` also needs `testbeds/lab-ssh.yaml` and asks for the routers' SSH login, and
+its exit 4 means the management addresses do not answer in this sandbox, a result recorded
+before anything is reset or captured, not a run that stopped early.
 
 `NCV_TESTBED` picks another testbed file for `labctl.py` (a relative path is read from the
 repository root), and `labctl.py reset` returns a reused reservation to the shipped

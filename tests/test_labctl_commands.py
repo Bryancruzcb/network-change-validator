@@ -4,10 +4,11 @@ The lab is reachable only during a reservation, so a typo in a command would oth
 found there. Each test replaces load_testbed with a fake testbed whose R1 and R2 append every
 connect, configure, show, and disconnect to one shared log, as (device, operation, payload),
 and answer show commands from a table the test gives; a show command the test did not expect
-fails it. Each command's test compares the whole log, so it also catches a command that
-touches the other router, a show sent before the configure it should follow, or a router left
-connected. The line builders the log is compared against are pinned literally in
-tests/test_lab_scripts.py. The clock is replaced too, so the waits never sleep.
+fails it, and an exception in the table is raised the way Unicon raises on a rejected command.
+Each command's test compares the whole log, so it also catches a command that touches the
+other router, a show sent before the configure it should follow, or a router left connected.
+The line builders the log is compared against are pinned literally in tests/test_lab_scripts.py.
+The clock is replaced too, so the waits never sleep.
 """
 
 from __future__ import annotations
@@ -38,6 +39,8 @@ class FakeDevice:
         self.name, self.answers, self.log, self.fail_on = name, answers, log, fail_on
 
     def connect(self, **kwargs):
+        if self.fail_on == "connect":
+            raise ConnectionError(f"{self.name} did not answer")
         self.log.append((self.name, "connect", None))
 
     def disconnect(self):
@@ -54,6 +57,8 @@ class FakeDevice:
         if command not in self.answers:
             pytest.fail(f"{self.name} was sent {command!r}, which this test has no answer for")
         self.log.append((self.name, "execute", command))
+        if isinstance(self.answers[command], Exception):  # the router rejected it
+            raise self.answers[command]
         return self.answers[command]
 
 
@@ -493,10 +498,10 @@ def test_a_command_that_raises_still_disconnects_every_router_it_reached(
 
 def test_every_command_in_the_table_is_exercised_here(labctl):
     checks = {"check-hold-time", "check-dead-time", "check-ibgp-hold-time", "check-vrf-hold-time", "reset"}
-    assert set(CONFIGURE_COMMANDS) | set(WAIT_COMMANDS) | checks == set(labctl.COMMANDS)
+    assert set(CONFIGURE_COMMANDS) | set(WAIT_COMMANDS) | checks | {"probe"} == set(labctl.COMMANDS)
 
 
-def test_usage_is_the_old_text_with_the_dead_timer_ibgp_and_vrf_commands_and_reset_added(labctl):
+def test_usage_is_the_old_text_with_the_dead_timer_ibgp_and_vrf_commands_reset_and_probe_added(labctl):
     assert labctl.USAGE == (
         "usage: labctl.py setup-ospf | shut | noshut | wait-full [seconds] | wait-gone [seconds]"
         " | setup-bgp | bgp-shut | bgp-noshut | wait-bgp-up [seconds] | wait-bgp-down [seconds]"
@@ -505,7 +510,7 @@ def test_usage_is_the_old_text_with_the_dead_timer_ibgp_and_vrf_commands_and_res
         " | setup-ibgp | wait-ibgp-up [seconds] | wait-ibgp-down [seconds] | check-ibgp-hold-time"
         " | wait-vrf-gone [seconds] | setup-vrf | wait-vrf-bgp-up [seconds] | wait-vrf-bgp-down [seconds]"
         " | check-vrf-hold-time | vrf-shut | vrf-noshut"
-        " | reset"
+        " | reset | probe"
     )
 
 
@@ -558,3 +563,66 @@ def test_main_loads_the_testbed_ncv_testbed_names(labctl, monkeypatch, tmp_path)
     with pytest.raises(KeyError):  # an empty testbed has no R1; the path is what this checks
         labctl.main(["labctl.py", "shut"])
     assert loaded == [chosen]
+
+
+PROBE = [
+    "show ip interface brief",
+    "show vrf",
+    "show ip route vrf Mgmt-intf",
+    "show ip arp vrf Mgmt-intf",
+    "show ip ssh",
+    "show users",
+    "ping vrf Mgmt-intf 10.10.20.254 repeat 2",
+    "ping vrf Mgmt-intf 10.10.20.161 repeat 2",
+    "show cdp neighbors",
+    "show interfaces Ethernet0/3",
+    "show version | include Version",
+]
+
+
+class SubCommandFailure(Exception):
+    """Named like the exception Unicon raises when a router answers `% Invalid input`."""
+
+
+def _probe_answers(name, rejected=None):
+    answers = {command: f"{name} answer to {command}\n" for command in PROBE}
+    if rejected:
+        answers[rejected] = SubCommandFailure("% Invalid input detected at '^' marker.")
+    return answers
+
+
+def _probe_log(name):
+    return _session(name, *(("execute", command) for command in PROBE))
+
+
+def test_probe_sends_exactly_the_read_only_list_to_r1_then_r2_and_never_configures(
+    labctl, monkeypatch, capsys
+):
+    assert list(labctl.PROBE_COMMANDS) == PROBE
+    answers = {name: _probe_answers(name) for name in ("R1", "R2")}
+    code, log = _run(labctl, monkeypatch, ["probe"], answers)
+    assert code == 0
+    assert log == _probe_log("R1") + _probe_log("R2")
+    assert capsys.readouterr().out == "".join(
+        f"{name}# {command}\n{answers[name][command]}" for name in ("R1", "R2") for command in PROBE
+    )
+    assert not [command for command in PROBE if command.startswith(("conf", "show run"))]
+
+
+def test_probe_prints_a_rejected_command_with_its_error_and_goes_on(labctl, monkeypatch, capsys):
+    answers = {"R1": _probe_answers("R1", rejected="show ip ssh"), "R2": _probe_answers("R2")}
+    code, log = _run(labctl, monkeypatch, ["probe"], answers)
+    assert code == 0
+    assert log == _probe_log("R1") + _probe_log("R2")
+    out = capsys.readouterr().out
+    assert "R1# show ip ssh: SubCommandFailure: % Invalid input detected at '^' marker.\n" in out
+    assert "R1# show users\nR1 answer to show users\n" in out
+    assert out.endswith("R2# show version | include Version\nR2 answer to show version | include Version\n")
+
+
+def test_probe_exits_1_when_it_cannot_connect_and_still_probes_the_other_router(labctl, monkeypatch, capsys):
+    answers = {"R2": _probe_answers("R2")}
+    code, log = _run(labctl, monkeypatch, ["probe"], answers, fail_on={"R1": "connect"})
+    assert code == 1
+    assert log == _probe_log("R2")
+    assert capsys.readouterr().out.startswith("R1: could not connect: ConnectionError: R1 did not answer\n")

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 
@@ -247,3 +248,33 @@ def test_snap_and_compare_refuse_to_start_without_features_and_intent(root, tmp_
     assert result.returncode != 0
     assert message in result.stderr
     assert "not-reached" not in result.stdout
+
+
+def test_lab_tcp_tells_open_refused_and_no_answer_apart(root, tmp_path):
+    with socket.socket() as listening, socket.socket() as unused:
+        listening.bind(("127.0.0.1", 0))
+        listening.listen()
+        unused.bind(("127.0.0.1", 0))  # bound, never listening: a connect is refused
+        opened, refused = listening.getsockname()[1], unused.getsockname()[1]
+        script = (
+            f'lab_tcp 127.0.0.1 {opened}; echo "rc=$?"; lab_tcp 127.0.0.1 {refused}; echo "rc=$?"; '
+            # what timeout gives when the connect hangs: a filtered or unrouted address
+            'timeout() { return 124; }; lab_tcp 192.0.2.1 22; echo "rc=$?"'
+        )
+        result = _bash(root, tmp_path, script)
+    logged = [
+        f"127.0.0.1 port {opened}: open",
+        f"127.0.0.1 port {refused}: refused",
+        "192.0.2.1 port 22: no answer in 3 s",
+    ]
+    assert result.stdout.splitlines() == [logged[0], "rc=0", logged[1], "rc=1", logged[2], "rc=124"]
+    assert _log(tmp_path).splitlines() == logged
+
+
+def test_lab_not_reachable_logs_the_result_and_exits_4(root, tmp_path):
+    result = _bash(
+        root, tmp_path, 'lab_not_reachable "the management addresses do not answer"; echo not-reached'
+    )
+    assert result.returncode == 4
+    assert "not-reached" not in result.stdout
+    assert "the management addresses do not answer" in _log(tmp_path)

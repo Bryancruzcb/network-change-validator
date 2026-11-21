@@ -1,0 +1,53 @@
+# Copy to testbeds/lab-ssh.yaml (gitignored) to reach the DevNet CML default-lab routers over SSH
+# to their management addresses (Ethernet0/2, vrf Mgmt-intf) instead of through the CML console
+# server. This path has never worked in this sandbox: on 2026-09-12 the management addresses did
+# not answer over the VPN, and nobody recorded why. Run scripts/lab/probe.sh first; it says
+# whether port 22 answers. Never point this at a work production network.
+#
+# The SSH login is the router's local user, which lands in user EXEC; Unicon always sends
+# `enable` on IOS XE and answers its password prompt with the "enable" credential. %ENV{} reads
+# the environment when the file is loaded, and an unset variable becomes an empty string without
+# any error, so scripts/lab/_lib.sh asks for NCV_SSH_USER and NCV_SSH_PASS whenever the testbed
+# it uses mentions NCV_SSH_PASS:
+#
+#   export NCV_SSH_USER=... NCV_SSH_PASS=... NCV_LAB_PASS=...
+#
+# Host keys: Unicon accepts a new key itself, but a changed one makes ssh refuse, and a new
+# reservation gives the routers new keys. So the keys go to output/lab/known_hosts (relative to
+# the repository root, where every script runs, and inside the gitignored output/), and
+# scripts/lab/run-ssh-path.sh deletes that file before its first SSH capture.
+
+testbed:
+  name: cml-ssh-lab
+  credentials:
+    default:
+      username: "%ENV{NCV_SSH_USER}"
+      password: "%ENV{NCV_SSH_PASS}"
+    enable:
+      password: "%ENV{NCV_LAB_PASS}"
+
+devices:
+  R1:
+    os: iosxe
+    type: router
+    connections:
+      cli:
+        protocol: ssh
+        ip: 10.10.20.171
+        port: 22
+        ssh_options: -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=output/lab/known_hosts -o ConnectTimeout=10
+        arguments:
+          learn_hostname: true
+          connection_timeout: 60
+  R2:
+    os: iosxe
+    type: router
+    connections:
+      cli:
+        protocol: ssh
+        ip: 10.10.20.172
+        port: 22
+        ssh_options: -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=output/lab/known_hosts -o ConnectTimeout=10
+        arguments:
+          learn_hostname: true
+          connection_timeout: 60

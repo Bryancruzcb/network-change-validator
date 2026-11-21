@@ -31,10 +31,12 @@ Usage, with the logins in the NCV_* environment (the run-*.sh scripts prompt for
   labctl.py check-vrf-hold-time       exit 1 unless both vrf NCV sessions negotiated the 9 s hold time
   labctl.py vrf-shut | vrf-noshut     shutdown / no shutdown on R1 Ethernet0/1.100
   labctl.py reset                     remove what these scripts add from R1 and R2, back to what ships
+  labctl.py probe                     print what a fixed list of read-only commands shows on R1 and R2
 
 The testbed is the file NCV_TESTBED names (a relative path is read from the repository root),
 or testbeds/lab.yaml under the repository root when NCV_TESTBED is unset or empty, wherever
-this is run from. The check-* commands print each show command and the raw text they parsed
+this is run from. `probe` changes nothing: it only reads, and it leaves out `show running-config`,
+which holds the passwords. The check-* commands print each show command and the raw text they parsed
 before their reading, so a run's log keeps that text. Genie is imported only when a command
 runs, so the show-output parsers, the planned configuration lines, and the command table here
 can be tested without the lab extra installed.
@@ -114,6 +116,29 @@ VRF_BGP_NEIGHBORS = f"show bgp vpnv4 unicast vrf {VRF} neighbors"
 # What the sandbox ships in Ethernet0/3, the one spare port. reset puts it back when a run has
 # used it; the order IOS lists the two lines in does not matter.
 SHIPPED_ETHERNET0_3 = ("no ip address", "shutdown")
+# What `probe` runs on each router, in order. Every one only reads; `show running-config` is left
+# out because it holds the passwords. A fresh or reset lab runs neither OSPF nor BGP, so nothing
+# here asks about them: the check-* commands print that raw text during the runs.
+PROBE_COMMANDS = (
+    # The management path: whether Ethernet0/2 in vrf Mgmt-intf is up, has its route back through
+    # 10.10.20.254 and an ARP entry for it, runs an SSH server, and reaches the gateway and the
+    # CML controller. On 2026-09-12 the management addresses did not answer over the VPN, and
+    # nobody recorded why.
+    "show ip interface brief",
+    "show vrf",
+    "show ip route vrf Mgmt-intf",
+    "show ip arp vrf Mgmt-intf",
+    "show ip ssh",
+    "show users",
+    "ping vrf Mgmt-intf 10.10.20.254 repeat 2",
+    "ping vrf Mgmt-intf 10.10.20.161 repeat 2",
+    # What Ethernet0/0 and Ethernet0/3 connect to: CDP names any router on the far side, and the
+    # spare port's own counters and state show whether anything is attached.
+    "show cdp neighbors",
+    "show interfaces Ethernet0/3",
+    # The software release, which decides which show formats the parsers meet.
+    "show version | include Version",
+)
 
 
 def testbed_path(environ) -> Path:
@@ -547,6 +572,31 @@ def reset(tb) -> int:
     return 0
 
 
+def probe(tb) -> int:
+    """Run PROBE_COMMANDS on R1 and then R2, printing each command and its output as it came.
+    A command the router rejects is printed with the error and the probe goes on (Unicon raises
+    on `% Invalid input`), so it fails only when it cannot connect to a router."""
+    failed = []
+    for name in ROUTER_IDS:
+        try:
+            dev = connect(tb, name)
+        except Exception as err:  # whatever Unicon raises, the console path itself is broken
+            print(f"{name}: could not connect: {type(err).__name__}: {err}")
+            failed.append(name)
+            continue
+        try:
+            for command in PROBE_COMMANDS:
+                try:
+                    output = dev.execute(command)
+                except Exception as err:
+                    print(f"{name}# {command}: {type(err).__name__}: {err}")
+                    continue
+                print(echoed(name, command, output), end="")
+        finally:
+            dev.disconnect()
+    return 1 if failed else 0
+
+
 def _send(name, lines, show=None):
     """A command that sends fixed lines to one router."""
 
@@ -682,6 +732,7 @@ COMMANDS: dict[str, tuple[str, Callable[[Any, int], int]]] = {
     "vrf-shut": ("vrf-shut", _send("R1", vrf_shut_lines(), VRF_BGP_SUMMARY)),
     "vrf-noshut": ("vrf-noshut", _send("R1", vrf_noshut_lines(), VRF_BGP_SUMMARY)),
     "reset": ("reset", lambda tb, seconds: reset(tb)),
+    "probe": ("probe", lambda tb, seconds: probe(tb)),
 }
 USAGE = "usage: labctl.py " + " | ".join(usage for usage, _ in COMMANDS.values())
 

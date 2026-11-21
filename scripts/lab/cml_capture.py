@@ -110,25 +110,42 @@ def _request(host: str, method: str, path: str, token: str | None = None, body=N
         return resp.read()
 
 
+def login_from(environ) -> tuple[str, str, dict]:
+    """(controller, lab title, login body) from the environment. A missing NCV_CML_USER or
+    NCV_CML_PASS raises KeyError naming it. cml_lab.py reads the same variables through this."""
+    host = environ.get("NCV_CML_HOST", DEFAULT_HOST)
+    title = environ.get("NCV_CML_LAB", DEFAULT_LAB)
+    return host, title, {"username": environ["NCV_CML_USER"], "password": environ["NCV_CML_PASS"]}
+
+
+def authenticate(request, host: str, login: dict) -> str:
+    """The session token, through `request(host, method, path, token, body) -> bytes`."""
+    return json.loads(request(host, "POST", "/authenticate", body=login))
+
+
+def getter(request, host: str, token: str) -> Get:
+    """A `get(path) -> parsed JSON` for one session, through `request`."""
+
+    def get(path: str):
+        return json.loads(request(host, "GET", path, token))
+
+    return get
+
+
 def main(argv: list[str]) -> int:
     parsed = parse_args(argv)
     if parsed is None:
         print(USAGE)
         return 2
     action, bpfilter, output = parsed
-    host = os.environ.get("NCV_CML_HOST", DEFAULT_HOST)
-    title = os.environ.get("NCV_CML_LAB", DEFAULT_LAB)
     try:
-        login = {"username": os.environ["NCV_CML_USER"], "password": os.environ["NCV_CML_PASS"]}
+        host, title, login = login_from(os.environ)
     except KeyError as missing:
         print(f"cml_capture.py: {missing.args[0]} is not set")
         return 2
     try:
-        token = json.loads(_request(host, "POST", "/authenticate", body=login))
-
-        def get(path: str):
-            return json.loads(_request(host, "GET", path, token))
-
+        token = authenticate(_request, host, login)
+        get = getter(_request, host, token)
         lab_id, link_id = locate(get, title)
         capture = f"/labs/{lab_id}/links/{link_id}/capture"
         if action == "start":

@@ -29,6 +29,11 @@
 #   ${!name:+x}, so `bash -x` never prints a value. Closed input with nothing typed is exit 2,
 #   not an endless prompt.
 # lab_ssh_login                        lab_ask for NCV_SSH_USER (default cisco) and NCV_SSH_PASS
+# lab_tcp <host> <port>
+#   A TCP connect test with a 3 s timeout. Logs "<host> port <port>: open", "refused", or
+#   "no answer in 3 s" and returns 0, 1, or 124. A refusal means the host answered; no answer
+#   means the packets were filtered or not routed. Which of the two it is was the question the
+#   2026-09-12 attempt to reach the management addresses left open.
 # step <text>                          a timestamped line on the terminal and in the log
 # ctl <args>                           labctl.py, logged, returning its exit code
 # cap <args>                           cml_capture.py, logged, returning its exit code
@@ -61,6 +66,11 @@
 #   and 3 when one did not, so a session script can tell a run that matched its prediction
 #   from one that finished but did not. Exit 1 stays "stopped early" and exit 2 "could not
 #   start", as in the existing scripts.
+# lab_not_reachable <text>
+#   Logs the text and exits 4: a run whose devices do not answer on the path it tests
+#   (run-ssh-path.sh when the management addresses refuse or ignore port 22). That is a
+#   result about the sandbox, recorded before anything is captured or changed, not a run that
+#   stopped early, so a session table must not report it as exit 1 would be.
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   echo "scripts/lab/_lib.sh is sourced by the run scripts; it does nothing on its own." >&2
@@ -135,6 +145,24 @@ compare() {
   : "${features:?set features before snap}" "${intent:?set intent before compare}"
   "$py" -m ncv diff "$run/$1" "$run/$2" --intent "$intent" --report "$out-$3" 2>&1 | tee -a "$log"
   return "${PIPESTATUS[0]}"
+}
+
+lab_tcp() {
+  local host=$1 port=$2 rc outcome
+  timeout 3 bash -c "</dev/tcp/$host/$port" 2>/dev/null
+  rc=$?
+  case $rc in
+    0) outcome=open ;;
+    124) outcome="no answer in 3 s" ;;
+    *) outcome=refused; rc=1 ;;
+  esac
+  echo "$host port $port: $outcome" | tee -a "$log"
+  return "$rc"
+}
+
+lab_not_reachable() {
+  step "$*"
+  exit 4
 }
 
 lab_reset() {
