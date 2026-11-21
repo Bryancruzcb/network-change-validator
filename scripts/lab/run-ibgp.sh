@@ -32,6 +32,7 @@
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 . "$here/_lib.sh"
+lab_takes_no_arguments "$@"
 lab_init ibgp
 features=ospf,bgp,routing,interface
 intent=scripts/lab/intent-ibgp.yaml

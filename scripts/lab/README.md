@@ -22,10 +22,10 @@ for the second-platform run, and `cml_lab.py remove-r3` takes them out again.
 | `run-second-platform.sh` | The second-platform run, prepared and not run: `run-second-platform.sh nxosv9000\|cat8000v\|iosv` adds R3, a router of that platform, with `cml_lab.py add-r3`, links it to R1 Ethernet0/3, sets up OSPF and eBGP between R1 and R3, then the same sequence around `shutdown` on R1 Ethernet0/3, captured on all three routers. It refuses an unknown platform, or a testbed whose R3 has another `os`, before asking for any login. It sources `_lib.sh`, exits 0 only when every comparison exits as predicted and the change comparison finds exactly the findings in its platform's `expect-*.txt` file, and leaves R3 in the lab. |
 | `run-ssh-path.sh` | The SSH path run, prepared and not run: captures the routers through the console server and then over SSH to their management addresses, and expects `compare_captures.py` and `ncv diff` against the shipped lab's intent to find no difference between the two. It exits 4, a result rather than a failure, when the management addresses do not accept TCP port 22. Its only change to the lab is `labctl.py reset`. |
 | `probe.sh` | The read-only probe: from this machine, the VPN route, a TCP test of ports 22 and 23, and a ping to both management addresses; then `cml_lab.py inspect`; then `labctl.py probe` on both routers; then three answers, each with the line it came from. It changes nothing on any device or in CML. |
-| `run-session.sh` | A whole session with one login: `run-session.sh [name ...]` checks every name and the VPN, asks for the logins once (the routers' SSH login only when `ssh-path` is named), checks the CML login with `cml_lab.py check-login`, then runs `probe`, `ospf-deadtimer`, `ibgp`, `bgp-vrf`, `ssh-path`, `second-platform:<platform>`, or `reset` in the order given (by default `probe ospf-deadtimer ibgp bgp-vrf reset`), and ends with a table of each run's exit status, what it means, and where its log is. |
+| `run-session.sh` | A whole session with one login: `run-session.sh [name ...]` checks every name and the VPN, asks for the logins once (the routers' SSH login only when `ssh-path` is named), checks the CML login with `cml_lab.py check-login`, then runs `probe`, `ospf-deadtimer`, `ibgp`, `bgp-vrf`, `ssh-path`, `second-platform:<platform>`, `reset`, or `remove-r3` in the order given (by default `probe ospf-deadtimer ibgp bgp-vrf reset`), and ends with a table of each run's exit status, what it means, and where its log is. Before any prompt it also checks the testbed file each named run needs. `reset` and `remove-r3` run `labctl.py reset` and `cml_lab.py remove-r3` with the logins it asked for. |
 | `capture.sh` | One capture (`pre`, `post`, or `restored`) for a run driven by hand. |
 | `change.sh` | The planned change by hand: `apply` shuts R1 Ethernet0/1 and `undo` brings it back; `bgp-apply` shuts the R1 peer and `bgp-undo` brings it back; `holdtimer-apply` adds the BGP ACL and `holdtimer-undo` removes it; `deadtimer-apply` adds the OSPF ACL and `deadtimer-undo` removes it; `vrf-apply` shuts R1 Ethernet0/1.100 and `vrf-undo` brings it back; `r3-apply` shuts R1 Ethernet0/3, the link to R3, and `r3-undo` brings it back. |
-| `_lib.sh` | Sourced, not run: what new run scripts share. `lab_init` checks the VPN and the testbed file, asks for each login that is not set (through `lab_vpn_up` and `lab_logins`, which `run-session.sh` uses too) (again until it is not empty, and without `bash -x` printing it; the routers' SSH login too when the testbed names `NCV_SSH_PASS`), sets the capture and report paths (`NCV_STAMP` fixes the stamp), and installs an exit trap that stops a packet capture an early exit left running. Then `step`, `ctl`, `cap`, `snap`, `compare`, `lab_reset` (stops the run when `labctl.py reset` fails), `cap_start` and `cap_stop`, `expect_exit` and `expect_findings`, `lab_tcp` (a 3 s TCP test that tells an open port from a refused one and from no answer), `lab_not_reachable` (exit 4: the devices do not answer on the path a run tests), and `lab_finish`, which ends a run with exit 0 when every comparison gave its predicted exit and the change comparison its predicted findings, 3 when one did not, and warns if a password value reached the log. The four published runs keep their own copy, since they reproduce recorded runs. |
+| `_lib.sh` | Sourced, not run: what new run scripts share. `lab_init` checks the VPN and the testbed file, asks for each login that is not set (through `lab_vpn_up` and `lab_logins`, which `run-session.sh` uses too) (again until it is not empty, and without `bash -x` printing it; the routers' SSH login too when the testbed names `NCV_SSH_PASS`), sets the capture and report paths (`NCV_STAMP` fixes the stamp), and installs an exit trap that stops a packet capture an early exit left running. Then `step`, `ctl`, `cap`, `snap`, `compare`, `lab_reset` (stops the run when `labctl.py reset` fails, naming `run-session.sh reset` as the way to retry it), `cap_start` and `cap_stop`, `expect_exit` and `expect_findings`, `lab_tcp` (a 3 s TCP test whose four outcomes are `open`, `refused`, `unreachable (<bash's reason>)`, and `no answer in 3 s`), `lab_takes_no_arguments` (`-h` prints the script's header and exits 0, any other argument exits 2), `lab_testbed_os` and `lab_r3_testbed_fits` (the R3 testbed checks `run-second-platform.sh` and `run-session.sh` share), `lab_not_reachable` (exit 4: the devices do not answer on the path a run tests), and `lab_finish`, which ends a run with exit 0 when every comparison gave its predicted exit and the change comparison its predicted findings, 3 when one did not, and warns if a password value reached the log. The four published runs keep their own copy, since they reproduce recorded runs. |
 | `check_findings.py` | Compares a report's findings, as (policy, device, path), with an expected file: exit 0 when they are the same, 1 with a `missing:` or `unexpected:` line for each difference, 2 on bad usage or input it cannot read. `_lib.sh`'s `expect_findings` runs it. |
 | `compare_captures.py` | Whether two snapshots hold the same data: exit 0 when they do, 1 with a `<section>.<path>: <a> != <b>` line per difference (at most 40, then the count), 2 on bad usage or a section file it cannot read. It ignores `SOURCE.json` and `raw/`, compares running configs line by line, and never prints a config line that may hold a secret. |
 | `expect-ospf-deadtimer.txt`, `expect-ibgp.txt`, `expect-bgp-vrf.txt`, `expect-second-platform-<platform>.txt` | The predicted findings of each prepared run's change comparison (one file per R3 platform for the second-platform run), one `<policy> <device> <path>` per line, written before any capture exists. The run script checks its report against its file, and `tests/test_lab_scripts.py` reads the same file to pin the prediction. Each moves next to its evidence with the draft intent once a run is recorded. |
@@ -588,7 +588,12 @@ Assumptions the first session must check, each with how it fails:
 
 - **Try the platforms in the order `iosv`, `cat8000v`, `nxosv9000`.** IOSv is light, boots in a
   few minutes, and needs neither a licence nor a boot line; NX-OS 9000v needs about 8 GB and up
-  to 15 minutes. `probe.sh` says which have a node definition and an image first.
+  to 15 minutes. `probe.sh` says which have a node definition and an image first. `add-r3`
+  refuses an R3 of another platform, so remove each R3 before the next platform:
+  `bash scripts/lab/run-session.sh second-platform:iosv remove-r3`, then put R3's `cat8000v`
+  entry into `testbeds/lab-r3.yaml` and run
+  `bash scripts/lab/run-session.sh second-platform:cat8000v remove-r3`. One session cannot hold
+  two platforms, because each needs its own R3 entry and the session checks it before any prompt.
 - **The image exists.** `add-r3` refuses before any change: `the controller has no node
   definition <platform>` or `node definition <platform> has no image`.
 - **R1 Ethernet0/3 is in the topology and free.** `add-r3` refuses, naming the link that uses it.
@@ -631,8 +636,12 @@ sends no configuration to any device, every CML call after the login (a POST to
 
 1. From this machine: `ip -brief addr show tun0`, `ip route get 10.10.20.171`, and for each
    management address a TCP test of ports 22 and 23 and `ping -c 2 -W 2`. The TCP test has
-   three outcomes, and the difference is the question 2026-09-12 left open: `open`, `refused`
-   (the host answered), and `no answer in 3 s` (filtered or not routed).
+   four outcomes, and the difference is the question 2026-09-12 left open: `open`; `refused`,
+   only when bash's connect error says `Connection refused` (something at that address, the
+   host or a filter in front of it, sent a reset); `unreachable (<bash's reason>)` for any
+   other connect error, such as `Network is unreachable` or `No route to host` (this machine or
+   a router on the way said there is no path); and `no answer in 3 s` (nothing came back:
+   dropped on the way or never routed).
 2. `cml_lab.py inspect output/lab/probe-<stamp>-cml`: the CML version, the node and image
    definitions, memory and CPU in use, and default-lab's nodes, interfaces, and links. Each
    response is saved there as JSON, without configurations, notes, descriptions, canvas
@@ -683,6 +692,9 @@ The steps:
 7. `ncv diff` of the two against `fixtures/lab-2026-09-12/intent-routes.yaml`, the intent of
    the shipped lab.
 
+Then an unnumbered `finish` step, and the log says where the captures and reports are. The
+numbers are the ones the script prints, so step N in the log is step N here.
+
 There is no draft intent: the run reuses that published one and makes no change. The prediction:
 
 | Comparison | Exit | Findings |
@@ -722,23 +734,32 @@ directory works.
 3. `.venv/bin/python -m pip install -e '.[dev,lab]'` once. The scripts use
    `.venv/bin/python`; set `NCV_PYTHON` to use another interpreter.
 4. `bash scripts/lab/run-lab.sh`, `run-ospf.sh`, `run-bgp.sh`, `run-bgp-holdtimer.sh`, or the prepared `run-ospf-deadtimer.sh`, `run-ibgp.sh`, or `run-bgp-vrf.sh`. Each asks for the CML
-   username and password and the routers' enable password, keeps them in that terminal's
-   environment (`NCV_CML_USER`, `NCV_CML_PASS`, `NCV_LAB_PASS`), and stops before touching
-   the lab if the no-change check is not clean. A prepared run exits 0 when every comparison
-   gave its predicted exit and the change comparison its predicted findings, 3 when it ran to
+   username and password and the routers' enable password (`NCV_CML_USER`, `NCV_CML_PASS`,
+   `NCV_LAB_PASS`), unless they are already set; the logins last only while that script runs.
+   Each stops before touching the lab if the no-change check is not clean. A prepared run
+   exits 0 when every comparison gave its predicted exit and the change comparison its predicted findings, 3 when it ran to
    the end but did not, 1 when it stopped early, and 2 when it could not start (no VPN, no
    testbed file, or no answer to a login prompt). One that stops early still stops and saves
    its packet capture on the way out. To run the prepared runs one after another with one
    login, use `bash scripts/lab/run-session.sh` instead (see "A whole session with one login"
-   below).
+   below). The five prepared run scripts, `probe.sh`, and `run-session.sh` print their header
+   with `-h` and start nothing; those that take no argument refuse any other with exit 2.
 
 `probe.sh` takes the same logins and is safe to run first on any reservation: it only reads.
 `run-ssh-path.sh` also needs `testbeds/lab-ssh.yaml` and asks for the routers' SSH login, and
 its exit 4 means the management addresses do not answer in this sandbox, a result recorded
 before anything is reset or captured, not a run that stopped early.
 `run-second-platform.sh <platform>` needs `testbeds/lab-r3.yaml`, adds R3 to the lab, and
-leaves it there: `.venv/bin/python scripts/lab/cml_lab.py remove-r3`, with the CML login in
-`NCV_CML_USER` and `NCV_CML_PASS`, takes it out.
+leaves it there: `bash scripts/lab/run-session.sh remove-r3` takes it out, asking for the
+logins. Neither `cml_lab.py` nor `labctl.py` asks for a login, so `run-session.sh remove-r3`
+and `run-session.sh reset` are the way to run them after a script has ended. To run one
+directly, set the logins with prompts that keep the passwords out of shell history first
+(`labctl.py` also needs the enable password):
+
+    read -rp 'CML user: ' NCV_CML_USER; read -rsp 'CML password: ' NCV_CML_PASS; export NCV_CML_USER NCV_CML_PASS
+    read -rsp 'Enable password: ' NCV_LAB_PASS; export NCV_LAB_PASS
+    .venv/bin/python scripts/lab/cml_lab.py remove-r3
+    .venv/bin/python scripts/lab/labctl.py reset
 
 `NCV_TESTBED` picks another testbed file for `labctl.py` (a relative path is read from the
 repository root), and `labctl.py reset` returns a reused reservation to the shipped
@@ -746,7 +767,7 @@ configuration: it removes only what these scripts add (the `NCV-` ACLs, `router 
 65002, and 65010, `router ospf 1`, the link's shutdown and OSPF timers, Loopback0, Loopback1,
 Loopback100, Ethernet0/1.100, a reused Ethernet0/3, and vrf NCV), and never touches the
 management path or the
-static routes. It never touches R3 either; `cml_lab.py remove-r3` removes it. The gate commands `check-hold-time`, `check-dead-time`, `check-ibgp-hold-time`,
+static routes. It never touches R3 either; `run-session.sh remove-r3` removes it. The gate commands `check-hold-time`, `check-dead-time`, `check-ibgp-hold-time`,
 and `check-vrf-hold-time` print each router's show command and the raw output they parsed
 before their reading, so the run log keeps the real text: no capture holds it yet.
 
@@ -762,11 +783,16 @@ hidden prompt in an embedded terminal did not arrive, so each run cost several a
     bash scripts/lab/run-session.sh [name ...]
 
 The names are `probe`, `ospf-deadtimer`, `ibgp`, `bgp-vrf`, `ssh-path`,
-`second-platform:<platform>`, and `reset`. Run it from the WSL clone
+`second-platform:<platform>`, `reset`, and `remove-r3`. `reset` runs `labctl.py reset` and
+`remove-r3` runs `cml_lab.py remove-r3`, both with the logins the session asked for, since the
+logins last only while a script runs. Run it from the WSL clone
 (`~/network-change-validator`), which must be on this branch, with `testbeds/lab.yaml` in place
 and `testbeds/lab-ssh.yaml` or `testbeds/lab-r3.yaml` copied there when `ssh-path` or
-`second-platform:<platform>` is named. It refuses an unknown name, or a platform
-`cml_lab.py`'s table does not have, before any prompt. Then it checks the VPN, asks for
+`second-platform:<platform>` is named. It refuses an unknown name, a platform
+`cml_lab.py`'s table does not have, a missing `testbeds/lab-ssh.yaml` when `ssh-path` is named,
+and a missing `testbeds/lab-r3.yaml` (or `NCV_TESTBED`) or one whose R3 has another `os` when
+`second-platform:<platform>` is named, all before any prompt, with the messages the run
+scripts themselves give. Then it checks the VPN, asks for
 `NCV_CML_USER`, `NCV_CML_PASS`, and `NCV_LAB_PASS` until each is not empty (and for
 `NCV_SSH_USER` and `NCV_SSH_PASS` only when `ssh-path` is named), and checks the CML login once
 with `cml_lab.py check-login`: that password is also the console server's login, so a wrong one
@@ -783,7 +809,8 @@ The order a first session should use:
 3. `ssh-path` only if the probe says both management addresses answer on port 22, and
    `second-platform:<platform>` only if it says R1 Ethernet0/3 is free and that platform has an
    image. `reset` returns R1 and R2 to the shipped configuration but does not remove R3;
-   `cml_lab.py remove-r3` does.
+   `remove-r3` does, for example `bash scripts/lab/run-session.sh second-platform:iosv
+   remove-r3`.
 
 A run that fails does not stop the session: every run script starts with `labctl.py reset`, so
 the next one starts clean. Two things stop it, because every later run would fail the same way:
@@ -801,12 +828,15 @@ its log is:
 
 | Exit | Meaning in the table |
 |---|---|
-| 0 | every comparison gave the predicted exit and the change comparison gave exactly the predicted findings (for `probe`: it finished, read its three answers; for `ssh-path`: both comparisons gave exit 0; for `reset`: it sent what R1 and R2 needed) |
+| 0 | every comparison gave the predicted exit and the change comparison gave exactly the predicted findings (for `probe`: it finished, read its three answers; for `ssh-path`: both comparisons gave exit 0; for `reset`: it sent what R1 and R2 needed; for `remove-r3`: R3 and its link are out of the lab, or were not there) |
 | 3 | ran to the end, but a comparison or the findings differed from the prediction: read the report |
-| 1 | stopped early, shown with the last `== ` line of its log, where it stopped (for `probe`: the CML login or a console connection failed) |
+| 1 | stopped early, shown with where it stopped: the last `== ` line of its log before the steps that stop a packet capture left running (for `probe`: the CML login or a console connection failed; it ran to its end, so no line says where it stopped) |
 | 2 | could not start |
 | 4 | the management addresses do not answer in this sandbox (a result, from `ssh-path`) |
 | anything else | unexpected (N) |
+
+For `reset` and `remove-r3`, any exit but 0 reads `labctl.py reset failed (N)` or
+`cml_lab.py remove-r3 failed (N)`, and their output is in the session log.
 
 The session exits 0 only when every named run exited 0, 3 when it ran every name but one did
 not, 1 when it stopped before the last name, 2 when it could not start, and 130 on Ctrl-C. No

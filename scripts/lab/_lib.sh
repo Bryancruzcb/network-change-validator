@@ -32,10 +32,14 @@
 # lab_logins                           lab_ask for NCV_CML_USER, NCV_CML_PASS, and NCV_LAB_PASS
 # lab_ssh_login                        lab_ask for NCV_SSH_USER (default cisco) and NCV_SSH_PASS
 # lab_tcp <host> <port>
-#   A TCP connect test with a 3 s timeout. Logs "<host> port <port>: open", "refused", or
-#   "no answer in 3 s" and returns 0, 1, or 124. A refusal means the host answered; no answer
-#   means the packets were filtered or not routed. Which of the two it is was the question the
-#   2026-09-12 attempt to reach the management addresses left open.
+#   A TCP connect test with a 3 s timeout. Logs "<host> port <port>: " and one of four outcomes:
+#   "open" (returns 0); "refused" (returns 1), only when bash's connect error says Connection
+#   refused, so something at that address, the host or a filter in front of it, sent a reset;
+#   "unreachable (<bash's reason>)" (returns 1), for any other connect error, for example
+#   Network is unreachable or No route to host, where this machine or a router on the way said
+#   there is no path; and "no answer in 3 s" (returns 124), where nothing came back at all, so
+#   the packets were dropped on the way or never routed. Which of these it is was the question
+#   the 2026-09-12 attempt to reach the management addresses left open.
 # step <text>                          a timestamped line on the terminal and in the log
 # ctl <args>                           labctl.py, logged, returning its exit code
 # cap <args>                           cml_capture.py, logged, returning its exit code
@@ -45,7 +49,8 @@
 #   to start without them.
 # lab_reset
 #   labctl.py reset; when it fails, says the lab may still hold an earlier run's configuration
-#   and exits 1, before any setup meets what the earlier run left.
+#   and exits 1, before any setup meets what the earlier run left. Its hint names
+#   `run-session.sh reset`, which asks for the logins; labctl.py alone does not.
 # cap_start <filter>
 #   Starts a packet capture of the R1-R2 link with that filter and sets capturing=1. NCV_PCAP=0
 #   skips it; when it cannot start, the run goes on without one.
@@ -68,6 +73,21 @@
 #   and 3 when one did not, so run-session.sh can tell a run whose exits and findings came out
 #   as predicted from one that finished but did not. Exit 1 stays "stopped early" and exit 2 "could not
 #   start", as in the existing scripts.
+# lab_takes_no_arguments "$@"
+#   For a run script that takes no arguments, called right after this file is sourced: -h or
+#   --help prints the script's header (lab_print_header) and exits 0; any other argument prints
+#   a one-line usage to stderr and exits 2; no argument returns. So `-h` never starts a run.
+# lab_print_header
+#   Prints the calling script's header comment: the lines after the shebang up to the first
+#   line that is not a comment, without the leading "# ". Every script answers -h with it. It
+#   reads the script through $here, which every script sets before it sources this file,
+#   because $0 may be a relative path and run-session.sh has changed directory by then.
+# lab_testbed_os <file> <device>
+#   Prints the pyATS os the testbed file gives that device, or nothing.
+# lab_r3_testbed_fits <platform> <os>
+#   True when the R3 testbed (NCV_TESTBED, default testbeds/lab-r3.yaml) exists and gives R3
+#   that os; otherwise says which of the two is wrong on stderr and returns 1.
+#   run-second-platform.sh and run-session.sh both call it before any login is asked for.
 # lab_not_reachable <text>
 #   Logs the text and exits 4: a run whose devices do not answer on the path it tests
 #   (run-ssh-path.sh when the management addresses refuse or ignore port 22). That is a
@@ -158,16 +178,56 @@ compare() {
 }
 
 lab_tcp() {
-  local host=$1 port=$2 rc outcome
-  timeout 3 bash -c "</dev/tcp/$host/$port" 2>/dev/null
+  local host=$1 port=$2 rc outcome err
+  err=$(timeout 3 bash -c "</dev/tcp/$host/$port" 2>&1)
   rc=$?
   case $rc in
     0) outcome=open ;;
     124) outcome="no answer in 3 s" ;;
-    *) outcome=refused; rc=1 ;;
+    *)
+      rc=1
+      case $err in
+        *"Connection refused"*) outcome=refused ;;
+        *) outcome="unreachable (${err##*: })" ;;  # bash's reason ends its last line
+      esac
+      ;;
   esac
   echo "$host port $port: $outcome" | tee -a "$log"
   return "$rc"
+}
+
+lab_print_header() {
+  awk 'NR == 1 { next } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$here/${0##*/}"
+}
+
+lab_takes_no_arguments() {
+  [ $# -gt 0 ] || return 0
+  case $1 in
+    -h | --help) lab_print_header; exit 0 ;;
+  esac
+  echo "usage: $(basename "$0") takes no arguments; -h prints what it does" >&2
+  exit 2
+}
+
+lab_testbed_os() {
+  awk -v device="  $2:" '
+    substr($0, 1, length(device)) == device { found = 1; next }
+    found && /^  [^ ]/ { exit }
+    found && /^    os:/ { print $2; exit }
+  ' "$1"
+}
+
+lab_r3_testbed_fits() {
+  local platform=$1 os=$2 r3_testbed=${NCV_TESTBED:-testbeds/lab-r3.yaml} testbed_os
+  if [ ! -f "$r3_testbed" ]; then
+    echo "$r3_testbed is missing: copy testbeds/cml-console-r3.yaml.example to it, with R3's entry for $platform." >&2
+    return 1
+  fi
+  testbed_os=$(lab_testbed_os "$r3_testbed" R3)
+  if [ "$testbed_os" != "$os" ]; then
+    echo "$r3_testbed gives R3 os ${testbed_os:-none}, but $platform needs os $os: use R3's entry for it from testbeds/cml-console-r3.yaml.example." >&2
+    return 1
+  fi
 }
 
 lab_not_reachable() {
@@ -177,7 +237,7 @@ lab_not_reachable() {
 
 lab_reset() {
   ctl reset && return 0
-  step "reset failed: the lab may still hold an earlier run's configuration; read the lines above, then run labctl.py reset again"
+  step "reset failed: the lab may still hold an earlier run's configuration; read the lines above, then run bash scripts/lab/run-session.sh reset"
   exit 1
 }
 

@@ -7,8 +7,9 @@
 # CML controller has. This asks, in four steps:
 #
 #   1. from this machine: the VPN address and the route to 10.10.20.171, then for both
-#      management addresses a TCP connect test to ports 22 and 23 (open, refused, or no answer
-#      in 3 s) and a ping;
+#      management addresses a TCP connect test to ports 22 and 23 (open; refused, when
+#      bash's connect error says Connection refused; unreachable, with bash's reason, for any
+#      other connect error; or no answer in 3 s) and a ping;
 #   2. the CML controller: scripts/lab/cml_lab.py inspect, every call after the login (a POST
 #      to /authenticate) a GET, saving each response under output/lab/probe-<stamp>-cml/;
 #   3. the routers, through the console testbed: labctl.py probe, a fixed list of read-only show
@@ -25,6 +26,7 @@
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 . "$here/_lib.sh"
+lab_takes_no_arguments "$@"
 lab_init probe
 rmdir "$run" 2>/dev/null  # lab_init makes a capture directory; the probe captures nothing
 failed=0

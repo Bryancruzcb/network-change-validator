@@ -9,7 +9,10 @@
 # each is not empty), plus NCV_SSH_USER and NCV_SSH_PASS when ssh-path is named, checks the CML
 # login once with `cml_lab.py check-login`, and runs each named run's script with bash. The
 # scripts' own lab_init then finds the logins set and does not ask again. Every name is checked
-# before any prompt, the platform of second-platform:<platform> included.
+# before any prompt: the platform of second-platform:<platform> and the testbed file it needs
+# (R3's os included), and testbeds/lab-ssh.yaml for ssh-path. The logins last only while this
+# script runs, so the follow-up commands that need them are names here too: reset and remove-r3.
+# -h prints this header.
 #
 # Names, run in the order given:
 #   probe                       probe.sh: read-only; run it first on a new reservation
@@ -19,7 +22,9 @@
 #   ssh-path                    run-ssh-path.sh: only once the probe says port 22 answers
 #   second-platform:<platform>  run-second-platform.sh <platform>: only once the probe says R1
 #                               Ethernet0/3 is free and the platform has an image
-#   reset                       labctl.py reset on R1 and R2; R3 stays (cml_lab.py remove-r3)
+#   reset                       labctl.py reset on R1 and R2; R3 stays (remove-r3 takes it out)
+#   remove-r3                   cml_lab.py remove-r3: R3 and its link out of the lab; between two
+#                               second-platform runs, since add-r3 refuses an R3 of another platform
 # With no names it runs `probe ospf-deadtimer ibgp bgp-vrf reset`: the runs that need nothing
 # beyond the three logins the earlier runs used. ssh-path and second-platform are named on
 # purpose, because each needs something the probe has to confirm first.
@@ -33,7 +38,8 @@
 # Each run gets its own NCV_STAMP (<session stamp>-<n>), so its log is
 # output/lab/<run>-<session stamp>-<n>.log. At the end a table goes to the screen and to
 # output/lab/session-<stamp>.log: each name, its exit status and what it means, where it
-# stopped when it stopped early, and where its log is. The passwords never reach a log line, and
+# stopped when it stopped early (the last step before any capture cleanup), and where its log
+# is; reset and remove-r3 write into the session log. The passwords never reach a log line, and
 # this script never traces itself. It exits 0 only when every named run exited 0, 3 when it ran
 # every name but one did not exit 0, 1 when it stopped before the last name, 2 when it could not
 # start, and 130 on Ctrl-C. Run it from the WSL clone with the sandbox VPN up.
@@ -44,12 +50,14 @@ here=$(cd "$(dirname "$0")" && pwd)
 usage() {
   cat >&2 <<'EOF'
 usage: run-session.sh [name ...]
-names: probe, ospf-deadtimer, ibgp, bgp-vrf, ssh-path, second-platform:<platform>, reset
+names: probe, ospf-deadtimer, ibgp, bgp-vrf, ssh-path, second-platform:<platform>, reset,
+  remove-r3
   with no names: probe ospf-deadtimer ibgp bgp-vrf reset
   ssh-path needs the probe to say the management addresses answer on port 22, and
   testbeds/lab-ssh.yaml; second-platform:<platform> (nxosv9000, cat8000v, or iosv) needs the
-  probe to say R1 Ethernet0/3 is free and the platform has an image, and testbeds/lab-r3.yaml.
-  reset does not remove R3: scripts/lab/cml_lab.py remove-r3 does.
+  probe to say R1 Ethernet0/3 is free and the platform has an image, and testbeds/lab-r3.yaml
+  with R3's entry for that platform.
+  reset does not remove R3: remove-r3 does. -h prints what this script does.
 EOF
 }
 
@@ -64,18 +72,31 @@ session_script() {
     ssh-path) echo "run-ssh-path.sh" ;;
     second-platform:*) echo "run-second-platform.sh ${1#second-platform:}" ;;
     reset) echo "labctl.py reset" ;;
+    remove-r3) echo "cml_lab.py remove-r3" ;;
     *) return 1 ;;
   esac
+}
+
+# A name that runs one of the Python tools rather than a run script: it runs with this session's
+# interpreter, writes into this session's log, and has no log or steps of its own.
+runs_a_tool() {
+  local script
+  read -r script _ <<<"$(session_script "$1")"
+  [ "${script%.py}" != "$script" ]
 }
 
 # What an exit status means, in the session table. Only exit 0 of a run with a prediction says
 # the prediction held, and even then the table never calls it a match.
 meaning() {
+  if runs_a_tool "$1" && [ "$2" != 0 ]; then
+    echo "$(session_script "$1") failed ($2): read the lines above in this log"
+    return
+  fi
   case $1:$2 in
     probe:0) echo "the probe finished: read its three answers in its log" ;;
     probe:1) echo "the CML login or a console connection failed: read its log" ;;
     reset:0) echo "labctl.py reset sent R1 and R2 what they needed to return to the shipped configuration" ;;
-    reset:*) echo "labctl.py reset failed ($2): read the lines above in this log" ;;
+    remove-r3:0) echo "R3 and its link are out of the lab, or were not there" ;;
     ssh-path:0) echo "both comparisons gave exit 0: the two paths gave the same data" ;;
     *:0) echo "every comparison gave the predicted exit and the change comparison gave exactly the predicted findings" ;;
     *:3) echo "ran to the end, but a comparison or the findings differed from the prediction: read the report" ;;
@@ -92,16 +113,25 @@ names=("$@")
 cd "$here/../.." || exit 2
 py="${NCV_PYTHON:-.venv/bin/python}"
 
+# Every name, and the testbed file each run needs, before any prompt: a run that cannot start
+# exits 2, which stops the session, so a mistake here would cost the runs named after it.
 for name in "${names[@]}"; do
-  if [ "$name" = -h ] || [ "$name" = --help ]; then usage; exit 0; fi
+  if [ "$name" = -h ] || [ "$name" = --help ]; then lab_print_header; exit 0; fi
   if ! session_script "$name" >/dev/null; then
     echo "run-session.sh: unknown name: $name" >&2; usage; exit 2
   fi
   case $name in
+    ssh-path)
+      if [ ! -f testbeds/lab-ssh.yaml ]; then
+        echo "testbeds/lab-ssh.yaml is missing: copy testbeds/cml-ssh.yaml.example to it, and run scripts/lab/probe.sh first." >&2
+        exit 2
+      fi
+      ;;
     second-platform:*)
-      "$py" "$here/cml_lab.py" platform-os "${name#second-platform:}" >/dev/null 2>&1
+      platform=${name#second-platform:}
+      r3_os=$("$py" "$here/cml_lab.py" platform-os "$platform" 2>/dev/null)
       case $? in
-        0) ;;
+        0) lab_r3_testbed_fits "$platform" "$r3_os" || exit 2 ;;
         2) echo "run-session.sh: unknown platform in $name" >&2; usage; exit 2 ;;
         *) echo "run-session.sh: could not run scripts/lab/cml_lab.py; is the .venv set up?" >&2; exit 2 ;;
       esac
@@ -128,8 +158,14 @@ fi
 
 rows=()  # one "<name>|<exit>|<log>" per run that finished
 
-row_log() {  # <name> <n>: the run's own log, or this session's log for reset
-  if [ "$1" = reset ]; then echo "$log"; else echo "output/lab/${1%%:*}-$stamp-$2.log"; fi
+row_log() {  # <name> <n>: the run's own log, or this session's log for a tool
+  if runs_a_tool "$1"; then echo "$log"; else echo "output/lab/${1%%:*}-$stamp-$2.log"; fi
+}
+
+# The step a run stopped at: the last "== " line of its log before lab_cleanup's own steps,
+# which a run that stops with a packet capture running writes after the step that failed.
+stopped_at() {  # <run log>
+  sed '/^== [0-9:]* the run stopped with a packet capture running/,$d' "$1" | grep '^== ' | tail -n 1
 }
 
 print_table() {
@@ -139,8 +175,9 @@ print_table() {
   for row in "${rows[@]}"; do
     IFS='|' read -r name status runlog <<<"$row"
     printf '%-27s %-5s %s\n' "$name" "$status" "$(meaning "$name" "$status")"
-    if [ "$status" = 1 ] && [ -f "$runlog" ] && [ "$name" != reset ]; then
-      last=$(grep '^== ' "$runlog" | tail -n 1)
+    # A probe that exits 1 ran to its end, and its meaning already says what failed.
+    if [ "$status" = 1 ] && [ -f "$runlog" ] && [ "$name" != probe ] && ! runs_a_tool "$name"; then
+      last=$(stopped_at "$runlog")
       printf '%-33s where it stopped: %s\n' "" "${last#== }"
     fi
     if [ -f "$runlog" ]; then
@@ -178,7 +215,7 @@ for current in "${!names[@]}"; do
   n=$((current + 1))
   read -r script argument <<<"$(session_script "$name")"
   step "$n/${#names[@]} $name: $script${argument:+ $argument}"
-  if [ "$name" = reset ]; then
+  if runs_a_tool "$name"; then
     "$py" "$here/$script" "$argument" 2>&1 | tee -a "$log"
     status=${PIPESTATUS[0]}
   else

@@ -14,7 +14,7 @@
 # refuses, changing nothing, when the platform has no image, when R1 Ethernet0/3 is in use, or
 # when memory is plainly short. labctl.py configures R1's side only; R3 is never configured
 # after its first boot. The run leaves R3 in the lab: scripts/lab/cml_lab.py remove-r3 takes it
-# out.
+# out, and `bash scripts/lab/run-session.sh remove-r3` runs it with the CML login asked for.
 #
 # Checks the platform against cml_lab.py's table and that the testbed (NCV_TESTBED, default
 # testbeds/lab-r3.yaml, copied from testbeds/cml-console-r3.yaml.example) gives R3 that
@@ -37,6 +37,8 @@
 # output/lab/. Run it from WSL or Linux with the sandbox VPN up.
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
+. "$here/_lib.sh"
+case ${1:-} in -h | --help) lab_print_header; exit 0 ;; esac
 usage="usage: run-second-platform.sh nxosv9000|cat8000v|iosv"
 platform=${1:-}
 cd "$here/../.." || exit 2
@@ -48,17 +50,8 @@ rc=$?
 if [ "$rc" -eq 2 ]; then echo "$usage" >&2; exit 2; fi
 [ "$rc" -eq 0 ] || { echo "could not run scripts/lab/cml_lab.py; is the .venv set up?" >&2; exit 2; }
 export NCV_TESTBED="${NCV_TESTBED:-testbeds/lab-r3.yaml}"
-if [ ! -f "$NCV_TESTBED" ]; then
-  echo "$NCV_TESTBED is missing: copy testbeds/cml-console-r3.yaml.example to it, with R3's entry for $platform." >&2
-  exit 2
-fi
-testbed_os=$(awk '/^  R3:/ { r3 = 1; next } r3 && /^  [^ ]/ { exit } r3 && /^    os:/ { print $2; exit }' "$NCV_TESTBED")
-if [ "$testbed_os" != "$r3_os" ]; then
-  echo "$NCV_TESTBED gives R3 os ${testbed_os:-none}, but $platform needs os $r3_os: use R3's entry for it from testbeds/cml-console-r3.yaml.example." >&2
-  exit 2
-fi
+lab_r3_testbed_fits "$platform" "$r3_os" || exit 2
 
-. "$here/_lib.sh"
 lab_init second-platform
 features=ospf,bgp,routing,interface
 intent=scripts/lab/intent-second-platform-$platform.yaml
@@ -93,7 +86,7 @@ expect_findings change "$out-change" "scripts/lab/expect-second-platform-$platfo
 step "10/11 undo: no shutdown on R1 Ethernet0/3, then wait for R3 again"
 ctl r3-noshut || { step "undo failed; $undo_hint"; exit 1; }
 ctl wait-r3-up 300 || step "R3 is not back as R1 sees it, capturing anyway"
-step "11/11 restored capture and compare (expect exit 0); R3 stays in the lab, cml_lab.py remove-r3 takes it out"
+step "11/11 restored capture and compare (expect exit 0); R3 stays in the lab: bash scripts/lab/run-session.sh remove-r3 takes it out (it runs cml_lab.py remove-r3)"
 snap restored || { step "restored capture failed"; exit 1; }
 compare pre restored restored; expect_exit restored 0 "$?"
 lab_finish

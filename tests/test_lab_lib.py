@@ -171,6 +171,22 @@ def test_lab_ask_stops_with_exit_2_when_the_input_closes_before_an_answer(root, 
     assert "not-reached" not in result.stdout
 
 
+def test_lab_ask_accepts_a_last_answer_with_no_trailing_newline(root, tmp_path):
+    # read returns 1 at the end of input even when it read a value, as `printf secret |` gives.
+    result = _bash(
+        root, tmp_path, 'lab_ask NCV_CML_PASS "CML password"; printenv NCV_CML_PASS', stdin="secret"
+    )
+    assert (result.returncode, result.stdout) == (0, "secret\n")
+
+
+def test_lab_ask_reads_a_password_without_echoing_it(root):
+    # A pipe cannot show whether -s keeps the typed password off the screen, so read the text.
+    text = (root / "scripts" / "lab" / "_lib.sh").read_text(encoding="utf-8")
+    body = text[text.index("lab_ask() {") : text.index("\n}\n", text.index("lab_ask() {"))]
+    no_default = body[body.index("    else\n") :]
+    assert 'read -rsp "$prompt: " "$name"' in no_default
+
+
 def test_lab_ssh_login_asks_for_the_ssh_user_with_cisco_as_default_and_the_password(root, tmp_path):
     script = "lab_ssh_login; printenv NCV_SSH_USER NCV_SSH_PASS"
     assert _bash(root, tmp_path, script, stdin="\nsecret\n").stdout == "cisco\nsecret\n"
@@ -212,13 +228,16 @@ def test_a_capture_stopped_at_the_end_is_not_stopped_again_on_exit(root, tmp_pat
     assert "stopping it" not in log
 
 
-NO_CAPTURE = FAKE_CAP + 'cap_start "tcp port 179"; echo "c=$capturing"; exit 1'
+# Each run script ends with cap_stop whether or not a capture started, so with none running it
+# must do nothing: no call to cml_capture.py and no packet timeline.
+NO_CAPTURE = FAKE_CAP + 'cap_start "tcp port 179"; echo "c=$capturing"; cap_stop; exit 1'
 
 
 def test_ncv_pcap_0_skips_the_capture(root, tmp_path):
     result = _bash(root, tmp_path, NO_CAPTURE, _pcap_env(root, NCV_PCAP="0"))
     assert (result.returncode, result.stdout.splitlines()[-1]) == (1, "c=0")
     assert _log(tmp_path) == ""
+    assert not (tmp_path / "out-pcap.txt").exists()
 
 
 def test_a_capture_that_cannot_start_lets_the_run_go_on_with_nothing_to_stop(root, tmp_path):
@@ -228,6 +247,8 @@ def test_a_capture_that_cannot_start_lets_the_run_go_on_with_nothing_to_stop(roo
     assert "cap start --filter tcp port 179" in log
     assert "no packet capture; the run goes on without one" in log
     assert "cap stop" not in log
+    assert "packet capture: stop" not in log
+    assert not (tmp_path / "out-pcap.txt").exists()
 
 
 def test_lab_reset_stops_the_run_when_reset_fails(root, tmp_path):
@@ -236,6 +257,8 @@ def test_lab_reset_stops_the_run_when_reset_fails(root, tmp_path):
     assert failed.returncode == 1
     assert "setup" not in failed.stdout
     assert "reset failed: the lab may still hold an earlier run's configuration" in _log(tmp_path)
+    # labctl.py alone asks for no login, so the hint names the command that does
+    assert _log(tmp_path).rstrip().endswith("then run bash scripts/lab/run-session.sh reset")
     passed = _bash(root, tmp_path, fake + "lab_reset; echo setup", {"T_CTL": "0"})
     assert (passed.returncode, passed.stdout.splitlines()[-1]) == (0, "setup")
 
@@ -255,7 +278,18 @@ def test_snap_and_compare_refuse_to_start_without_features_and_intent(root, tmp_
     assert "not-reached" not in result.stdout
 
 
-def test_lab_tcp_tells_open_refused_and_no_answer_apart(root, tmp_path):
+# What bash prints when connect() fails at once without a reset: no route on this machine, or an
+# ICMP unreachable from a router on the way. Neither means the host answered.
+UNREACHABLE = """\
+timeout() {
+  echo "bash: connect: $T_REASON" >&2
+  echo "bash: line 1: /dev/tcp/192.0.2.1/22: $T_REASON" >&2
+  return 1
+}
+"""
+
+
+def test_lab_tcp_tells_open_refused_unreachable_and_no_answer_apart(root, tmp_path):
     with socket.socket() as listening, socket.socket() as unused:
         listening.bind(("127.0.0.1", 0))
         listening.listen()
@@ -263,16 +297,22 @@ def test_lab_tcp_tells_open_refused_and_no_answer_apart(root, tmp_path):
         opened, refused = listening.getsockname()[1], unused.getsockname()[1]
         script = (
             f'lab_tcp 127.0.0.1 {opened}; echo "rc=$?"; lab_tcp 127.0.0.1 {refused}; echo "rc=$?"; '
+            + UNREACHABLE
+            + 'lab_tcp 192.0.2.1 22; echo "rc=$?"; '
+            + 'T_REASON="No route to host" lab_tcp 192.0.2.1 22; echo "rc=$?"; '
             # what timeout gives when the connect hangs: a filtered or unrouted address
             'timeout() { return 124; }; lab_tcp 192.0.2.1 22; echo "rc=$?"'
         )
-        result = _bash(root, tmp_path, script)
+        result = _bash(root, tmp_path, script, {"T_REASON": "Network is unreachable"})
     logged = [
         f"127.0.0.1 port {opened}: open",
         f"127.0.0.1 port {refused}: refused",
+        "192.0.2.1 port 22: unreachable (Network is unreachable)",
+        "192.0.2.1 port 22: unreachable (No route to host)",
         "192.0.2.1 port 22: no answer in 3 s",
     ]
-    assert result.stdout.splitlines() == [logged[0], "rc=0", logged[1], "rc=1", logged[2], "rc=124"]
+    codes = ["rc=0", "rc=1", "rc=1", "rc=1", "rc=124"]
+    assert result.stdout.splitlines() == [line for pair in zip(logged, codes, strict=True) for line in pair]
     assert _log(tmp_path).splitlines() == logged
 
 
@@ -344,9 +384,77 @@ def test_the_second_platform_run_goes_on_to_lab_init_when_the_testbed_fits(root,
     assert result.stdout == "The sandbox VPN is not connected. Start openconnect first.\n"
 
 
+def test_lab_testbed_os_reads_one_devices_os_and_nothing_for_a_device_it_lacks(root, tmp_path):
+    testbed = tmp_path / "tb.yaml"
+    testbed.write_text(
+        "devices:\n  R1:\n    type: router\n    os: iosxe\n  R3:\n    connections: {}\n  R4:\n    os: nxos\n",
+        encoding="utf-8",
+    )
+    script = 'for d in R1 R3 R4 R9; do echo "$d=$(lab_testbed_os "$T_TB" "$d")"; done'
+    result = _bash(root, tmp_path, script, {"T_TB": str(testbed)})
+    assert result.stdout.splitlines() == ["R1=iosxe", "R3=", "R4=nxos", "R9="]
+
+
+# Every script answers -h with its header and starts nothing: `ip` fails here, so a script that
+# went on would print the VPN message, and stdin is closed, so one that prompted would show it.
+NO_ARGUMENT_SCRIPTS = (
+    "probe.sh",
+    "run-ospf-deadtimer.sh",
+    "run-ibgp.sh",
+    "run-bgp-vrf.sh",
+    "run-ssh-path.sh",
+)
+
+
+def _run_script(root, tmp_path, script, *arguments, relative=False):
+    """Run a script from scripts/lab; `relative` runs it as `bash <script>` from that directory."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "ip").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    (bin_dir / "ip").chmod(0o755)
+    env = {key: value for key, value in os.environ.items() if key not in (*LOGINS, "NCV_TESTBED")}
+    env.update(NCV_PYTHON=sys.executable, PATH=f"{bin_dir}{os.pathsep}{env['PATH']}")
+    lab = root / "scripts" / "lab"
+    command = ["bash", script if relative else str(lab / script), *arguments]
+    return subprocess.run(
+        command, capture_output=True, text=True, env=env, timeout=60, stdin=subprocess.DEVNULL, cwd=lab
+    )
+
+
+@pytest.mark.parametrize("script", [*NO_ARGUMENT_SCRIPTS, "run-second-platform.sh", "run-session.sh"])
+@pytest.mark.parametrize("flag", ["-h", "--help"])
+def test_every_script_answers_h_with_its_header_and_starts_nothing(root, tmp_path, script, flag):
+    result = _run_script(root, tmp_path, script, flag)
+    header = (root / "scripts" / "lab" / script).read_text(encoding="utf-8").splitlines()[1]
+    assert (result.returncode, result.stderr) == (0, "")
+    assert result.stdout.splitlines()[0] == header.removeprefix("# ")
+    assert "The sandbox VPN is not connected" not in result.stdout
+    assert not any(line.startswith("#") for line in result.stdout.splitlines())
+    assert "set -uo pipefail" not in result.stdout  # the header ends at the first line of code
+
+
+@pytest.mark.parametrize("script", [*NO_ARGUMENT_SCRIPTS, "run-second-platform.sh", "run-session.sh"])
+def test_h_finds_the_header_when_the_script_was_named_by_a_relative_path(root, tmp_path, script):
+    # run-session.sh has changed to the repository root before it reads -h
+    result = _run_script(root, tmp_path, script, "-h", relative=True)
+    header = (root / "scripts" / "lab" / script).read_text(encoding="utf-8").splitlines()[1]
+    assert (result.returncode, result.stderr) == (0, "")
+    assert result.stdout.splitlines()[0] == header.removeprefix("# ")
+
+
+@pytest.mark.parametrize("script", NO_ARGUMENT_SCRIPTS)
+def test_a_script_that_takes_no_arguments_refuses_one_before_anything_else(root, tmp_path, script):
+    result = _run_script(root, tmp_path, script, "ibgp")
+    assert result.returncode == 2
+    assert result.stderr == f"usage: {script} takes no arguments; -h prints what it does\n"
+    assert result.stdout == ""
+
+
 # run-session.sh: one login for a whole session. Each stand-in run script logs one line to
 # $T_CALLS (its name, its arguments, its NCV_STAMP, and which logins it found set), writes two
-# step lines to the log lab_init would give it, and exits with the code in $T_CODES/<name>.
+# step lines to the log lab_init would give it, and exits with the code in $T_CODES/<name>. A
+# stand-in told to fail first writes the steps lab_cleanup adds after the failing step when a
+# packet capture was running, as a real run that stops early after cap_start does.
 SESSION_RUNS = {
     "probe.sh": "probe",
     "run-ospf-deadtimer.sh": "ospf-deadtimer",
@@ -362,7 +470,13 @@ mkdir -p output/lab
 log="output/lab/{run}-$NCV_STAMP.log"
 printf '== 12:00:00 1/2 setup\\n== 12:00:01 2/2 the step it stopped at\\n' >> "$log"
 [ ! -f "$T_CODES/{run}-interrupt" ] || kill -INT "$PPID"
-[ ! -f "$T_CODES/{run}" ] || exit "$(cat "$T_CODES/{run}")"
+if [ -f "$T_CODES/{run}" ]; then
+  pcap="captures/{run}-$NCV_STAMP/link.pcap"
+  printf '== 12:00:02 the run stopped with a packet capture running; stopping it\\n' >> "$log"
+  printf '== 12:00:03 packet capture: stop and save %s\\n' "$pcap" >> "$log"
+  printf '== 12:00:04 packet timeline of %s\\n' "$pcap" >> "$log"
+  exit "$(cat "$T_CODES/{run}")"
+fi
 exit 0
 """
 STAND_IN_PYTHON = """#!/usr/bin/env bash
@@ -373,6 +487,7 @@ case "$script $1" in
   "cml_lab.py platform-os") exec "$T_REAL_PY" "$T_REAL_LAB/cml_lab.py" "$@" ;;
   "cml_lab.py check-login") echo "the CML login was accepted"; code check-login ;;
   "labctl.py reset") echo "R1: nothing to reset"; code reset ;;
+  "cml_lab.py remove-r3") echo "R3 is not in default-lab; nothing to remove"; code remove-r3 ;;
 esac
 exit 99
 """
@@ -383,10 +498,14 @@ PREDICTED_EXITS_AND_FINDINGS = (
 )
 
 
-def _session(root, tmp_path, names, codes=None, stdin=TYPED, trace=False, vpn=True):
-    """Run a copy of run-session.sh with stand-ins; returns (process, calls, session log)."""
+def _session(root, tmp_path, names, codes=None, stdin=TYPED, trace=False, vpn=True, testbeds=None):
+    """Run a copy of run-session.sh with stand-ins; returns (process, calls, session log).
+    `testbeds` maps a file name to the text to put in the copy's testbeds/."""
     lab = tmp_path / "scripts" / "lab"
     lab.mkdir(parents=True)
+    (tmp_path / "testbeds").mkdir()
+    for name, text in (testbeds or {}).items():
+        (tmp_path / "testbeds" / name).write_text(text, encoding="utf-8")
     for name in ("run-session.sh", "_lib.sh"):
         shutil.copy(root / "scripts" / "lab" / name, lab / name)
     for script, run in SESSION_RUNS.items():
@@ -478,6 +597,12 @@ def test_the_session_refuses_to_start_without_the_vpn_before_any_prompt(root, tm
     assert "password" not in result.stderr.lower()
 
 
+def _after(text, row):
+    """The line under a table row."""
+    lines = text.splitlines()
+    return lines[lines.index(row) + 1].strip()
+
+
 def test_a_run_that_stops_early_shows_where_and_the_session_goes_on(root, tmp_path):
     codes = {"ospf-deadtimer": 127, "ibgp": 1, "bgp-vrf": 3}
     result, calls, logged = _session(root, tmp_path, [], codes)
@@ -485,9 +610,8 @@ def test_a_run_that_stops_early_shows_where_and_the_session_goes_on(root, tmp_pa
     assert [line.split()[0] for line in calls] == ["py", "probe", "ospf-deadtimer", "ibgp", "bgp-vrf", "py"]
     assert _row(logged, "ospf-deadtimer", 127).endswith("unexpected (127)")
     assert _row(logged, "ibgp", 1).endswith("stopped early")
-    lines = logged.splitlines()
-    after_ibgp = lines[lines.index(_row(logged, "ibgp", 1)) + 1]
-    assert after_ibgp.strip() == "where it stopped: 12:00:01 2/2 the step it stopped at"
+    # the failed step, not the capture cleanup the stand-in wrote after it
+    assert _after(logged, _row(logged, "ibgp", 1)) == "where it stopped: 12:00:01 2/2 the step it stopped at"
     assert _row(logged, "bgp-vrf", 3).endswith(
         "ran to the end, but a comparison or the findings differed from the prediction: read the report"
     )
@@ -511,13 +635,27 @@ def test_a_failed_probe_stops_the_session(root, tmp_path):
     assert result.returncode == 1
     assert [line.split()[0] for line in calls] == ["py", "probe"]
     assert _row(logged, "probe", 1).endswith("the CML login or a console connection failed: read its log")
+    # the probe ran to its end, so it has no step it stopped at
+    assert _after(logged, _row(logged, "probe", 1)) == "log: output/lab/probe-t-1.log"
+    assert "where it stopped" not in logged
     assert "bash scripts/lab/run-session.sh probe ospf-deadtimer ibgp bgp-vrf reset" in logged
+
+
+def _testbeds(root, r3_os="ios"):
+    """The SSH testbed and the R3 testbed with R3's os set, as the session copy's testbeds/."""
+    r3 = (root / "testbeds" / "cml-console-r3.yaml.example").read_text(encoding="utf-8")
+    return {
+        "lab-ssh.yaml": (root / "testbeds" / "cml-ssh.yaml.example").read_text(encoding="utf-8"),
+        "lab-r3.yaml": r3.replace("  R3:\n    os: nxos\n", f"  R3:\n    os: {r3_os}\n"),
+    }
 
 
 def test_ssh_path_and_second_platform_get_what_they_need_and_exit_4_is_a_result(root, tmp_path):
     typed = "\nfirst-secret\nenable-secret\n\nssh-secret\n"  # the SSH user defaults to cisco
     names = ["ssh-path", "second-platform:iosv"]
-    result, calls, logged = _session(root, tmp_path, names, {"ssh-path": 4}, stdin=typed, trace=True)
+    result, calls, logged = _session(
+        root, tmp_path, names, {"ssh-path": 4}, stdin=typed, trace=True, testbeds=_testbeds(root)
+    )
     assert result.returncode == 3
     assert calls[1:] == [
         "ssh-path  stamp=t-1 logins=developer/set/set/set",
@@ -538,3 +676,55 @@ def test_ctrl_c_prints_the_table_so_far_and_the_command_to_go_on(root, tmp_path)
     assert _row(logged, "ospf-deadtimer", 0)
     assert _row(logged, "ibgp", "interrupted").endswith("interrupted by Ctrl-C")
     assert "bash scripts/lab/run-session.sh ibgp bgp-vrf reset" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("names", "missing", "message"),
+    [
+        (
+            ["ospf-deadtimer", "ssh-path", "reset"],
+            "lab-ssh.yaml",
+            "testbeds/lab-ssh.yaml is missing: copy testbeds/cml-ssh.yaml.example to it",
+        ),
+        (
+            ["ospf-deadtimer", "second-platform:iosv", "reset"],
+            "lab-r3.yaml",
+            "testbeds/lab-r3.yaml is missing: copy testbeds/cml-console-r3.yaml.example to it, "
+            "with R3's entry for iosv.",
+        ),
+    ],
+)
+def test_the_session_refuses_a_missing_testbed_before_any_prompt(root, tmp_path, names, missing, message):
+    testbeds = {name: text for name, text in _testbeds(root).items() if name != missing}
+    result, calls, logged = _session(root, tmp_path, names, testbeds=testbeds)
+    assert result.returncode == 2
+    assert message in result.stderr
+    assert (calls, logged) == ([], "")  # not even the runs named before it
+
+
+def test_the_session_refuses_an_r3_testbed_of_another_platform_before_any_prompt(root, tmp_path):
+    # the example ships R3 as nxos, while the README says to try iosv first
+    names = ["second-platform:iosv", "reset"]
+    result, calls, logged = _session(root, tmp_path, names, testbeds=_testbeds(root, r3_os="nxos"))
+    assert result.returncode == 2
+    assert "testbeds/lab-r3.yaml gives R3 os nxos, but iosv needs os ios: use R3's entry" in result.stderr
+    assert (calls, logged) == ([], "")
+
+
+def test_remove_r3_runs_cml_lab_py_into_the_session_log(root, tmp_path):
+    result, calls, logged = _session(root, tmp_path, ["remove-r3"])
+    assert result.returncode == 0
+    assert calls == ["py cml_lab.py check-login", "py cml_lab.py remove-r3"]
+    assert _row(logged, "remove-r3", 0).endswith("R3 and its link are out of the lab, or were not there")
+    assert "R3 is not in default-lab; nothing to remove" in logged
+    assert _after(logged, _row(logged, "remove-r3", 0)) == "log: output/lab/session-t.log"
+
+
+def test_a_failed_tool_says_which_tool_failed_and_has_no_step_it_stopped_at(root, tmp_path):
+    result, calls, logged = _session(root, tmp_path, ["reset", "remove-r3"], {"reset": 1, "remove-r3": 1})
+    assert result.returncode == 3  # a tool that fails does not stop the session
+    assert calls[1:] == ["py labctl.py reset", "py cml_lab.py remove-r3"]
+    assert _row(logged, "reset", 1).endswith("labctl.py reset failed (1): read the lines above in this log")
+    failed = "cml_lab.py remove-r3 failed (1): read the lines above in this log"
+    assert _row(logged, "remove-r3", 1).endswith(failed)
+    assert "where it stopped" not in logged

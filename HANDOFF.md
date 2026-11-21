@@ -337,7 +337,9 @@ Three reviewers read the designs before any run. What changed:
 
 `scripts/lab/probe.sh` asks what the sandbox answers and changes nothing. From this machine it
 gives the VPN route, a TCP test of ports 22 and 23 on both management addresses that tells
-`open`, `refused`, and `no answer in 3 s` apart, and a ping. Then `scripts/lab/cml_lab.py
+`open`, `refused` (only when bash's connect error says `Connection refused`), `unreachable
+(<bash's reason>)` (any other connect error, such as `No route to host`), and `no answer in 3 s`
+apart, and a ping. Then `scripts/lab/cml_lab.py
 inspect`, a GET-only inventory of the controller, saved without configurations, notes, or
 descriptions, and `labctl.py probe`, a fixed list of read-only commands on R1 and R2. It ends
 with three answers, each with its evidence line: do the management addresses answer on port
@@ -381,15 +383,17 @@ against a lab and no document claims otherwise.
 
 `scripts/lab/run-session.sh [name ...]` asks for the logins once and runs the named runs in
 order: `probe`, `ospf-deadtimer`, `ibgp`, `bgp-vrf`, `ssh-path`, `second-platform:<platform>`,
-and `reset` (by default `probe ospf-deadtimer ibgp bgp-vrf reset`). It refuses an unknown name
-or platform before any prompt, asks again until each password is not empty (the routers' SSH
-login only when `ssh-path` is named), and checks the CML login once with `cml_lab.py
-check-login`. Each run gets its own `NCV_STAMP`, so the closing table, on the screen and in
-`output/lab/session-<stamp>.log`, names each run's log and, for a run that stopped early, its
-last step. A failed run does not stop the session, since the next run starts with `reset`; a
-run that could not start (exit 2) or a failed probe does, and the script prints the names still
-to run as a ready command. Ctrl-C prints the table so far and the same command. It has run only
-against stand-in run scripts in `tests/test_lab_lib.py`.
+`reset`, and `remove-r3` (by default `probe ospf-deadtimer ibgp bgp-vrf reset`). The logins last
+only while a script runs, so `reset` and `remove-r3` run `labctl.py reset` and `cml_lab.py
+remove-r3` with the logins the session asked for. It refuses an unknown name or platform, or a
+testbed file a named run needs (R3's `os` included), before any prompt, asks again until each
+password is not empty (the routers' SSH login only when `ssh-path` is named), and checks the CML
+login once with `cml_lab.py check-login`. Each run gets its own `NCV_STAMP`, so the closing
+table, on the screen and in `output/lab/session-<stamp>.log`, names each run's log and, for a
+run that stopped early, its last step. A failed run does not stop the session, since the next
+run starts with `reset`; a run that could not start (exit 2) or a failed probe does, and the
+script prints the names still to run as a ready command. Ctrl-C prints the table so far and the
+same command. It has run only against stand-in run scripts in `tests/test_lab_lib.py`.
 
 ## Test count
 
@@ -491,7 +495,8 @@ either. Run them from the WSL clone (`~/network-change-validator`) on that branc
 3. `ssh-path` only if the probe says both management addresses answer on port 22, and
    `second-platform:<platform>` only if it says R1 Ethernet0/3 is free and that platform has an
    image, with `testbeds/lab-ssh.yaml` or `testbeds/lab-r3.yaml` copied into the clone first.
-   `cml_lab.py remove-r3` takes R3 out afterwards.
+   `remove-r3` takes R3 out afterwards, one platform per session, for example
+   `bash scripts/lab/run-session.sh second-platform:iosv remove-r3`.
 
 What is most likely to differ from each prediction:
 

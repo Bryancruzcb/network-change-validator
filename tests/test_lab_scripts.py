@@ -1476,8 +1476,9 @@ def test_the_ssh_path_run_checks_the_port_before_it_resets_and_captures_both_pat
     text = (root / "scripts" / "lab" / "run-ssh-path.sh").read_text(encoding="utf-8")
     assert "Prepared, not run yet." in text.splitlines()[1]
     steps = [
+        '. "$here/_lib.sh"\nlab_takes_no_arguments "$@"\n',
+        "ssh_testbed=testbeds/lab-ssh.yaml",
         "export NCV_TESTBED=testbeds/lab.yaml",
-        '. "$here/_lib.sh"',
         "lab_init ssh-path",
         "lab_ssh_login",
         'lab_tcp "$address" 22',
@@ -1497,6 +1498,21 @@ def test_the_ssh_path_run_checks_the_port_before_it_resets_and_captures_both_pat
     assert "intent=fixtures/lab-2026-09-12/intent-routes.yaml\n" in text
     assert "features=routing,interface\n" in text
     assert re.findall(r"\bctl ", text) == []  # nothing but lab_reset touches the routers' configuration
+    # step N in the log is step N in the header and in scripts/lab/README.md: the reset is 3
+    labels = re.findall(r'^step "([^ ]+) (\S+)', text, re.M)
+    assert labels == [
+        ("1/7", "the"),
+        ("2/7", "port"),
+        ("3/7", "reset"),
+        ("4/7", "capture"),
+        ("5/7", "capture"),
+        ("6/7", "compare_captures.py"),
+        ("7/7", "ncv"),
+    ]
+    assert '\nstep "finish"\nlab_finish\n' in text
+    header = [line[4:6] for line in text.splitlines() if re.match(r"^#   \d\. ", line)]
+    assert header == ["1.", "2.", "3.", "4.", "5.", "6.", "7."]
+    assert "#   3. labctl.py reset" in text
 
 
 # The second-platform run, prepared and not run yet: R3, a router of another platform that
@@ -1766,10 +1782,11 @@ def test_the_second_platform_run_checks_its_platform_first_and_adds_r3_after_the
     text = (root / "scripts" / "lab" / "run-second-platform.sh").read_text(encoding="utf-8")
     assert "Prepared, not run yet." in text.splitlines()[1]
     steps = [
+        '. "$here/_lib.sh"',
+        "case ${1:-} in -h | --help) lab_print_header; exit 0 ;; esac",
         'platform-os "$platform"',
         'export NCV_TESTBED="${NCV_TESTBED:-testbeds/lab-r3.yaml}"',
-        '[ "$testbed_os" != "$r3_os" ]',
-        '. "$here/_lib.sh"',
+        'lab_r3_testbed_fits "$platform" "$r3_os" || exit 2',
         "lab_init second-platform",
         "\nlab_reset\n",
         'cml add-r3 "$platform"',
@@ -1836,7 +1853,9 @@ def test_every_session_name_names_a_script_that_exists_and_every_prepared_run_ha
         "ssh-path",
         "second-platform:*",
         "reset",
+        "remove-r3",
     }
+    assert (names["reset"], names["remove-r3"]) == ("labctl.py", "cml_lab.py")
     for script in names.values():
         assert (lab / script).is_file(), script
     sourcing = {
@@ -1848,6 +1867,16 @@ def test_every_session_name_names_a_script_that_exists_and_every_prepared_run_ha
         if script.endswith(".sh"):  # the session finds each run's log by the name it gives lab_init
             run_name = name.removesuffix(":*")
             assert f"\nlab_init {run_name}\n" in (lab / script).read_text(encoding="utf-8"), script
+
+
+def test_each_run_script_that_takes_no_arguments_says_so_before_anything_else(root):
+    """So `-h` prints the header instead of asking for the logins and resetting the routers."""
+    lab = root / "scripts" / "lab"
+    start = '\nset -uo pipefail\nhere=$(cd "$(dirname "$0")" && pwd)\n. "$here/_lib.sh"\n'
+    start += 'lab_takes_no_arguments "$@"\n'
+    for script in ("probe.sh", "run-ospf-deadtimer.sh", "run-ibgp.sh", "run-bgp-vrf.sh", "run-ssh-path.sh"):
+        text = (lab / script).read_text(encoding="utf-8")
+        assert text[text.index("\nset -uo pipefail\n") :].startswith(start), script
 
 
 def test_the_session_defaults_to_the_runs_that_need_only_the_three_logins_and_never_traces(root):
