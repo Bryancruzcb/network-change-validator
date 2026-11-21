@@ -1,7 +1,7 @@
 # Lab scripts
 
-The operator side of the 2026-09-12 and 2026-09-18 lab runs, kept here so the evidence in
-`fixtures/lab-2026-09-12` and `fixtures/lab-2026-09-18` can be reproduced and its sanitization rerun. They are written
+The operator side of the 2026-09-12, 2026-09-18, and 2026-11-20 lab runs, kept here so the
+evidence under `fixtures/lab-*` can be reproduced and its sanitization rerun. They are written
 for the Cisco DevNet "Cisco Modeling Labs" sandbox and its preloaded `default-lab` (R1 and
 R2 joined on Ethernet0/1), for an isolated lab you are authorized to use, and they are
 deliberately outside `ncv`: `ncv` never pushes configuration, and these scripts do, to make
@@ -12,7 +12,7 @@ the one planned change the captures are meant to catch.
 | `run-lab.sh` | The static-route run in one command: pre capture, no-change check, `shutdown` on R1 Ethernet0/1, post capture and compare, `no shutdown`, restored capture and compare. |
 | `run-ospf.sh` | The OSPF run: sets up OSPF area 0 on the R1-R2 link, waits for FULL, then the same sequence, waiting for both neighbor entries to clear before the post capture. |
 | `run-bgp.sh` | The BGP run: sets up eBGP between R1 and R2, waits for Established, then the same sequence around `neighbor 1.1.1.2 shutdown` on R1. |
-| `run-bgp-holdtimer.sh` | The hold-timer run, prepared and not run: eBGP with a 9 s hold time, then the same sequence around an inbound ACL on R1 that drops BGP from R2. |
+| `run-bgp-holdtimer.sh` | The hold-timer run: eBGP with a 9 s hold time, then the same sequence around an inbound ACL on R1 that drops BGP from R2. |
 | `capture.sh` | One capture (`pre`, `post`, or `restored`) for a run driven by hand. |
 | `change.sh` | The planned change by hand: `apply` shuts R1 Ethernet0/1 and `undo` brings it back; `bgp-apply` shuts the R1 peer and `bgp-undo` brings it back; `holdtimer-apply` adds the ACL and `holdtimer-undo` removes it. |
 | `labctl.py` | The lab actions the scripts above call: `setup-ospf`, `shut`, `noshut`, `wait-full`, `wait-gone`, `setup-bgp`, `bgp-shut`, `bgp-noshut`, `wait-bgp-up`, `wait-bgp-down`, `setup-bgp-fast`, `check-hold-time`, `bgp-block`, `bgp-unblock`. |
@@ -20,8 +20,9 @@ the one planned change the captures are meant to catch.
 | `bgp_pcap.py` | Lists the BGP messages in a pcap of the lab link: TCP flags, retransmissions, and each message by name, with NOTIFICATION error codes spelled out. |
 
 The runs compare against the intents kept with their evidence
-(`fixtures/lab-2026-09-12/intent-routes.yaml` and `intent-ospf.yaml`, and
-`fixtures/lab-2026-09-18/intent-bgp.yaml`), so a rerun on the
+(`fixtures/lab-2026-09-12/intent-routes.yaml` and `intent-ospf.yaml`,
+`fixtures/lab-2026-09-18/intent-bgp.yaml`, and
+`fixtures/lab-2026-11-20/intent-bgp-holdtimer.yaml`), so a rerun on the
 same sandbox is checked against the same rules.
 
 ## The BGP run
@@ -45,7 +46,7 @@ existed, and `tests/test_lab_scripts.py` pinned the table on synthetic snapshots
 | pre vs post (`neighbor 1.1.1.2 shutdown` on R1) | 1 | `V_ADJ` R1 neighbor 1.1.1.2, `V_ADJ` R2 neighbor 1.1.1.1, `V_DRIFT` R1 (the forbidden line is present) |
 | pre vs restored | 0 | none |
 
-## The hold-timer run (prepared, not run)
+## The hold-timer run
 
 The BGP run ended the session with a command, so both routers knew at once. The hold-timer
 run ends it the way a broken path does: nothing is shut down, BGP from R2 just stops reaching
@@ -69,8 +70,10 @@ The planned change is `labctl.py bgp-block`, on R1:
 
 The two deny lines cover both directions of the TCP session, since either router may have
 opened it. An inbound ACL also filters traffic addressed to the router itself, so R1 never
-sees R2's keepalives; R2 still hears R1. Predicted findings, pinned on synthetic snapshots in
-`tests/test_lab_scripts.py`:
+sees R2's keepalives; R2 still hears R1. IOS stores the ACL with sequence numbers
+(`10 deny ...`). The script, the intent, and this table were merged before the run (PR #13),
+with the table pinned on synthetic snapshots in `tests/test_lab_scripts.py`. The run on
+2026-11-20 matched it (`fixtures/lab-2026-11-20/SOURCE.md`):
 
 | Comparison | Exit | Findings |
 |---|---|---|
@@ -81,10 +84,11 @@ sees R2's keepalives; R2 still hears R1. Predicted findings, pinned on synthetic
 No rule names the ACL, so unlike the BGP run there is no `V_DRIFT`: the adjacency rules have
 to catch a cause the intent did not anticipate. The static routes still outrank the learned
 prefixes, and dropped packets are not interface errors, so the route and counter rules should
-stay compliant. Two things only the run can confirm: that IOS writes the timers line exactly
-as `neighbor 1.1.1.2 timers 3 9` (if not, the no-change check fails before any change), and
-that `check-hold-time` reads this IOS version's `show bgp ipv4 unicast neighbors` the way the
-sample output in the tests does.
+stay compliant, and they did. The run also confirmed the two things only a run could: IOS
+writes the timers line exactly as `neighbor 1.1.1.2 timers 3 9`, and `check-hold-time` read
+the negotiated 9 s hold time from IOS XE 17.15's `show bgp ipv4 unicast neighbors`. The
+sessions left Established within about ten seconds of the ACL going on and came back about
+30 seconds after it came off. That run took no packet capture.
 
 ### Packet evidence
 

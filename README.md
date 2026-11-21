@@ -5,10 +5,11 @@ compares saved before/after snapshots to that checklist and names every rule tha
 failed.
 
 - **Fixtures (default and CI):** synthetic, hand-authored snapshots. No SSH or pyATS.
-- **Lab evidence:** sanitized captures from three live runs against a Cisco DevNet
+- **Lab evidence:** sanitized captures from four live runs against a Cisco DevNet
   CML sandbox, replayed by the tests. See
-  [fixtures/lab-2026-09-12](fixtures/lab-2026-09-12/SOURCE.md) and
-  [fixtures/lab-2026-09-18](fixtures/lab-2026-09-18/SOURCE.md).
+  [fixtures/lab-2026-09-12](fixtures/lab-2026-09-12/SOURCE.md),
+  [fixtures/lab-2026-09-18](fixtures/lab-2026-09-18/SOURCE.md), and
+  [fixtures/lab-2026-11-20](fixtures/lab-2026-11-20/SOURCE.md).
 - **Live (optional):** collect from a lab you own using pyATS/Genie. Requires
   `--i-am-in-a-lab` on every capture.
 
@@ -144,19 +145,21 @@ sequenceDiagram
     Note over NCV: pre vs restored → exit 0
 ```
 
-![Findings ncv wrote from the three sanitized CML captures](docs/artifacts/lab-findings.svg)
+![Findings ncv wrote from the four sanitized CML captures](docs/artifacts/lab-findings.svg)
 
 | Date | Change | `ncv diff` pre vs post | Report |
 |---|---|---|---|
 | 2026-09-12 routes | `shutdown` on R1 Ethernet0/1 | exit 1, 2 findings: `V_ROUTE` on R1 for `20.20.20.0/24` (was static) and `1.1.1.0/24` (was connected) | [report](docs/artifacts/lab-2026-09-12-routes-post.md) |
 | 2026-09-12 OSPF | same shutdown, OSPF area 0 on the link | exit 1, 4 findings: `V_ADJ` R1 neighbor 2.2.2.2 and R2 neighbor 1.1.1.1 gone, plus those two R1 routes | [report](docs/artifacts/lab-2026-09-12-ospf-post.md) |
 | 2026-09-18 BGP | `neighbor 1.1.1.2 shutdown` on R1 | exit 1, 3 findings: both peers Idle (`V_ADJ`) and forbidden line `neighbor 1.1.1.2 shutdown` on R1 (`V_DRIFT`) | [report](docs/artifacts/lab-2026-09-18-bgp-post.md) |
+| 2026-11-20 BGP hold timer | inbound ACL on R1 Ethernet0/1 dropping BGP from R2, with a 9 s hold time | exit 1, 2 findings: both peers Idle (`V_ADJ`); no rule names the ACL, so no `V_DRIFT` | [report](docs/artifacts/lab-2026-11-20-bgp-holdtimer-post.md) |
 
 On every run, `pre` vs `pre` and `pre` vs `restored` exited **0** with zero findings.
 R2's end of the link stayed up in the route simulation, so R2's route rules stayed
 compliant on that run. The BGP change was an administrative peer shutdown, not a
 link shutdown; the static routes outranked learned prefixes, so the routing table
-did not move.
+did not move. The hold-timer run shut nothing down: BGP from R2 stopped reaching R1, the
+sessions dropped when the 9 s hold time ran out, and only the adjacency rules caught it.
 
 That is evidence about IOS XE 17.15 on IOL in that lab, not about routers in general.
 
@@ -241,8 +244,8 @@ Those scripts push configuration to the lab by design; `ncv` itself never does.
 
 Tests use synthetic data and mocked connections. They verify the lab flag,
 initialization safeguards, normalization, cleanup, and failure reporting **without
-pyATS installed**. Three live runs have happened, two on 2026-09-12 and one on
-2026-09-18, all against two IOS XE 17.15 routers (IOL) in a Cisco DevNet CML sandbox.
+pyATS installed**. Four live runs have happened, two on 2026-09-12, one on 2026-09-18, and
+one on 2026-11-20, all against two IOS XE 17.15 routers (IOL) in a Cisco DevNet CML sandbox.
 
 ## Development
 

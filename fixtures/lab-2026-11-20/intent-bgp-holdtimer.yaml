@@ -1,5 +1,6 @@
-# Draft intent for the BGP hold-timer run, written on 2026-11-20 before any capture exists.
-# Once the run is recorded it moves next to its evidence under fixtures/, as intent-bgp.yaml did.
+# Intent used for the BGP hold-timer run in fixtures/lab-2026-11-20/bgp-holdtimer (see SOURCE.md).
+# It was written and merged (PR #13) before the run, and moved here unchanged once the run was
+# recorded, as intent-bgp.yaml was.
 #
 # The same rules as fixtures/lab-2026-09-18/intent-bgp.yaml, plus the timers line on both
 # routers, so the no-change check proves the 9 s hold time is configured before the change.

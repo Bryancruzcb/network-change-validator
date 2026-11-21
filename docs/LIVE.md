@@ -143,6 +143,18 @@ The first real run followed this runbook with a few differences worth knowing:
   adapter change, and an administrative `neighbor 1.1.1.2 shutdown` on R1 showed up as `V_ADJ`
   on both routers plus `V_DRIFT` on R1, the findings predicted the day before
   (`fixtures/lab-2026-09-18/SOURCE.md`).
+- A fourth run, on 2026-11-20, lost the same session to a hold-timer expiry instead
+  (`fixtures/lab-2026-11-20/SOURCE.md`). The sandbox had changed how it hands out logins,
+  and three things cost time before the run worked:
+  - The reservation's **Access Details** list two logins. The VPN user is generated per
+    reservation; the CML login, which the console-server path uses, is still `developer`,
+    with its own password. Giving the VPN login at the CML prompt fails with
+    `CredentialsExhaustedError ... ['default']` before anything changes.
+  - Pasting a password into a hidden prompt in an embedded terminal did not deliver it;
+    typing it, or pasting in Windows Terminal, did. Prove the CML login by hand first:
+    `ssh developer@10.10.20.161 "open /default-lab/R1/0"` should reach `R1>`.
+  - Closing the terminal that runs openconnect ends the VPN; the run scripts then stop at
+    their tunnel check.
 - The scripts that drove the runs, and the sanitizer that prepared their evidence for
   publishing, are in [scripts/lab](../scripts/lab/README.md).
 
@@ -157,7 +169,7 @@ write a `SOURCE.md` beside it recording the
 environment, the collection date, and exactly what was sanitized. Never relabel the
 synthetic fixtures as a capture.
 
-The 2026-09-12 and 2026-09-18 runs are recorded that way. When a new run adds evidence, update the places
+The 2026-09-12, 2026-09-18, and 2026-11-20 runs are recorded that way. When a new run adds evidence, update the places
 that describe it: `README.md` (the evidence bullet and the paragraph on what the tests
 establish), this file, and `HANDOFF.md`. Say what actually happened, with the image and
 platform named. A capture against one image is evidence about that image, not about

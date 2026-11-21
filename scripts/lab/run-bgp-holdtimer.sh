@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# The BGP hold-timer run on the DevNet CML default-lab in one command. Prepared, not run yet.
+# The BGP hold-timer run on the DevNet CML default-lab in one command. This is the run recorded
+# in fixtures/lab-2026-11-20/bgp-holdtimer.
 #
 # Sets up eBGP between R1 (AS 65001) and R2 (AS 65002) over the 1.1.1.0/24 link with a 3 s
 # keepalive and a 9 s hold time, checks both sessions negotiated those timers, pre capture,
@@ -31,7 +32,7 @@ stamp=$(date +%Y%m%d-%H%M)
 run="captures/bgp-holdtimer-$stamp"
 out="output/lab/bgp-holdtimer-$stamp"
 log="$out.log"
-intent=scripts/lab/intent-bgp-holdtimer.yaml
+intent=fixtures/lab-2026-11-20/intent-bgp-holdtimer.yaml
 mkdir -p "$run" output/lab
 
 step() { echo "== $(date +%T) $*" | tee -a "$log"; }

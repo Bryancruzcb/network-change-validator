@@ -70,6 +70,11 @@ LAB_RUNS = (
         "2026-09-18 BGP",
         "neighbor 1.1.1.2 shutdown on R1",
     ),
+    (
+        lab_case("2026-11-20", "bgp-holdtimer", "intent-bgp-holdtimer.yaml", 2),
+        "2026-11-20 BGP hold timer",
+        "inbound ACL on R1 drops BGP from R2",
+    ),
 )
 CASES = (DEMO, *(case for case, _, _ in LAB_RUNS))
 
@@ -219,7 +224,7 @@ def lab_svg(runs: list[tuple[str, str, dict[str, Any]]]) -> str:
         y += block_h + block_gap
     body.append(
         f'  <text x="24" y="{height - 10}" font-size="11" font-family="{SANS}" fill="#64748b">'
-        "Rows are the findings ncv wrote from fixtures/lab-2026-09-12 and fixtures/lab-2026-09-18."
+        "Rows are the findings ncv wrote from the sanitized captures under fixtures/lab-*."
         " One image, one simulated lab — not routers in general.</text>"
     )
     return _svg(height, "Lab evidence findings", "#f8fafc", body)

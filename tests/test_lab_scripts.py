@@ -76,7 +76,7 @@ def test_sanitizer_replaces_passwords_and_certificate_bodies_only(root):
 def test_published_lab_configs_are_the_sanitizers_fixed_point(root):
     sanitize = _load_script(root, "sanitize_capture.py").sanitize
     configs = sorted((root / "fixtures").glob("lab-*/**/config.json"))
-    assert len(configs) == 9
+    assert len(configs) == 12
     for path in configs:
         for device, record in json.loads(path.read_text(encoding="utf-8")).items():
             sanitized, secrets, _ = sanitize(record["running"])
@@ -181,7 +181,7 @@ def test_bgp_run_prediction_on_synthetic_snapshots(root, tmp_path):
     )
 
 
-# The hold-timer run, prepared on 2026-11-20 and not run yet: the same eBGP session with a
+# The hold-timer run, prepared before it ran on 2026-11-20: the same eBGP session with a
 # 9 s hold time, and an inbound ACL on R1 that drops BGP from R2 as the planned change.
 
 NEIGHBOR_STALE_TIMERS = """\
@@ -250,7 +250,7 @@ def test_labctl_block_drops_bgp_from_r2_in_both_directions_and_nothing_else(root
 
 
 def test_holdtimer_intent_requires_the_fast_timers_on_both_routers(root):
-    intent = load_intent(root / "scripts" / "lab" / "intent-bgp-holdtimer.yaml")
+    intent = load_intent(root / "fixtures" / "lab-2026-11-20" / "intent-bgp-holdtimer.yaml")
     peers = [(a.device, a.protocol, a.neighbor, a.vrf, a.remote_as) for a in intent.adjacencies]
     assert peers == [("R1", "bgp", "1.1.1.2", "default", 65002), ("R2", "bgp", "1.1.1.1", "default", 65001)]
     required = {rule.device: rule.lines for rule in intent.must_include}
@@ -271,7 +271,7 @@ ACL_ON_R1 = [
 def test_holdtimer_run_prediction_on_synthetic_snapshots(root, tmp_path):
     """Both adjacencies fail and nothing else does: no rule names the ACL, and the routes,
     interface counters, and required lines do not move."""
-    intent = root / "scripts" / "lab" / "intent-bgp-holdtimer.yaml"
+    intent = root / "fixtures" / "lab-2026-11-20" / "intent-bgp-holdtimer.yaml"
     r1_timers, r2_timers = [" neighbor 1.1.1.2 timers 3 9"], [" neighbor 1.1.1.1 timers 3 9"]
     pre, post = tmp_path / "pre", tmp_path / "post"
     _write_snapshot(pre, {"R1": "Established", "R2": "Established"}, r1_timers, r2_timers)
@@ -285,7 +285,7 @@ def test_holdtimer_run_prediction_on_synthetic_snapshots(root, tmp_path):
 
 def test_holdtimer_intent_refuses_a_session_without_the_fast_timers(root, tmp_path):
     """The no-change check is what proves the timers are configured before the change."""
-    intent = root / "scripts" / "lab" / "intent-bgp-holdtimer.yaml"
+    intent = root / "fixtures" / "lab-2026-11-20" / "intent-bgp-holdtimer.yaml"
     pre = tmp_path / "pre"
     _write_snapshot(pre, {"R1": "Established", "R2": "Established"})
     code, findings = _bgp_diff(root, tmp_path, pre, pre, "baseline", intent)

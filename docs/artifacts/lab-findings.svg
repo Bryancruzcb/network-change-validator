@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="980" height="584" viewBox="0 0 980 584" role="img" aria-label="Lab evidence findings">
-  <rect width="980" height="584" fill="#f8fafc"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="712" viewBox="0 0 980 712" role="img" aria-label="Lab evidence findings">
+  <rect width="980" height="712" fill="#f8fafc"/>
   <rect x="0" y="0" width="980" height="88" fill="#0f172a"/>
   <text x="24" y="34" font-size="20" font-family="ui-sans-serif, system-ui, sans-serif" fill="#f8fafc" font-weight="700">Lab evidence — three DevNet CML runs</text>
   <text x="24" y="56" font-size="13" font-family="ui-sans-serif, system-ui, sans-serif" fill="#cbd5e1">IOS XE 17.15 IOL R1–R2 in Cisco Modeling Labs 2.7.2 default-lab. Sanitized captures replayed by tests/test_lab_evidence.py.</text>
@@ -41,5 +41,14 @@
   <rect x="32" y="478" width="72" height="18" rx="5" fill="#6d28d9"/>
   <text x="68" y="491" text-anchor="middle" font-size="10" font-family="ui-sans-serif, system-ui, sans-serif" fill="#fff" font-weight="700">V_DRIFT</text>
   <text x="114" y="492" font-size="12" font-family="ui-sans-serif, system-ui, sans-serif" fill="#0f172a">R1 — forbidden line present: neighbor 1.1.1.2 shutdown</text>
-  <text x="24" y="574" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#64748b">Rows are the findings ncv wrote from fixtures/lab-2026-09-12 and fixtures/lab-2026-09-18. One image, one simulated lab — not routers in general.</text>
+  <rect x="16" y="522" width="948" height="100" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="32" y="544" font-size="15" font-family="ui-sans-serif, system-ui, sans-serif" font-weight="700" fill="#0f172a">2026-11-20 BGP hold timer — 2 findings</text>
+  <text x="32" y="562" font-size="12" font-family="ui-sans-serif, system-ui, sans-serif" fill="#475569">Change: inbound ACL on R1 drops BGP from R2 · intent devnet-default-lab-bgp-holdtimer</text>
+  <rect x="32" y="568" width="72" height="18" rx="5" fill="#b45309"/>
+  <text x="68" y="581" text-anchor="middle" font-size="10" font-family="ui-sans-serif, system-ui, sans-serif" fill="#fff" font-weight="700">V_ADJ</text>
+  <text x="114" y="582" font-size="12" font-family="ui-sans-serif, system-ui, sans-serif" fill="#0f172a">R1 — required BGP neighbor 1.1.1.2 must be Established in vrf default with remote AS 65002</text>
+  <rect x="32" y="594" width="72" height="18" rx="5" fill="#b45309"/>
+  <text x="68" y="607" text-anchor="middle" font-size="10" font-family="ui-sans-serif, system-ui, sans-serif" fill="#fff" font-weight="700">V_ADJ</text>
+  <text x="114" y="608" font-size="12" font-family="ui-sans-serif, system-ui, sans-serif" fill="#0f172a">R2 — required BGP neighbor 1.1.1.1 must be Established in vrf default with remote AS 65001</text>
+  <text x="24" y="702" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif" fill="#64748b">Rows are the findings ncv wrote from the sanitized captures under fixtures/lab-*. One image, one simulated lab — not routers in general.</text>
 </svg>

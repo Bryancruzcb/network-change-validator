@@ -34,6 +34,9 @@ python3 -m ncv diff fixtures/lab-2026-09-18/bgp/pre \
   --intent fixtures/lab-2026-09-18/intent-bgp.yaml \
   --report output/artifacts-bgp
 # exit 1, finding_count 3
+
+python3 -m ncv diff fixtures/lab-2026-11-20/bgp-holdtimer/pre   fixtures/lab-2026-11-20/bgp-holdtimer/post   --intent fixtures/lab-2026-11-20/intent-bgp-holdtimer.yaml   --report output/artifacts-bgp-holdtimer
+# exit 1, finding_count 2
 ```
 
 `python3 scripts/render_artifacts.py` runs those diffs with this checkout's `ncv`,
@@ -49,11 +52,13 @@ here falls behind the code.
 | `lab-2026-09-12-routes-post.*` | sanitized CML capture, route run |
 | `lab-2026-09-12-ospf-post.*` | sanitized CML capture, OSPF run |
 | `lab-2026-09-18-bgp-post.*` | sanitized CML capture, BGP run |
+| `lab-2026-11-20-bgp-holdtimer-post.*` | sanitized CML capture, BGP hold-timer run |
 | `demo-findings.svg`, `lab-findings.svg` | rendered from the JSON files above |
 
 The demo snapshots are hand-authored. The lab snapshots are sanitized copies of
-captures taken on 2026-09-12 and 2026-09-18; see
-[fixtures/lab-2026-09-12/SOURCE.md](../../fixtures/lab-2026-09-12/SOURCE.md) and
-[fixtures/lab-2026-09-18/SOURCE.md](../../fixtures/lab-2026-09-18/SOURCE.md).
+captures taken on 2026-09-12, 2026-09-18, and 2026-11-20; see
+[fixtures/lab-2026-09-12/SOURCE.md](../../fixtures/lab-2026-09-12/SOURCE.md),
+[fixtures/lab-2026-09-18/SOURCE.md](../../fixtures/lab-2026-09-18/SOURCE.md), and
+[fixtures/lab-2026-11-20/SOURCE.md](../../fixtures/lab-2026-11-20/SOURCE.md).
 Password and certificate bodies were stripped before publish. The collector's
 `raw/` directory is not in this repository.

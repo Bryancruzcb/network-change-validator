@@ -160,10 +160,9 @@ CI jobs, so `main` stayed red until PR #11.
   notes the unexplained configuration timestamps in the route run's pre capture, and
   `main` is protected (see "Current state").
 
-### Branch `lab/bgp-hold-timer`, the hold-timer run, prepared and not run
+### PR #13, the hold-timer run, prepared and not run
 
-The fourth live path, prepared the way PR #9 prepared the BGP run. Nothing has run against a
-lab and no document claims otherwise.
+The fourth live path, prepared the way PR #9 prepared the BGP run, and merged before it ran.
 
 - `labctl.py setup-bgp-fast` is `setup-bgp` plus `neighbor <peer> timers 3 9` on both
   routers, and `check-hold-time` reads the negotiated timers from `show bgp ipv4 unicast
@@ -176,8 +175,9 @@ lab and no document claims otherwise.
   else. Nothing is shut down, so R1 stops hearing R2's keepalives and its hold timer
   expires. `bgp-unblock` unbinds and deletes the ACL; `change.sh holdtimer-apply|holdtimer-undo`
   does either by hand.
-- `run-bgp-holdtimer.sh` drives it, against the draft `scripts/lab/intent-bgp-holdtimer.yaml`
-  (the BGP intent plus the timers line on both routers). It pauses before the change and at
+- `run-bgp-holdtimer.sh` drives it, against `intent-bgp-holdtimer.yaml` (the BGP intent plus
+  the timers line on both routers), drafted in `scripts/lab/` and moved beside its evidence
+  by the next PR. It pauses before the change and at
   the end so the operator can run a packet capture on the R1-R2 link in the CML UI.
 - `scripts/lab/bgp_pcap.py` lists the BGP messages in a classic pcap (standard library only,
   outside ncv): TCP flags, retransmissions, OPEN timers, and NOTIFICATION codes by name. It
@@ -188,9 +188,25 @@ lab and no document claims otherwise.
   else. No rule names the ACL, so the config rules stay clean; that the adjacency rules
   catch a cause no rule anticipated is the point of the run.
 
+### Branch `lab/bgp-hold-timer-evidence`, hold-timer evidence
+
+The run happened on 2026-11-20 in a fresh reservation of the same sandbox (CML 2.7.2,
+IOS XE 17.15 IOL), driven by `run-bgp-holdtimer.sh` at `ee58e95`, and matched PR #13's
+prediction: the no-change check clean, `V_ADJ` on both routers with both peers `Idle` after
+the ACL, nothing else, and the restored comparison clean. `check-hold-time` read the
+negotiated 9 s hold time from real output, and IOS wrote the timers line exactly as the
+intent requires. No packet capture was taken, so the NOTIFICATION code is still unseen.
+
+The sanitized captures are in `fixtures/lab-2026-11-20/bgp-holdtimer` with the intent and a
+`SOURCE.md`; `tests/test_lab_evidence.py` replays them in four more tests;
+`docs/artifacts/lab-2026-11-20-bgp-holdtimer-post.*` and a fourth block in
+`lab-findings.svg` come from `render_artifacts.py`. `docs/LIVE.md` records what the new
+sandbox logins cost: the CML login is `developer` from Access Details, not the per-reservation
+VPN user, and passwords pasted into a hidden prompt in an embedded terminal did not arrive.
+
 ## Test count
 
-**121 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
+**125 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
 the 2 policy regressions from PR #1, the 21 that came with BGP support and feature
 selection, 3 covering report provenance and the version flag, 1 that loads both
 bundled intents so the lab template cannot rot unnoticed, 2 covering the interface shape
@@ -203,7 +219,7 @@ three empty `--features` values, and a repeated feature. PR #12 brought `main` t
 hold-timer branch adds 12: 6 in `tests/test_lab_scripts.py` (the timers parser, the setup,
 block, and unblock lines, the draft intent, the predicted findings, and a pre capture without
 the timers failing the no-change check) and 6 in `tests/test_bgp_pcap.py` on captures built
-byte by byte.
+byte by byte. The evidence branch adds 4 that replay the hold-timer captures.
 
 ## Verify
 
@@ -211,7 +227,7 @@ byte by byte.
 python3 -m pip install -e ".[dev]"
 python3 -m ruff check .
 python3 -m ruff format --check .
-python3 -m pytest                      # 121 passed
+python3 -m pytest                      # 125 passed
 git diff --check                       # clean
 python3 scripts/render_artifacts.py    # rewrites docs/artifacts with identical bytes
 git status --short docs/artifacts      # lists nothing (on Windows, run git diff instead;
@@ -246,17 +262,19 @@ python -m venv .venv
 - **`docs/artifacts` is what the code writes.** Rebuild it with
   `scripts/render_artifacts.py` whenever a report changes; `tests/test_artifacts.py`
   enforces it.
-- **Claims match the evidence.** Three live runs have happened against IOS XE 17.15 IOL in a
+- **Claims match the evidence.** Four live runs have happened against IOS XE 17.15 IOL in a
   DevNet CML sandbox: two on 2026-09-12 (`fixtures/lab-2026-09-12`), one on static routes and
-  one with OSPF, and one on 2026-09-18 (`fixtures/lab-2026-09-18`) with eBGP. Nothing in the repo may
+  one with OSPF, one on 2026-09-18 (`fixtures/lab-2026-09-18`) with eBGP lost to an
+  administrative shutdown, and one on 2026-11-20 (`fixtures/lab-2026-11-20`) with the same
+  session lost to a hold-timer expiry. Nothing in the repo may
   claim more than that evidence shows, and synthetic fixtures are never relabeled as
   captures.
 
 ## Open
 
-The hold-timer run is prepared on `lab/bgp-hold-timer` and waits for a sandbox reservation:
-run `scripts/lab/run-bgp-holdtimer.sh`, then publish the sanitized captures (and the pcap,
-once it is checked to hold nothing but lab addresses) as PR #10 did. Ideas not started: an
+The hold-timer run's packet side is still open: rerun `scripts/lab/run-bgp-holdtimer.sh` with
+a capture on the R1-R2 link, decode it with `scripts/lab/bgp_pcap.py`, and publish the pcap
+once it is checked to hold nothing but lab addresses. Ideas not started: an
 OSPF dead-timer loss (an ACL dropping IP protocol 89, the OSPF twin of the hold-timer run),
 iBGP and a VRF, a second image or platform (IOS XE on Cat8kv, NX-OS), and the management SSH
 path instead of a console server.

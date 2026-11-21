@@ -1,8 +1,9 @@
 """The live lab captures, sanitized, replayed offline.
 
-fixtures/lab-2026-09-12 and fixtures/lab-2026-09-18 hold real captures from a Cisco DevNet
-CML sandbox (see each SOURCE.md). These tests pin what those runs showed, so an adapter or
-policy change that would have missed the real change fails here first.
+fixtures/lab-2026-09-12, fixtures/lab-2026-09-18, and fixtures/lab-2026-11-20 hold real
+captures from a Cisco DevNet CML sandbox (see each SOURCE.md). These tests pin what those
+runs showed, so an adapter or policy change that would have missed the real change fails
+here first.
 """
 
 from __future__ import annotations
@@ -81,3 +82,34 @@ def test_bgp_run_is_clean_without_the_change(root, tmp_path, after):
     code, findings = _diff(root, tmp_path, "bgp", "pre", after, "intent-bgp.yaml", lab="lab-2026-09-18")
     assert code == 0
     assert findings == []
+
+
+HOLDTIMER = {"run": "bgp-holdtimer", "intent": "intent-bgp-holdtimer.yaml", "lab": "lab-2026-11-20"}
+
+
+def test_holdtimer_run_catches_both_lost_sessions_and_nothing_else(root, tmp_path):
+    """No rule names the ACL that caused it, so only the adjacency rules fire."""
+    h = HOLDTIMER
+    code, findings = _diff(root, tmp_path, h["run"], "pre", "post", h["intent"], lab=h["lab"])
+    assert code == 1
+    assert findings == [("V_ADJ", "R1", "bgp.neighbors.1.1.1.2"), ("V_ADJ", "R2", "bgp.neighbors.1.1.1.1")]
+
+
+@pytest.mark.parametrize("after", ["pre", "restored"])
+def test_holdtimer_run_is_clean_without_the_change(root, tmp_path, after):
+    h = HOLDTIMER
+    code, findings = _diff(root, tmp_path, h["run"], "pre", after, h["intent"], lab=h["lab"])
+    assert code == 0
+    assert findings == []
+
+
+def test_holdtimer_post_capture_holds_the_acl_and_idle_sessions(root):
+    """The change is in the captured config, and both sessions were captured Idle."""
+    post = root / "fixtures" / "lab-2026-11-20" / "bgp-holdtimer" / "post"
+    running = json.loads((post / "config.json").read_text(encoding="utf-8"))["R1"]["running"]
+    assert " ip access-group NCV-BLOCK-BGP in" in running.splitlines()
+    bgp = json.loads((post / "bgp.json").read_text(encoding="utf-8"))
+    assert {dev: next(iter(rec["neighbors"].values()))["state"] for dev, rec in bgp.items()} == {
+        "R1": "Idle",
+        "R2": "Idle",
+    }
