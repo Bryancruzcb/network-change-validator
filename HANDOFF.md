@@ -188,14 +188,14 @@ The fourth live path, prepared the way PR #9 prepared the BGP run, and merged be
   else. No rule names the ACL, so the config rules stay clean; that the adjacency rules
   catch a cause no rule anticipated is the point of the run.
 
-### Branch `lab/bgp-hold-timer-evidence`, hold-timer evidence
+### PR #14, hold-timer evidence
 
 The run happened on 2026-11-20 in a fresh reservation of the same sandbox (CML 2.7.2,
 IOS XE 17.15 IOL), driven by `run-bgp-holdtimer.sh` at `ee58e95`, and matched PR #13's
 prediction: the no-change check clean, `V_ADJ` on both routers with both peers `Idle` after
 the ACL, nothing else, and the restored comparison clean. `check-hold-time` read the
 negotiated 9 s hold time from real output, and IOS wrote the timers line exactly as the
-intent requires. No packet capture was taken, so the NOTIFICATION code is still unseen.
+intent requires. No packet capture was taken on that run.
 
 The sanitized captures are in `fixtures/lab-2026-11-20/bgp-holdtimer` with the intent and a
 `SOURCE.md`; `tests/test_lab_evidence.py` replays them in four more tests;
@@ -204,9 +204,22 @@ The sanitized captures are in `fixtures/lab-2026-11-20/bgp-holdtimer` with the i
 sandbox logins cost: the CML login is `developer` from Access Details, not the per-reservation
 VPN user, and passwords pasted into a hidden prompt in an embedded terminal did not arrive.
 
+### Branch `lab/pcap-through-cml-api`, the hold-timer run's packet capture
+
+A Windows browser cannot reach the CML web UI while the sandbox VPN runs inside WSL, so
+`scripts/lab/cml_capture.py` starts and saves a capture of the R1-R2 link through the CML 2.7
+API (field names checked against the sandbox's own OpenAPI description), and
+`run-bgp-holdtimer.sh` calls it in place of the two manual pauses. `NCV_PCAP=0` skips it, and
+a capture that cannot start does not stop the run. A second run on 2026-11-20 used it:
+`fixtures/lab-2026-11-20/bgp-holdtimer-pcap/link.pcap` shows R1 sending NOTIFICATION 4/0 Hold
+Timer Expired and retransmitting it, R2 sending none, the SYN backoff while the ACL stood, and
+both OPENs carrying a 9 s hold time after it came off. `summary.txt` is `bgp_pcap.py`'s
+reading of it, and `.gitattributes` keeps pcaps binary. 6 more tests: 5 for `cml_capture.py`
+against a fake CML, and 1 that replays the pcap.
+
 ## Test count
 
-**125 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
+**131 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
 the 2 policy regressions from PR #1, the 21 that came with BGP support and feature
 selection, 3 covering report provenance and the version flag, 1 that loads both
 bundled intents so the lab template cannot rot unnoticed, 2 covering the interface shape
@@ -219,7 +232,7 @@ three empty `--features` values, and a repeated feature. PR #12 brought `main` t
 hold-timer branch adds 12: 6 in `tests/test_lab_scripts.py` (the timers parser, the setup,
 block, and unblock lines, the draft intent, the predicted findings, and a pre capture without
 the timers failing the no-change check) and 6 in `tests/test_bgp_pcap.py` on captures built
-byte by byte. The evidence branch adds 4 that replay the hold-timer captures.
+byte by byte. PR #14 adds 4 that replay the hold-timer captures, and the pcap branch 6.
 
 ## Verify
 
@@ -227,7 +240,7 @@ byte by byte. The evidence branch adds 4 that replay the hold-timer captures.
 python3 -m pip install -e ".[dev]"
 python3 -m ruff check .
 python3 -m ruff format --check .
-python3 -m pytest                      # 125 passed
+python3 -m pytest                      # 131 passed
 git diff --check                       # clean
 python3 scripts/render_artifacts.py    # rewrites docs/artifacts with identical bytes
 git status --short docs/artifacts      # lists nothing (on Windows, run git diff instead;
@@ -272,9 +285,7 @@ python -m venv .venv
 
 ## Open
 
-The hold-timer run's packet side is still open: rerun `scripts/lab/run-bgp-holdtimer.sh` with
-a capture on the R1-R2 link, decode it with `scripts/lab/bgp_pcap.py`, and publish the pcap
-once it is checked to hold nothing but lab addresses. Ideas not started: an
+Nothing is open. Ideas not started: an
 OSPF dead-timer loss (an ACL dropping IP protocol 89, the OSPF twin of the hold-timer run),
 iBGP and a VRF, a second image or platform (IOS XE on Cat8kv, NX-OS), and the management SSH
 path instead of a console server.

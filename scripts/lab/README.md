@@ -18,6 +18,7 @@ the one planned change the captures are meant to catch.
 | `labctl.py` | The lab actions the scripts above call: `setup-ospf`, `shut`, `noshut`, `wait-full`, `wait-gone`, `setup-bgp`, `bgp-shut`, `bgp-noshut`, `wait-bgp-up`, `wait-bgp-down`, `setup-bgp-fast`, `check-hold-time`, `bgp-block`, `bgp-unblock`. |
 | `sanitize_capture.py` | Copies a run's `pre/`, `post/`, `restored/` for publishing with passwords and certificate bodies replaced and `raw/` left out. |
 | `bgp_pcap.py` | Lists the BGP messages in a pcap of the lab link: TCP flags, retransmissions, and each message by name, with NOTIFICATION error codes spelled out. |
+| `cml_capture.py` | Starts and saves a packet capture of the R1-R2 link through the CML API (`start`, `stop <file.pcap>`), with the CML login the run scripts already hold. |
 
 The runs compare against the intents kept with their evidence
 (`fixtures/lab-2026-09-12/intent-routes.yaml` and `intent-ospf.yaml`,
@@ -88,25 +89,31 @@ stay compliant, and they did. The run also confirmed the two things only a run c
 writes the timers line exactly as `neighbor 1.1.1.2 timers 3 9`, and `check-hold-time` read
 the negotiated 9 s hold time from IOS XE 17.15's `show bgp ipv4 unicast neighbors`. The
 sessions left Established within about ten seconds of the ACL going on and came back about
-30 seconds after it came off. That run took no packet capture.
+30 seconds after it came off. That run took no packet capture; a second run did (below).
 
 ### Packet evidence
 
 ncv reads what the routers report. A packet capture shows what crossed the wire, which is the
 other half of the story: the capture point is on the link, outside R1, so it also sees the
-packets R1's ACL throws away. The script pauses before the change and at the end; if the
-sandbox's CML UI offers a packet capture on the R1-R2 link, start one at the first pause
-(a `tcp port 179` filter keeps it small), stop it at the second, and save it as
-`captures/bgp-holdtimer-<stamp>/link.pcap`. The script then runs
+packets R1's ACL throws away.
+
+The CML web UI can capture a link, but with the sandbox VPN running inside WSL a Windows
+browser cannot reach it. So right before the change the script runs `cml_capture.py start`,
+which logs in to the CML API with the CML login given at the prompts, finds the R1-R2 link of
+`default-lab`, and starts a capture filtered to `tcp port 179`. At the end, `cml_capture.py
+stop` saves `captures/bgp-holdtimer-<stamp>/link.pcap`, and the script runs
 
     .venv/bin/python scripts/lab/bgp_pcap.py captures/bgp-holdtimer-<stamp>/link.pcap
 
 which prints one line per BGP segment: time, endpoints, TCP flags, and the messages, with a
-NOTIFICATION's error code by name. The run should show `NOTIFICATION 4/0 Hold Timer
-Expired`; the BGP run's admin shutdown would have shown `6/2 Cease: Administrative
-Shutdown`. The script reads classic pcap; convert a pcapng with `editcap -F pcap`, which
-comes with Wireshark. Open the same file in Wireshark to compare the two views. Publish a
-pcap only after checking it holds nothing but lab addresses.
+NOTIFICATION's error code by name. If the capture cannot start, the run goes on without one;
+`NCV_PCAP=0` skips it. The second run on 2026-11-20 captured this way and showed R1 sending
+`NOTIFICATION 4/0 Hold Timer Expired`, about nine seconds after the last keepalive it could
+have heard, and R2 sending none (`fixtures/lab-2026-11-20/SOURCE.md`); the BGP run's admin
+shutdown would have shown `6/2 Cease: Administrative Shutdown`. `bgp_pcap.py` reads classic
+pcap, which is what CML 2.7 returns; convert a pcapng with `editcap -F pcap`, which comes with
+Wireshark. Open the same file in Wireshark to compare the two views. Publish a pcap only after
+checking it holds nothing but lab addresses.
 
 ## Running a session
 

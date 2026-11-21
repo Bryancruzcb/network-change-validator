@@ -155,6 +155,9 @@ The first real run followed this runbook with a few differences worth knowing:
     `ssh developer@10.10.20.161 "open /default-lab/R1/0"` should reach `R1>`.
   - Closing the terminal that runs openconnect ends the VPN; the run scripts then stop at
     their tunnel check.
+  - With the VPN inside WSL, a Windows browser cannot reach the CML web UI, so its capture
+    button is out of reach. `scripts/lab/cml_capture.py` captures the link through the CML
+    API instead, and `run-bgp-holdtimer.sh` calls it.
 - The scripts that drove the runs, and the sanitizer that prepared their evidence for
   publishing, are in [scripts/lab](../scripts/lab/README.md).
 

@@ -8,7 +8,9 @@ here first.
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import sys
 
 import pytest
 
@@ -113,3 +115,28 @@ def test_holdtimer_post_capture_holds_the_acl_and_idle_sessions(root):
         "R1": "Idle",
         "R2": "Idle",
     }
+
+
+def _bgp_pcap(root, monkeypatch):
+    path = root / "scripts" / "lab" / "bgp_pcap.py"
+    spec = importlib.util.spec_from_file_location("bgp_pcap", path)
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, "bgp_pcap", module)  # dataclasses looks the module up
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_holdtimer_pcap_shows_r1s_hold_timer_expiring(root, monkeypatch):
+    """The second 2026-11-20 run captured the R1-R2 link: R1, which stopped hearing R2, sent
+    NOTIFICATION 4/0 (and retransmitted it, since R2's ACKs were dropped too); R2 sent none;
+    the reconnect after the ACL came off opened with a 9 s hold time on both sides."""
+    pcap_dir = root / "fixtures" / "lab-2026-11-20" / "bgp-holdtimer-pcap"
+    lines = _bgp_pcap(root, monkeypatch).summarize((pcap_dir / "link.pcap").read_bytes())
+    assert lines == (pcap_dir / "summary.txt").read_text(encoding="utf-8").splitlines()
+    notifications = [line for line in lines if "NOTIFICATION" in line]
+    assert len(notifications) == 2
+    assert all("1.1.1.1:179 -> 1.1.1.2:" in line for line in notifications)
+    assert all(line.endswith("NOTIFICATION 4/0 Hold Timer Expired") for line in notifications)
+    assert not any("Cease" in line for line in lines)
+    opens = sorted(line.split("  OPEN ")[-1] for line in lines if "  OPEN " in line)
+    assert opens == ["AS 65001 hold 9 id 1.1.1.1", "AS 65002 hold 9 id 2.2.2.2"]

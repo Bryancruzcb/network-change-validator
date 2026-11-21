@@ -159,7 +159,10 @@ R2's end of the link stayed up in the route simulation, so R2's route rules stay
 compliant on that run. The BGP change was an administrative peer shutdown, not a
 link shutdown; the static routes outranked learned prefixes, so the routing table
 did not move. The hold-timer run shut nothing down: BGP from R2 stopped reaching R1, the
-sessions dropped when the 9 s hold time ran out, and only the adjacency rules caught it.
+sessions dropped when the 9 s hold time ran out, and only the adjacency rules caught it. A
+packet capture of the link from a second run shows the cause ncv cannot see: R1 sent
+`NOTIFICATION 4/0 Hold Timer Expired` and R2 sent none
+([summary](fixtures/lab-2026-11-20/bgp-holdtimer-pcap/summary.txt)).
 
 That is evidence about IOS XE 17.15 on IOL in that lab, not about routers in general.
 
