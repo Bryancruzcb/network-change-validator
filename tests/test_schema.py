@@ -54,3 +54,35 @@ def test_bad_remote_as_inside_vrfs_has_file_and_field_context(tmp_path):
     field = re.escape("bgp.json.r1.vrfs.NCV.neighbors.198.51.100.1.remote_as: expected")
     with pytest.raises(ValueError, match=field):
         load_snapshot(tmp_path)
+
+
+@pytest.mark.parametrize("vrf_field", ["NCV", "default", None])
+def test_a_vrf_field_inside_a_by_vrf_record_is_refused(tmp_path, vrf_field):
+    record = {"state": "Established", "vrf": vrf_field, "remote_as": 65010}
+    (tmp_path / "bgp.json").write_text(
+        json.dumps({"r1": {"vrfs": {"default": {"neighbors": {"198.51.100.1": record}}}}})
+    )
+    field = re.escape("bgp.json.r1.vrfs.default.neighbors.198.51.100.1.vrf: the vrf is the key, not a field")
+    with pytest.raises(ValueError, match=field):
+        load_snapshot(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "node,where",
+    [
+        pytest.param({"vrfs": []}, "bgp.json.r1.vrfs: expected a JSON object", id="vrfs-list"),
+        pytest.param({"vrfs": {"NCV": "up"}}, "bgp.json.r1.vrfs.NCV: expected a JSON object", id="vrf-text"),
+        pytest.param(
+            {"vrfs": {"NCV": {"neighbors": []}}},
+            "bgp.json.r1.vrfs.NCV.neighbors: expected a JSON object",
+            id="vrf-neighbors-list",
+        ),
+        pytest.param(
+            {"neighbors": []}, "bgp.json.r1.neighbors: expected a JSON object", id="flat-neighbors-list"
+        ),
+    ],
+)
+def test_a_bgp_vrfs_or_neighbors_value_that_is_not_an_object_is_refused(tmp_path, node, where):
+    (tmp_path / "bgp.json").write_text(json.dumps({"r1": node}))
+    with pytest.raises(ValueError, match=re.escape(where)):
+        load_snapshot(tmp_path)

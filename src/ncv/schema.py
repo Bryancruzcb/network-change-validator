@@ -18,12 +18,16 @@ def _text_fields(record: dict[str, Any], fields: tuple[str, ...], where: str) ->
             raise ValueError(f"{where}.{key}: expected a string or null")
 
 
-def _bgp_records(neighbors: Any, where: str, text: tuple[str, ...]) -> None:
-    """Check one map of BGP peer records; both stored shapes share it, only their text fields differ."""
+def _bgp_records(neighbors: Any, where: str, keyed_by_vrf: bool) -> None:
+    """Check one map of BGP peer records; both stored shapes share it, only the vrf field differs."""
     for neighbor, rec in _object(neighbors, where).items():
         path = f"{where}.{neighbor}"
         rec = _object(rec, path)
-        _text_fields(rec, text, path)
+        if keyed_by_vrf and "vrf" in rec:
+            # Policy reads the VRF from the key, so a field here would be silently ignored even
+            # when it names another VRF.
+            raise ValueError(f"{path}.vrf: the vrf is the key, not a field")
+        _text_fields(rec, ("state",) if keyed_by_vrf else ("state", "vrf"), path)
         remote_as = rec.get("remote_as")
         if remote_as is not None and (type(remote_as) is not int or remote_as < 0):
             raise ValueError(f"{path}.remote_as: expected a non-negative integer or null")
@@ -38,9 +42,9 @@ def _bgp_node(node: dict[str, Any], loc: str) -> None:
     if "vrfs" in node:
         for vrf, rec in _object(node["vrfs"], f"{loc}.vrfs").items():
             path = f"{loc}.vrfs.{vrf}"
-            _bgp_records(_object(rec, path).get("neighbors", {}), f"{path}.neighbors", ("state",))
+            _bgp_records(_object(rec, path).get("neighbors", {}), f"{path}.neighbors", True)
     else:
-        _bgp_records(node.get("neighbors", {}), f"{loc}.neighbors", ("state", "vrf"))
+        _bgp_records(node.get("neighbors", {}), f"{loc}.neighbors", False)
 
 
 def validate_section(name: str, section: Any, where: str) -> None:

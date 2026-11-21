@@ -220,8 +220,8 @@ Policy details:
   Interface names match exactly; omit `interface` to check state alone.
 - BGP checks require an Established session, matched case-insensitively. `vrf` and
   `remote_as` are optional discriminators, checked only when the intent declares them.
-  An adjacency that names no `vrf` must match the address in exactly one VRF; an address
-  found in several is a finding that asks for the `vrf` in the intent.
+  For snapshots that store BGP by VRF, an adjacency that names no `vrf` is checked in the
+  default VRF, as routes are; older flat snapshots keep the old rule.
 - An adjacency carries the fields of its own protocol: `interface` belongs to `ospf`,
   `vrf` and `remote_as` to `bgp`. The wrong pairing is rejected by name.
 - Route checks cover presence and optional protocol, not reachability or next-hop correctness.
@@ -238,7 +238,7 @@ See [docs/LIVE.md](docs/LIVE.md). Live collection uses a deliberately small Geni
 adapter for OSPF, BGP, routing, and interface state plus `show running-config`.
 Pass `--features` to narrow that set to what a given lab actually runs.
 Unsupported shapes are rejected, as is the same neighbor seen twice: an OSPF peer
-across interfaces or VRFs, or a BGP peer across VRFs or instances.
+across interfaces or VRFs, or a BGP peer address twice in one VRF (two instances).
 It is not a general multi-vendor framework.
 
 A step-by-step runbook for a first capture against a Cisco DevNet sandbox, including

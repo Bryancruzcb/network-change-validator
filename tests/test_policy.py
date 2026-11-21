@@ -197,21 +197,32 @@ def _bgp_intent(*adjacencies):
             id="by-vrf-named",
         ),
         pytest.param(
+            _by_vrf(default=UP),
+            "NCV",
+            None,
+            f"bgp.vrfs.NCV.neighbors.{PEER}",
+            id="by-vrf-named-vrf-missing",
+        ),
+        pytest.param(
+            _by_vrf(default=DOWN, NCV=UP),
+            "",
+            DOWN,
+            f"bgp.vrfs.default.neighbors.{PEER}",
+            id="by-vrf-omitted-in-default",
+        ),
+        pytest.param(
+            _by_vrf(NCV=UP),
+            "",
+            None,
+            f"bgp.vrfs.default.neighbors.{PEER}",
+            id="by-vrf-omitted-only-in-another-vrf",
+        ),
+        pytest.param(
             _bgp_snap({"vrfs": {"default": {"neighbors": {"192.0.2.9": UP}}}}),
             "",
             None,
-            f"bgp.neighbors.{PEER}",
+            f"bgp.vrfs.default.neighbors.{PEER}",
             id="by-vrf-omitted-in-no-vrf",
-        ),
-        pytest.param(
-            _by_vrf(NCV=DOWN), "", DOWN, f"bgp.vrfs.NCV.neighbors.{PEER}", id="by-vrf-omitted-in-one-vrf"
-        ),
-        pytest.param(
-            _by_vrf(default=UP, NCV=DOWN),
-            "",
-            {"NCV": DOWN, "default": UP},
-            f"bgp.neighbors.{PEER}",
-            id="by-vrf-omitted-in-several-vrfs",
         ),
     ],
 )
@@ -220,20 +231,49 @@ def test_bgp_evidence_and_path_follow_the_stored_shape(post, vrf, after, path):
     assert (finding.policy_id, finding.path, finding.before, finding.after) == ("V_ADJ", path, after, after)
 
 
-@pytest.mark.parametrize("vrf", ["NCV", ""])
-def test_a_by_vrf_record_established_in_its_vrf_is_compliant(vrf):
-    post = _by_vrf(NCV=UP)
+@pytest.mark.parametrize("vrf,post", [("NCV", _by_vrf(NCV=UP)), ("", _by_vrf(default=UP))])
+def test_a_by_vrf_record_established_in_its_vrf_is_compliant(vrf, post):
     assert evaluate(_bgp_intent(Adjacency("r1", "bgp", PEER, vrf=vrf, remote_as=65010)), post, post) == []
 
 
-def test_a_peer_in_several_vrfs_needs_the_intent_to_name_one_even_when_all_are_up():
-    post = _by_vrf(default=UP, NCV=UP)
-    (finding,) = evaluate(_bgp_intent(Adjacency("r1", "bgp", PEER)), post, post)
-    assert (
-        finding.why
-        == f"required BGP neighbor {PEER} is in several vrfs (NCV, default); name the vrf in the intent"
-    )
-    assert finding.action == "add vrf to this adjacency in the intent"
+def test_a_rule_that_names_no_vrf_ignores_the_same_address_in_another_vrf():
+    # The default session is up; a VRF neighbor with the same address is down. The rule that
+    # names no vrf is about the default session only, so nothing moved for it.
+    post = _by_vrf(default=UP, NCV=DOWN)
+    assert evaluate(_bgp_intent(Adjacency("r1", "bgp", PEER)), _by_vrf(default=UP), post) == []
+
+
+@pytest.mark.parametrize(
+    "vrf,remote_as,why",
+    [
+        ("", None, f"required BGP neighbor {PEER} must be Established in vrf default"),
+        ("", 65010, f"required BGP neighbor {PEER} must be Established in vrf default with remote AS 65010"),
+        ("NCV", None, f"required BGP neighbor {PEER} must be Established in vrf NCV"),
+        ("NCV", 65010, f"required BGP neighbor {PEER} must be Established in vrf NCV with remote AS 65010"),
+    ],
+)
+def test_a_by_vrf_finding_names_the_vrf_it_checked(vrf, remote_as, why):
+    post = _by_vrf(default=DOWN, NCV=DOWN)
+    (finding,) = evaluate(_bgp_intent(Adjacency("r1", "bgp", PEER, vrf=vrf, remote_as=remote_as)), post, post)
+    assert finding.why == why
+    assert finding.action == "inspect the peer session, its vrf, and its remote AS in the lab"
+
+
+@pytest.mark.parametrize(
+    "snap,path",
+    [
+        pytest.param(_bgp_snap({"neighbors": {}}), f"bgp.neighbors.{PEER}", id="neighbors-key-is-flat"),
+        pytest.param(_bgp_snap({}), f"bgp.vrfs.default.neighbors.{PEER}", id="empty-node-is-by-vrf"),
+        pytest.param({"bgp": {}}, f"bgp.vrfs.default.neighbors.{PEER}", id="missing-device-is-by-vrf"),
+        pytest.param({}, f"bgp.vrfs.default.neighbors.{PEER}", id="missing-section-is-by-vrf"),
+    ],
+)
+def test_a_node_is_flat_only_when_it_holds_neighbors(snap, path):
+    # A device with no data at all also gets the V_DRIFT "missing from post" finding; only the
+    # adjacency finding is about the shape.
+    findings = evaluate(_bgp_intent(Adjacency("r1", "bgp", PEER)), snap, snap)
+    (finding,) = [f for f in findings if f.policy_id == "V_ADJ"]
+    assert (finding.path, finding.before, finding.after) == (path, None, None)
 
 
 def test_the_same_peer_in_two_vrfs_is_judged_per_named_vrf():
@@ -262,3 +302,21 @@ def test_a_legacy_pre_meets_a_by_vrf_post():
     )
     assert (finding.before, finding.after) == (flat_up, DOWN)
     assert finding.path == f"bgp.vrfs.default.neighbors.{PEER}"
+
+
+@pytest.mark.parametrize(
+    "vrf,why",
+    [
+        ("default", f"required BGP neighbor {PEER} must be Established in vrf default"),
+        ("", f"required BGP neighbor {PEER} must be Established"),
+    ],
+)
+def test_a_by_vrf_pre_meets_a_legacy_post(vrf, why):
+    # Each snapshot is read in its own shape: the pre by its default-VRF key, the post (and so
+    # the path, compliance, and wording) by the flat record.
+    pre = _by_vrf(default=UP)
+    post = _bgp_snap({"neighbors": {PEER: FLAT_DOWN}})
+    (finding,) = evaluate(_bgp_intent(Adjacency("r1", "bgp", PEER, vrf=vrf)), pre, post)
+    assert (finding.before, finding.after) == (UP, FLAT_DOWN)
+    assert finding.path == f"bgp.neighbors.{PEER}"
+    assert finding.why == why

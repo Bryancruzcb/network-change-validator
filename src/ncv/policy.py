@@ -85,63 +85,43 @@ def _bgp_node(snap: dict[str, Any], device: str) -> dict[str, Any]:
 
 
 def _bgp_keyed_by_vrf(node: dict[str, Any]) -> bool:
-    return "vrfs" in node
-
-
-def _flat_evidence(node: dict[str, Any], adj: Adjacency) -> tuple[Any, str, tuple[str, ...]]:
-    return (node.get("neighbors") or {}).get(adj.neighbor), f"bgp.neighbors.{adj.neighbor}", ()
+    # Only the older flat snapshots hold a "neighbors" map directly under the device. Anything
+    # else, a "vrfs" map, an empty object, or a device missing from the section, is read by VRF,
+    # so a rule for a device with no data gets the same path a current capture would give it.
+    return "neighbors" not in node
 
 
 def _vrf_neighbors(vrfs: dict[str, Any], vrf: str) -> dict[str, Any]:
     return (vrfs.get(vrf) or {}).get("neighbors") or {}
 
 
-def _vrf_evidence(node: dict[str, Any], adj: Adjacency) -> tuple[Any, str, tuple[str, ...]]:
-    vrfs = node.get("vrfs") or {}
-    if adj.vrf:
-        rec = _vrf_neighbors(vrfs, adj.vrf).get(adj.neighbor)
-        return rec, f"bgp.vrfs.{adj.vrf}.neighbors.{adj.neighbor}", () if rec is None else (adj.vrf,)
-    found = {
-        vrf: _vrf_neighbors(vrfs, vrf)[adj.neighbor]
-        for vrf in sorted(vrfs)
-        if adj.neighbor in _vrf_neighbors(vrfs, vrf)
-    }
-    if len(found) == 1:
-        ((vrf, rec),) = found.items()
-        return rec, f"bgp.vrfs.{vrf}.neighbors.{adj.neighbor}", (vrf,)
-    # Absent, or in several VRFs: no single record to point at, so keep the flat path.
-    return found or None, f"bgp.neighbors.{adj.neighbor}", tuple(found)
+def _bgp_evidence(snap: dict[str, Any], adj: Adjacency) -> tuple[Any, str, str | None]:
+    """What one snapshot holds for a BGP adjacency rule: (record or None, path, vrf checked).
 
-
-def _bgp_evidence(snap: dict[str, Any], adj: Adjacency) -> tuple[Any, str, tuple[str, ...]]:
-    """What one snapshot holds for a BGP adjacency rule: (evidence, path, vrfs it was found in).
-
-    The vrfs are empty for a flat record or no record, one name for a record selected by its VRF
-    key, and several when the intent names no VRF and the address is in more than one.
+    By VRF, an adjacency that names no vrf is checked in the default VRF, as routes are, so the
+    record and the path never depend on which other VRFs hold the address. A flat record carries
+    its VRF inside it, so the vrf checked is None and the record's own field is compared instead.
     """
     node = _bgp_node(snap, adj.device)
-    return _vrf_evidence(node, adj) if _bgp_keyed_by_vrf(node) else _flat_evidence(node, adj)
+    if not _bgp_keyed_by_vrf(node):
+        return (node.get("neighbors") or {}).get(adj.neighbor), f"bgp.neighbors.{adj.neighbor}", None
+    vrf = adj.vrf or "default"
+    record = _vrf_neighbors(node.get("vrfs") or {}, vrf).get(adj.neighbor)
+    return record, f"bgp.vrfs.{vrf}.neighbors.{adj.neighbor}", vrf
 
 
-def _bgp_rule_compliant(adj: Adjacency, after: Any, vrfs: tuple[str, ...]) -> bool:
-    if len(vrfs) > 1:
-        return False
-    return _bgp_session_compliant(adj, after) if vrfs else _bgp_compliant(adj, after)
+def _bgp_rule_compliant(adj: Adjacency, after: Any, vrf: str | None) -> bool:
+    return _bgp_compliant(adj, after) if vrf is None else _bgp_session_compliant(adj, after)
 
 
-def _bgp_complaint(adj: Adjacency, vrfs: tuple[str, ...]) -> tuple[str, str]:
-    if len(vrfs) > 1:
-        return (
-            f"required BGP neighbor {adj.neighbor} is in several vrfs ({', '.join(sorted(vrfs))}); "
-            "name the vrf in the intent",
-            "add vrf to this adjacency in the intent",
-        )
-    why = (
+def _bgp_why(adj: Adjacency, vrf: str | None) -> str:
+    """By VRF the why names the VRF that was checked; a flat record keeps the wording it always had."""
+    checked = adj.vrf if vrf is None else vrf
+    return (
         f"required BGP neighbor {adj.neighbor} must be Established"
-        + (f" in vrf {adj.vrf}" if adj.vrf else "")
+        + (f" in vrf {checked}" if checked else "")
         + (f" with remote AS {adj.remote_as}" if adj.remote_as is not None else "")
     )
-    return why, "inspect the peer session, its vrf, and its remote AS in the lab"
 
 
 def _adjacencies(intent: Intent, pre: dict[str, Any], post: dict[str, Any]) -> list[Finding]:
@@ -161,10 +141,11 @@ def _adjacencies(intent: Intent, pre: dict[str, Any], post: dict[str, Any]) -> l
             # The path comes from the post snapshot; the pre evidence is looked up against the
             # pre snapshot's own shape, since a legacy pre can meet a by-VRF post.
             before, _, _ = _bgp_evidence(pre, adj)
-            after, path, vrfs = _bgp_evidence(post, adj)
-            if _bgp_rule_compliant(adj, after, vrfs):
+            after, path, vrf = _bgp_evidence(post, adj)
+            if _bgp_rule_compliant(adj, after, vrf):
                 continue
-            why, action = _bgp_complaint(adj, vrfs)
+            why = _bgp_why(adj, vrf)
+            action = "inspect the peer session, its vrf, and its remote AS in the lab"
         out.append(
             Finding(
                 policy_id="V_ADJ",
