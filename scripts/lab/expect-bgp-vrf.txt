@@ -1,0 +1,15 @@
+# The predicted findings of the BGP VRF run's change comparison (pre vs post), written before
+# any capture exists. One finding per line: <policy> <device> <path>. Blank lines and everything
+# after a # are ignored.
+#
+# run-bgp-vrf.sh checks its change report against this file with check_findings.py, and
+# tests/test_lab_scripts.py reads it to pin the prediction on synthetic snapshots. It moves next
+# to the evidence, with the draft intent, once a run is recorded.
+#
+# All five are in vrf NCV: the default VRF's session to the same address stays Established.
+
+V_ADJ R1 bgp.vrfs.NCV.neighbors.1.1.1.2  # reset at once: its subinterface went down
+V_ADJ R2 bgp.vrfs.NCV.neighbors.1.1.1.1  # down on its 9 s hold timer
+V_ROUTE R1 routing.vrfs.NCV.routes.1.1.1.0/24  # connected, gone with the subinterface
+V_ROUTE R1 routing.vrfs.NCV.routes.172.16.102.0/24  # learned over the VRF session
+V_ROUTE R2 routing.vrfs.NCV.routes.172.16.101.0/24  # learned over the VRF session

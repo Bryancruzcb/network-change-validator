@@ -10,10 +10,11 @@ its parsers on sample output, and the findings the BGP run's planned change was 
 produce, on synthetic snapshots shaped like the 2026-09-12 captures. That prediction was
 written before the run; the 2026-09-18 run matched it, and tests/test_lab_evidence.py replays
 the real captures. The OSPF dead-timer run, the iBGP run, and the BGP VRF run are prepared the
-same way and have not run: their predictions are pinned here on synthetic snapshots, the iBGP
-and VRF ones built through ncv's own adapter from Genie-shaped data. The last tests pin what `labctl.py reset`
-would send, on the published configs and on ones built here; tests/test_labctl_commands.py runs
-the commands on a fake lab.
+same way and have not run: their predictions are pinned here on synthetic snapshots built
+through ncv's own adapter from Genie-shaped data, and the predicted change findings are read
+from the scripts/lab/expect-<run>.txt file each run script checks its report against. The last
+tests pin what `labctl.py reset` would send, on the published configs and on ones built here;
+tests/test_labctl_commands.py runs the commands on a fake lab.
 """
 
 from __future__ import annotations
@@ -21,6 +22,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+
+import pytest
 
 from ncv.cli import main
 from ncv.intent import load_intent
@@ -201,19 +204,23 @@ R2_OSPF_CONFIG = [
 ]
 
 
-def _write_ospf_snapshot(path, neighbors, r1_extra=(), r2_extra=()):
-    """The OSPF twin of _write_snapshot. `neighbors` maps each router to {neighbor: state},
-    recorded as Genie's learn writes them: lowercase state, on Ethernet0/1. A router left out
-    of `neighbors`, or given {}, lists no neighbor at all."""
-    ospf = {
-        dev: {
-            "neighbors": {
-                nbr: {"state": state, "interface": "Ethernet0/1"}
-                for nbr, state in neighbors.get(dev, {}).items()
-            }
-        }
-        for dev in ("R1", "R2")
+def _genie_ospf(neighbors):
+    """`learn ospf` as Genie shapes it: neighbors {router id: state} on Ethernet0/1 of area 0."""
+    interface = {"neighbors": {nbr: {"state": state} for nbr, state in neighbors.items()}}
+    area = {"interfaces": {"Ethernet0/1": interface}}
+    return {
+        "vrf": {"default": {"address_family": {"ipv4": {"instance": {"1": {"areas": {"0.0.0.0": area}}}}}}}
     }
+
+
+def _write_ospf_snapshot(path, neighbors, r1_extra=(), r2_extra=()):
+    """The OSPF twin of _write_snapshot. `neighbors` maps each router to {neighbor: state} as
+    Genie's learn reports them (lowercase states, on Ethernet0/1), and the section goes through
+    ncv's own adapter, so a neighbor the adapter filed under the wrong key fails the
+    prediction. A router left out of `neighbors`, or given {}, lists no neighbor at all."""
+    ospf = {}
+    for dev in ("R1", "R2"):
+        ospf.update(normalize_learn(dev, "ospf", _genie_ospf(neighbors.get(dev, {}))))
     configs = {"R1": R1_OSPF_CONFIG + list(r1_extra), "R2": R2_OSPF_CONFIG + list(r2_extra)}
     _write_lab_snapshot(path, ospf, {}, configs)
 
@@ -224,6 +231,14 @@ def _bgp_diff(root, tmp_path, before, after, label, intent=None):
     code = main(["diff", str(before), str(after), "--intent", str(intent), "--report", str(report)])
     findings = json.loads((report / "report.json").read_text(encoding="utf-8"))["findings"]
     return code, sorted((f["policy_id"], f["device"], f["path"]) for f in findings)
+
+
+def _expected(root, name):
+    """A prepared run's predicted change findings, read from scripts/lab/<name> with the parser
+    the run script's check uses, so the test and the run compare against one file."""
+    check = _load_script(root, "check_findings.py")
+    path = root / "scripts" / "lab" / name
+    return sorted(check.parse_expected(path.read_text(encoding="utf-8"), str(path)))
 
 
 def test_bgp_run_prediction_on_synthetic_snapshots(root, tmp_path):
@@ -459,17 +474,25 @@ OSPF_ACL_ON_R1 = [
 
 def test_deadtimer_run_prediction_on_synthetic_snapshots(root, tmp_path):
     """R1 deletes its neighbor when the dead timer runs out; R2 still hears R1 and holds its
-    neighbor in INIT. The two sides differ, both are caught, and nothing else moves."""
+    neighbor in INIT. The two sides differ, both are caught, and nothing else moves. The
+    findings are the ones in expect-ospf-deadtimer.txt, which the run script checks too."""
     intent = root.joinpath(*DEADTIMER_INTENT)
     pre, post = tmp_path / "pre", tmp_path / "post"
     full = {"R1": {"2.2.2.2": "full"}, "R2": {"1.1.1.1": "full"}}
     _write_ospf_snapshot(pre, full, FAST_HELLO, FAST_HELLO)
     _write_ospf_snapshot(post, {"R1": {}, "R2": {"1.1.1.1": "init"}}, FAST_HELLO + OSPF_ACL_ON_R1, FAST_HELLO)
+    expected = _expected(root, "expect-ospf-deadtimer.txt")
+    assert len(expected) == 2
     assert _bgp_diff(root, tmp_path, pre, pre, "baseline", intent) == (0, [])
-    assert _bgp_diff(root, tmp_path, pre, post, "change", intent) == (
-        1,
-        [("V_ADJ", "R1", "ospf.neighbors.2.2.2.2"), ("V_ADJ", "R2", "ospf.neighbors.1.1.1.1")],
-    )
+    assert _bgp_diff(root, tmp_path, pre, post, "change", intent) == (1, expected)
+    # The two sides differ in the evidence, not only in the paths: one router has no record,
+    # the other has one in the wrong state.
+    report = json.loads((tmp_path / "report-change" / "report.json").read_text(encoding="utf-8"))
+    after = {(f["device"], f["path"]): f["after"] for f in report["findings"]}
+    assert after == {
+        ("R1", "ospf.neighbors.2.2.2.2"): None,
+        ("R2", "ospf.neighbors.1.1.1.1"): {"state": "init", "interface": "Ethernet0/1"},
+    }
 
 
 def test_deadtimer_intent_refuses_a_capture_without_the_fast_hello(root, tmp_path):
@@ -608,15 +631,6 @@ OWN_ID = {"R1": "1.1.1.1", "R2": "2.2.2.2"}
 STATIC = {"R1": R1_CONFIG[-1], "R2": R2_CONFIG[-1]}
 
 
-def _genie_ospf(neighbors):
-    """`learn ospf` as Genie shapes it: neighbors {router id: state} on Ethernet0/1 of area 0."""
-    interface = {"neighbors": {nbr: {"state": state} for nbr, state in neighbors.items()}}
-    area = {"interfaces": {"Ethernet0/1": interface}}
-    return {
-        "vrf": {"default": {"address_family": {"ipv4": {"instance": {"1": {"areas": {"0.0.0.0": area}}}}}}}
-    }
-
-
 def _genie_bgp_by_vrf(peer, remote_as, states):
     """`learn bgp` as Genie shapes it: one peer address in each VRF of `states` ({vrf: session
     state}), all in the default instance, as Genie's IOS XE test data files 2.2.2.2 in both
@@ -671,7 +685,8 @@ ESTABLISHED = {"R1": "Established", "R2": "Established"}
 def test_ibgp_run_prediction_on_synthetic_snapshots(root, tmp_path):
     """One cause, three layers: the ACL ends OSPF, so each router loses the route to its peer's
     loopback, the iBGP session over it, and the prefix learned through that session. Both
-    routers, eight findings, and still no V_DRIFT: no rule names the ACL."""
+    routers, the eight findings in expect-ibgp.txt, and still no V_DRIFT: no rule names the
+    ACL."""
     intent = root.joinpath(*IBGP_INTENT)
     pre, post = tmp_path / "pre", tmp_path / "post"
     _write_ibgp_snapshot(pre, IBGP_UP, ESTABLISHED)
@@ -680,20 +695,10 @@ def test_ibgp_run_prediction_on_synthetic_snapshots(root, tmp_path):
     ]
     ospf_after = {"R1": {}, "R2": {"1.1.1.1": "init"}}
     _write_ibgp_snapshot(post, ospf_after, {"R1": "Idle", "R2": "Idle"}, lost, OSPF_ACL_ON_R1)
+    expected = _expected(root, "expect-ibgp.txt")
+    assert len(expected) == 8
     assert _bgp_diff(root, tmp_path, pre, pre, "baseline", intent) == (0, [])
-    assert _bgp_diff(root, tmp_path, pre, post, "change", intent) == (
-        1,
-        [
-            ("V_ADJ", "R1", "bgp.vrfs.default.neighbors.10.255.255.2"),
-            ("V_ADJ", "R1", "ospf.neighbors.2.2.2.2"),
-            ("V_ADJ", "R2", "bgp.vrfs.default.neighbors.10.255.255.1"),
-            ("V_ADJ", "R2", "ospf.neighbors.1.1.1.1"),
-            ("V_ROUTE", "R1", "routing.vrfs.default.routes.10.255.255.2/32"),
-            ("V_ROUTE", "R1", "routing.vrfs.default.routes.172.16.2.0/24"),
-            ("V_ROUTE", "R2", "routing.vrfs.default.routes.10.255.255.1/32"),
-            ("V_ROUTE", "R2", "routing.vrfs.default.routes.172.16.1.0/24"),
-        ],
-    )
+    assert _bgp_diff(root, tmp_path, pre, post, "change", intent) == (1, expected)
     report = json.loads((tmp_path / "report-change" / "report.json").read_text(encoding="utf-8"))
     after = {(f["device"], f["path"]): f["after"] for f in report["findings"]}
     assert after[("R1", "ospf.neighbors.2.2.2.2")] is None
@@ -919,8 +924,9 @@ BOTH_UP = {"default": "Established", "NCV": "Established"}
 def test_bgp_vrf_run_prediction_on_synthetic_snapshots(root, tmp_path):
     """The same neighbor address in two VRFs on each router, and only the VRF session broken:
     R1 resets it at once and loses the VRF's connected route with its subinterface, R2 loses it
-    on its hold timer and with it the prefix it learned. Five findings, all in vrf NCV; the
-    default VRF's session to the same address and its 1.1.1.0/24 stay compliant."""
+    on its hold timer and with it the prefix it learned. The five findings in
+    expect-bgp-vrf.txt, all in vrf NCV; the default VRF's session to the same address and its
+    1.1.1.0/24 stay compliant."""
     intent = root.joinpath(*BGP_VRF_INTENT)
     pre, post = tmp_path / "pre", tmp_path / "post"
     _write_vrf_snapshot(pre, {"R1": BOTH_UP, "R2": BOTH_UP})
@@ -933,17 +939,11 @@ def test_bgp_vrf_run_prediction_on_synthetic_snapshots(root, tmp_path):
         "R1": ["NCV", "default"],
         "R2": ["NCV", "default"],
     }
+    expected = _expected(root, "expect-bgp-vrf.txt")
+    assert len(expected) == 5
+    assert all(path.split(".")[1:3] == ["vrfs", "NCV"] for _, _, path in expected)
     assert _bgp_diff(root, tmp_path, pre, pre, "baseline", intent) == (0, [])
-    assert _bgp_diff(root, tmp_path, pre, post, "change", intent) == (
-        1,
-        [
-            ("V_ADJ", "R1", "bgp.vrfs.NCV.neighbors.1.1.1.2"),
-            ("V_ADJ", "R2", "bgp.vrfs.NCV.neighbors.1.1.1.1"),
-            ("V_ROUTE", "R1", "routing.vrfs.NCV.routes.1.1.1.0/24"),
-            ("V_ROUTE", "R1", "routing.vrfs.NCV.routes.172.16.102.0/24"),
-            ("V_ROUTE", "R2", "routing.vrfs.NCV.routes.172.16.101.0/24"),
-        ],
-    )
+    assert _bgp_diff(root, tmp_path, pre, post, "change", intent) == (1, expected)
     report = json.loads((tmp_path / "report-change" / "report.json").read_text(encoding="utf-8"))
     evidence = {(f["device"], f["path"]): (f["before"], f["after"]) for f in report["findings"]}
     assert evidence[("R1", "bgp.vrfs.NCV.neighbors.1.1.1.2")] == (
@@ -1247,3 +1247,24 @@ def test_reset_after_the_bgp_vrf_run_removes_bgp_then_the_subinterface_and_loopb
             "no interface Ethernet0/1.100",
             "no vrf definition NCV",
         ]
+
+
+@pytest.mark.parametrize(
+    ("script", "expected"),
+    [
+        ("run-ospf-deadtimer.sh", "expect-ospf-deadtimer.txt"),
+        ("run-ibgp.sh", "expect-ibgp.txt"),
+        ("run-bgp-vrf.sh", "expect-bgp-vrf.txt"),
+    ],
+)
+def test_each_prepared_run_checks_its_change_findings_against_its_expected_file(root, script, expected):
+    """The run script and the prediction test read one file, and the shared helpers do the
+    reset and the packet capture, so an early exit stops the capture and a failed reset stops
+    the run."""
+    text = (root / "scripts" / "lab" / script).read_text(encoding="utf-8")
+    assert f'expect_findings change "$out-change" scripts/lab/{expected}\n' in text
+    assert text.index('compare pre post change; expect_exit change 1 "$?"') < text.index("expect_findings")
+    assert "\nlab_reset\n" in text
+    assert "ctl reset" not in text
+    assert "cap_start " in text and "\ncap_stop\nlab_finish\n" in text
+    assert "cap start" not in text and "cap stop" not in text

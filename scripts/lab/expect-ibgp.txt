@@ -1,0 +1,23 @@
+# The predicted findings of the iBGP run's change comparison (pre vs post), written before any
+# capture exists. One finding per line: <policy> <device> <path>. Blank lines and everything
+# after a # are ignored.
+#
+# run-ibgp.sh checks its change report against this file with check_findings.py, and
+# tests/test_lab_scripts.py reads it to pin the prediction on synthetic snapshots. It moves next
+# to the evidence, with the draft intent, once a run is recorded.
+
+# OSPF: the ACL on R1 ends the adjacency.
+V_ADJ R1 ospf.neighbors.2.2.2.2
+V_ADJ R2 ospf.neighbors.1.1.1.1
+
+# The routes to the peer loopbacks, learned over OSPF.
+V_ROUTE R1 routing.vrfs.default.routes.10.255.255.2/32
+V_ROUTE R2 routing.vrfs.default.routes.10.255.255.1/32
+
+# The iBGP sessions between the loopbacks, on the 9 s hold time.
+V_ADJ R1 bgp.vrfs.default.neighbors.10.255.255.2
+V_ADJ R2 bgp.vrfs.default.neighbors.10.255.255.1
+
+# The prefixes learned over those sessions.
+V_ROUTE R1 routing.vrfs.default.routes.172.16.2.0/24
+V_ROUTE R2 routing.vrfs.default.routes.172.16.1.0/24

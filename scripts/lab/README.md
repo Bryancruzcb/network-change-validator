@@ -14,12 +14,14 @@ each run up, make the one planned change the captures are meant to catch, and
 | `run-ospf.sh` | The OSPF run: sets up OSPF area 0 on the R1-R2 link, waits for FULL, then the same sequence, waiting for both neighbor entries to clear before the post capture. |
 | `run-bgp.sh` | The BGP run: sets up eBGP between R1 and R2, waits for Established, then the same sequence around `neighbor 1.1.1.2 shutdown` on R1. |
 | `run-bgp-holdtimer.sh` | The hold-timer run: eBGP with a 9 s hold time, then the same sequence around an inbound ACL on R1 that drops BGP from R2. |
-| `run-ospf-deadtimer.sh` | The OSPF dead-timer run, prepared and not run: OSPF with a 1 s hello (so a 4 s dead interval), then the same sequence around an inbound ACL on R1 that drops OSPF from R2, with a packet capture of `ip proto 89`. It sources `_lib.sh` and exits 0 only when every comparison exits as predicted. |
-| `run-ibgp.sh` | The iBGP run, prepared and not run: iBGP between the routers' loopbacks, which reach each other only over OSPF, then the same sequence around the dead-timer run's OSPF ACL on R1, with a packet capture of `ip proto 89 or tcp port 179`. It sources `_lib.sh` and exits 0 only when every comparison exits as predicted. |
-| `run-bgp-vrf.sh` | The BGP VRF run, prepared and not run: the hold-timer run's eBGP session plus a second one to the same peer address in vrf NCV on the dot1Q subinterface Ethernet0/1.100, then the same sequence around `shutdown` on R1's subinterface, with a packet capture of `tcp port 179 or (vlan and tcp port 179)`. It sources `_lib.sh` and exits 0 only when every comparison exits as predicted. |
+| `run-ospf-deadtimer.sh` | The OSPF dead-timer run, prepared and not run: OSPF with a 1 s hello (so a 4 s dead interval), then the same sequence around an inbound ACL on R1 that drops OSPF from R2, with a packet capture of `ip proto 89`. It sources `_lib.sh` and exits 0 only when every comparison exits as predicted and the change comparison finds exactly the findings in its `expect-*.txt` file. |
+| `run-ibgp.sh` | The iBGP run, prepared and not run: iBGP between the routers' loopbacks, which reach each other only over OSPF, then the same sequence around the dead-timer run's OSPF ACL on R1, with a packet capture of `ip proto 89 or tcp port 179`. It sources `_lib.sh` and exits 0 only when every comparison exits as predicted and the change comparison finds exactly the findings in its `expect-*.txt` file. |
+| `run-bgp-vrf.sh` | The BGP VRF run, prepared and not run: the hold-timer run's eBGP session plus a second one to the same peer address in vrf NCV on the dot1Q subinterface Ethernet0/1.100, then the same sequence around `shutdown` on R1's subinterface, with a packet capture of `tcp port 179 or (vlan and tcp port 179)`. It sources `_lib.sh` and exits 0 only when every comparison exits as predicted and the change comparison finds exactly the findings in its `expect-*.txt` file. |
 | `capture.sh` | One capture (`pre`, `post`, or `restored`) for a run driven by hand. |
 | `change.sh` | The planned change by hand: `apply` shuts R1 Ethernet0/1 and `undo` brings it back; `bgp-apply` shuts the R1 peer and `bgp-undo` brings it back; `holdtimer-apply` adds the BGP ACL and `holdtimer-undo` removes it; `deadtimer-apply` adds the OSPF ACL and `deadtimer-undo` removes it; `vrf-apply` shuts R1 Ethernet0/1.100 and `vrf-undo` brings it back. |
-| `_lib.sh` | Sourced, not run: what new run scripts share (the VPN check, the login prompts, the capture and report paths, `step`, `ctl`, `cap`, `snap`, `compare`), plus `expect_exit` and `lab_finish`, which end a run with exit 0 when every comparison exited as predicted and 3 when one did not. The four published runs keep their own copy, since they reproduce recorded runs. |
+| `_lib.sh` | Sourced, not run: what new run scripts share. `lab_init` checks the VPN and the testbed file, asks for each login that is not set (again until it is not empty, and without `bash -x` printing it), sets the capture and report paths (`NCV_STAMP` fixes the stamp), and installs an exit trap that stops a packet capture an early exit left running. Then `step`, `ctl`, `cap`, `snap`, `compare`, `lab_reset` (stops the run when `labctl.py reset` fails), `cap_start` and `cap_stop`, `expect_exit` and `expect_findings`, and `lab_finish`, which ends a run with exit 0 when every comparison gave its predicted exit and the change comparison its predicted findings, 3 when one did not, and warns if a password value reached the log. The four published runs keep their own copy, since they reproduce recorded runs. |
+| `check_findings.py` | Compares a report's findings, as (policy, device, path), with an expected file: exit 0 when they are the same, 1 with a `missing:` or `unexpected:` line for each difference, 2 on bad usage or input it cannot read. `_lib.sh`'s `expect_findings` runs it. |
+| `expect-ospf-deadtimer.txt`, `expect-ibgp.txt`, `expect-bgp-vrf.txt` | The predicted findings of each prepared run's change comparison, one `<policy> <device> <path>` per line, written before any capture exists. The run script checks its report against its file, and `tests/test_lab_scripts.py` reads the same file to pin the prediction. Each moves next to its evidence with the draft intent once a run is recorded. |
 | `labctl.py` | The lab actions the scripts above call: `setup-ospf`, `shut`, `noshut`, `wait-full`, `wait-gone`, `setup-bgp`, `bgp-shut`, `bgp-noshut`, `wait-bgp-up`, `wait-bgp-down`, `setup-bgp-fast`, `check-hold-time`, `bgp-block`, `bgp-unblock`, `setup-ospf-fast`, `check-dead-time`, `ospf-block`, `ospf-unblock`, `wait-ospf-lost`, `setup-ibgp`, `wait-ibgp-up`, `wait-ibgp-down`, `check-ibgp-hold-time`, `wait-vrf-gone`, `setup-vrf`, `wait-vrf-bgp-up`, `wait-vrf-bgp-down`, `check-vrf-hold-time`, `vrf-shut`, `vrf-noshut`, and `reset`, which removes what these scripts add from both routers. |
 | `sanitize_capture.py` | Copies a run's `pre/`, `post/`, `restored/` for publishing with passwords and certificate bodies replaced and `raw/` left out. |
 | `bgp_pcap.py` | Lists the BGP messages in a pcap of the lab link: TCP flags, retransmissions, and each message by name, with NOTIFICATION error codes spelled out. |
@@ -31,8 +33,9 @@ The runs compare against the intents kept with their evidence
 `fixtures/lab-2026-09-18/intent-bgp.yaml`, and
 `fixtures/lab-2026-11-20/intent-bgp-holdtimer.yaml`), so a rerun on the
 same sandbox is checked against the same rules. A prepared run's draft intent sits here in
-`scripts/lab` (`intent-ospf-deadtimer.yaml`, `intent-ibgp.yaml`, `intent-bgp-vrf.yaml`) until a
-run is recorded.
+`scripts/lab` (`intent-ospf-deadtimer.yaml`, `intent-ibgp.yaml`, `intent-bgp-vrf.yaml`), with the
+predicted findings of its change comparison beside it (`expect-<run>.txt`), until a run is
+recorded.
 
 ## The BGP run
 
@@ -165,10 +168,14 @@ Predicted findings, pinned on synthetic snapshots in `tests/test_lab_scripts.py`
 | pre vs restored | 0 | none |
 
 The two sides differ, which the BGP runs could not show: one router has no record, the other
-has a record in the wrong state. No rule names the ACL, so there is no `V_DRIFT`. The script
-checks each comparison's exit against this table and exits 0 only when all three match, 3 when
-it ran to the end but one did not, and 1 when it stopped early. `change.sh deadtimer-undo`
-removes the ACL by hand if a run stops with it in place.
+has a record in the wrong state; the test asserts that evidence too, and builds its OSPF
+sections by passing Genie-shaped data through ncv's own adapter. No rule names the ACL, so
+there is no `V_DRIFT`. The change comparison's two findings live in
+`expect-ospf-deadtimer.txt`, which the test reads and the script checks its report against: it
+exits 0 only when all three comparisons give the exits in this table and the change
+comparison finds exactly those two findings, 3 when it ran to the end but one did not, and 1
+when it stopped early. If a run stops with the ACL in place, `change.sh deadtimer-undo` removes
+it, or the next run's `labctl.py reset` does.
 
 Packet evidence: right before the change the script starts `cml_capture.py start --filter
 "ip proto 89"`, and at the end it saves `captures/ospf-deadtimer-<stamp>/link.pcap` and prints
@@ -267,9 +274,10 @@ paths are in the by-VRF form new captures use):
 No rule names the ACL, so there is no `V_DRIFT`, and the static and connected routes and the
 link counters should not move. The synthetic snapshots are built by passing Genie-shaped
 data through ncv's own adapter, so the test also fails if the adapter files a neighbor under
-the wrong key. The script checks each comparison's exit against this table and exits 0 only
-when all three match, 3 when it ran to the end but one did not, and 1 when it stopped early. If
-a run stops with the ACL in place, `change.sh deadtimer-undo` removes it, or the next run's
+the wrong key. The eight findings live in `expect-ibgp.txt`, which the test reads and the
+script checks its change report against: it exits 0 only when all three comparisons give the
+exits in this table and the change comparison finds exactly those eight, 3 when it ran to the
+end but one did not, and 1 when it stopped early. If a run stops with the ACL in place, `change.sh deadtimer-undo` removes it, or the next run's
 `labctl.py reset` does.
 
 Packet evidence: right before the change the script starts `cml_capture.py start --filter
@@ -375,9 +383,11 @@ Nothing for the default VRF: the same neighbor address there is still Establishe
 1.1.1.0/24 there is still connected. The synthetic BGP sections are built by passing a
 Genie-shaped dict with the same address under `vrf.default` and `vrf.NCV` through ncv's own
 adapter, so the test also fails if the adapter merges or drops the VRF neighbor; a mirror test
-takes the global sessions down instead and gets findings for the default VRF only. The script
-checks each comparison's exit against this table and exits 0 only when all three match, 3 when
-it ran to the end but one did not, and 1 when it stopped early. If a run stops with the
+takes the global sessions down instead and gets findings for the default VRF only. The five
+findings live in `expect-bgp-vrf.txt`, which the test reads and the script checks its change
+report against: it exits 0 only when all three comparisons give the exits in this table and
+the change comparison finds exactly those five, 3 when it ran to the end but one did not, and 1
+when it stopped early. If a run stops with the
 subinterface shut, `change.sh vrf-undo` brings it back, or the next run's `labctl.py reset`
 removes it.
 
@@ -417,7 +427,11 @@ directory works.
 4. `bash scripts/lab/run-lab.sh`, `run-ospf.sh`, `run-bgp.sh`, `run-bgp-holdtimer.sh`, or the prepared `run-ospf-deadtimer.sh`, `run-ibgp.sh`, or `run-bgp-vrf.sh`. Each asks for the CML
    username and password and the routers' enable password, keeps them in that terminal's
    environment (`NCV_CML_USER`, `NCV_CML_PASS`, `NCV_LAB_PASS`), and stops before touching
-   the lab if the no-change check is not clean.
+   the lab if the no-change check is not clean. A prepared run exits 0 when every comparison
+   gave its predicted exit and the change comparison its predicted findings, 3 when it ran to
+   the end but did not, 1 when it stopped early, and 2 when it could not start (no VPN, no
+   testbed file, or no answer to a login prompt). One that stops early still stops and saves
+   its packet capture on the way out.
 
 `NCV_TESTBED` picks another testbed file for `labctl.py` (a relative path is read from the
 repository root), and `labctl.py reset` returns a reused reservation to the shipped
