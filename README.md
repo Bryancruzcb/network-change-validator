@@ -123,7 +123,7 @@ Both reports record the JSON format version and the `ncv` version that wrote the
 
 ### Live lab (Cisco DevNet CML)
 
-Three runs, same two IOS XE 17.15 IOL routers in the CML 2.7.2 `default-lab`,
+Four runs, same two IOS XE 17.15 IOL routers in the CML 2.7.2 `default-lab`,
 reached through the console server. Each run is sanitized in-repo and replayed by
 `tests/test_lab_evidence.py`.
 

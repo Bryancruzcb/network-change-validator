@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 
 import pytest
@@ -140,3 +141,18 @@ def test_holdtimer_pcap_shows_r1s_hold_timer_expiring(root, monkeypatch):
     assert not any("Cease" in line for line in lines)
     opens = sorted(line.split("  OPEN ")[-1] for line in lines if "  OPEN " in line)
     assert opens == ["AS 65001 hold 9 id 1.1.1.1", "AS 65002 hold 9 id 2.2.2.2"]
+
+
+NUMBERS = {"Two": 2, "Three": 3, "Four": 4, "Five": 5, "Six": 6, "Seven": 7, "Eight": 8, "Nine": 9}
+
+
+def test_the_readme_counts_the_live_runs_its_table_lists(root):
+    """The live-lab section opens with how many runs there were, above a table with one row per
+    run; a new run adds a row, and the count in the sentence has to follow it."""
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    section = readme[readme.index("### Live lab") :]
+    count = re.match(r"### Live lab[^\n]*\n\n(\w+) runs,", section)
+    assert count, "the live-lab section no longer opens with its run count"
+    table = section[section.index("| Date | Change |") :].split("\n\n")[0]
+    rows = [line for line in table.splitlines() if re.match(r"\| \d{4}-\d{2}-\d{2} ", line)]
+    assert NUMBERS[count.group(1)] == len(rows)

@@ -193,8 +193,9 @@ connection arguments, to avoid default configuration initialization. A device
 sitting at a first-boot setup dialog (NX-OS POAP, its secure-password or
 admin-password prompt, the IOS setup dialog, or `Enter enable secret`) fails the
 capture at connect, because Unicon would otherwise answer that dialog and so change
-the device. Device plugins and testbeds are trusted executable dependencies: this is
-not a security boundary against arbitrary custom plugins.
+the device; this was checked against Unicon's mock devices only, not a real device at
+a first-boot dialog. Device plugins and testbeds are trusted executable dependencies:
+this is not a security boundary against arbitrary custom plugins.
 
 Connection, learning, unsupported normalization, and config-read errors abort the
 capture. When the `show running-config` read itself fails, the error names only the

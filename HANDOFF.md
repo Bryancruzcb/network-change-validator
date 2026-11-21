@@ -12,10 +12,10 @@ runs are on the branch `lab/next-runs`.
   commits"). No open PRs, no open issues, and every merged branch is deleted.
 - PR #12 went in as a squash (`e539627`). PRs #13, #14, and #15 went in as fast-forwards, so
   `ee58e95`, `017541c`, and `914431e` are the hashes their commits carry on `main`.
-- The branch `lab/next-runs` holds eight pieces of prepared work and one round of fixes after
-  a design review, described below from "Branch `lab/next-runs`, BGP neighbors keyed by VRF"
-  on. None of it is merged and none of it has run against a lab. `main` is unchanged at
-  `914431e`.
+- The branch `lab/next-runs` holds eight pieces of prepared work and two rounds of fixes, one
+  after a design review and one after an examination of the whole branch, described below from
+  "Branch `lab/next-runs`, BGP neighbors keyed by VRF" on. None of it is merged and none of it
+  has run against a lab. `main` is unchanged at `914431e`.
 - `main` is protected: a commit reaches it only after the three CI jobs passed on that
   exact commit, admins included, and force pushes and deletion are refused. Push a
   branch, let CI finish, then fast-forward `main` to it (or merge the PR).
@@ -339,9 +339,9 @@ Three reviewers read the designs before any run. What changed:
 gives the VPN route, a TCP test of ports 22 and 23 on both management addresses that tells
 `open`, `refused` (only when bash's connect error says `Connection refused`), `unreachable
 (<bash's reason>)` (any other connect error, such as `No route to host`), and `no answer in 3 s`
-apart, and a ping. Then `scripts/lab/cml_lab.py
-inspect`, a GET-only inventory of the controller, saved without configurations, notes, or
-descriptions, and `labctl.py probe`, a fixed list of read-only commands on R1 and R2. It ends
+apart, and a ping. Then `scripts/lab/cml_lab.py inspect`, an inventory of the controller
+(after the login, a POST to `/authenticate`, every call is a GET), saved without
+configurations, notes, descriptions, canvas annotations, or VNC keys, and `labctl.py probe`, a fixed list of read-only commands on R1 and R2. It ends
 with three answers, each with its evidence line: do the management addresses answer on port
 22, is R1 Ethernet0/3 free, and which of `nxosv9000`, `cat8000v`, and `iosv` are available.
 `cml_lab.py check-login` checks the CML login alone.
@@ -390,14 +390,56 @@ testbed file a named run needs (R3's `os` included), before any prompt, asks aga
 password is not empty (the routers' SSH login only when `ssh-path` is named), and checks the CML
 login once with `cml_lab.py check-login`. Each run gets its own `NCV_STAMP`, so the closing
 table, on the screen and in `output/lab/session-<stamp>.log`, names each run's log and, for a
-run that stopped early, its last step. A failed run does not stop the session, since the next
+run that stopped early, its last step before the capture cleanup. A failed run does not stop the session, since the next
 run starts with `reset`; a run that could not start (exit 2) or a failed probe does, and the
 script prints the names still to run as a ready command. Ctrl-C prints the table so far and the
 same command. It has run only against stand-in run scripts in `tests/test_lab_lib.py`.
 
+### Branch `lab/next-runs`, fixes after an examination of the whole branch
+
+Once the eight pieces above were built, the whole branch was examined again before any run, and
+a second set of fixes followed. None of it has run against a lab. What changed:
+
+- **The tool**: the capture's first-boot guard also refuses NX-OS's `Do you want to enforce
+  secure password standard` question. A failed `show running-config` read names only the
+  exception's type, because Unicon's timeout and failure messages quote the device's output so
+  far, which there is a running config with its passwords.
+- **The lab scripts**: `labctl.py reset` prints `<router>: show running-config failed (<type>)`
+  and exits 1 when that read fails, with no device output. `vrf_listed` counts IOS's `* NCV` row
+  for a VRF still being deleted, and `setup-vrf` ends the subinterface block with `no shutdown`.
+  `compare_captures.py` also withholds lines with `authentication`, `snmp-server host`, or
+  `psk`. `sanitize_capture.py` copies every stage directory a run holds (any subdirectory with
+  a `config.json`, so the SSH path run's `console/` and `ssh/` too), exits 2 with its usage when
+  there is none, and checks the source before it creates anything; for `pre/ post/ restored/`
+  its output is unchanged. Every prepared script answers `-h` with its header and starts
+  nothing, and the five that take no argument refuse any other with exit 2. `lab_tcp` tells `open`,
+  `refused` (only `Connection refused`), `unreachable (<bash's reason>)`, and `no answer in 3 s`
+  apart. `run-ssh-path.sh` numbers its steps 1/7 to 7/7 as the README does, and a failed reset
+  points at `run-session.sh reset`.
+- **The CML client**: `add-r3` gives up 3 minutes after the start on an R3 still `STOPPED`
+  instead of polling for 20 minutes, and reads the new node back with
+  `?exclude_configurations=false`, the query Cisco's virl2_client 2.7.1 sends. `remove-r3` also
+  accepts `DEFINED_ON_CORE` after the stop, so one run removes a node that never started. The
+  inventory also drops canvas annotations and VNC keys, and a 403 on the node POST also names
+  the licence's node limit.
+- **The session script**: `remove-r3` is a session name, run like `reset` with the logins the
+  session asked for, since the logins last only while a script runs. The session refuses a
+  missing `testbeds/lab-ssh.yaml` or R3 testbed, or an R3 `os` that does not fit the platform,
+  before any prompt. "Where it stopped" is the last step before the capture cleanup, and a
+  failed probe has none.
+- **The documents**: `scripts/lab/README.md` names the three runs that can be pointed at
+  `testbeds/lab-ssh.yaml` instead of saying every run can; the R3 testbed example says what
+  `SENDLINE_AFTER_CRED` is for; `docs/LIVE.md` says the first-boot guard was checked against
+  Unicon's mock devices only; the README counts four live runs; the publishing steps under
+  "Open" say where a run's packet capture goes; and the second-platform assumptions add a
+  console server that replays old output, whose first-boot dialog ncv would refuse without
+  naming it. New tests hold `scripts/lab/README.md` to the code: the SSH sentence, each
+  prediction table against its expected file, and each configuration block against its
+  builder.
+
 ## Test count
 
-**497 tests on `lab/next-runs`, 131 on `main`.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
+**573 tests on `lab/next-runs`, 131 on `main`.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
 the 2 policy regressions from PR #1, the 21 that came with BGP support and feature
 selection, 3 covering report provenance and the version flag, 1 that loads both
 bundled intents so the lab template cannot rot unnoticed, 2 covering the interface shape
@@ -412,7 +454,7 @@ block, and unblock lines, the draft intent, the predicted findings, and a pre ca
 the timers failing the no-change check) and 6 in `tests/test_bgp_pcap.py` on captures built
 byte by byte. PR #14 adds 4 that replay the hold-timer captures, and PR #15 6.
 
-`lab/next-runs` adds 366, in build order: 20 for BGP keyed by VRF (in `tests/test_normalize.py`,
+`lab/next-runs` adds 442, in build order: 20 for BGP keyed by VRF (in `tests/test_normalize.py`,
 `test_schema.py`, `test_policy.py`, and `test_snapshot.py`); 40 for the script foundation (7 in
 `tests/test_lab_scripts.py` pinning `reset`, 33 in the new `tests/test_labctl_commands.py`
 fake lab); 46 for the OSPF dead-timer run (`test_lab_scripts.py`, `test_labctl_commands.py`,
@@ -425,9 +467,14 @@ and the SSH path (the new `tests/test_cml_lab.py` and `tests/test_compare_captur
 `test_labctl_commands.py`, `test_lab_scripts.py`, `test_cml_capture.py`, and
 `test_lab_lib.py`); 89 for the second-platform run (`test_normalize.py`, `test_live.py`,
 `test_cml_lab.py`, `test_labctl_commands.py`, `test_lab_scripts.py`, `test_lab_lib.py`, and
-`test_check_findings.py`); and 15 for the session script (12 in `test_lab_lib.py`, 3 in
-`test_lab_scripts.py`). The 46 tests in `tests/test_lab_lib.py` run the shell scripts under
-bash and are skipped on Windows; the Ubuntu CI jobs run them.
+`test_check_findings.py`); 15 for the session script (12 in `test_lab_lib.py`, 3 in
+`test_lab_scripts.py`); and 76 in the second set of fixes: 19 for the tool and the Python lab
+scripts (`test_live.py`, `test_labctl_commands.py`, `test_lab_scripts.py`,
+`test_compare_captures.py`, and `test_schema.py`), 15 for the CML client (`test_cml_lab.py`), 35
+for the shell (34 in `test_lab_lib.py`, 1 in `test_lab_scripts.py`), and 7 that hold the README
+to the code (6 in `test_lab_scripts.py`, 1 in `test_lab_evidence.py`). The 80 tests in
+`tests/test_lab_lib.py` run the shell scripts under bash and are skipped on Windows; the Ubuntu
+CI jobs run them.
 
 ## Verify
 
@@ -435,7 +482,7 @@ bash and are skipped on Windows; the Ubuntu CI jobs run them.
 python3 -m pip install -e ".[dev]"
 python3 -m ruff check .
 python3 -m ruff format --check .
-python3 -m pytest                      # 497 passed (on Windows: 451 passed, 46 skipped)
+python3 -m pytest                      # 573 passed (on Windows: 493 passed, 80 skipped)
 git diff --check                       # clean
 python3 scripts/render_artifacts.py    # rewrites docs/artifacts with identical bytes
 git status --short docs/artifacts      # lists nothing (on Windows, run git diff instead;
@@ -466,7 +513,8 @@ python -m venv .venv
 - **No configuration push.** There is no `configure`/push path, and the fake-lab test
   asserts `device.configure` is never called. ncv never answers a first-boot setup dialog
   either: `snapshot_live` passes Unicon a `connect_reply` guard that fails the connection at
-  NX-OS POAP, its admin-password prompt, the IOS setup dialog, or `Enter enable secret`,
+  NX-OS POAP, its secure-password or admin-password prompt, the IOS setup dialog, or `Enter
+  enable secret`,
   because Unicon would otherwise answer them and so configure the device during a capture.
 - **A learn that returns nothing fails the capture.** Never turn a missing Genie `info`
   into an empty section: it would hide a parser failure as a lost neighbor.
@@ -525,7 +573,11 @@ A run that came out as predicted is published as PR #14 published the hold-timer
 its captures into `fixtures/lab-<date>/<run>` with `scripts/lab/sanitize_capture.py`, move its
 draft intent and `expect-<run>.txt` beside them with a `SOURCE.md`, add tests that replay the
 captures to `tests/test_lab_evidence.py`, rebuild `docs/artifacts` if a report is added there,
-and update the README, `docs/LIVE.md`, this file, and "Claims match the evidence". A run that
+and update the README, `docs/LIVE.md`, this file, and "Claims match the evidence". If the run
+saved a packet capture, copy `captures/<run>-<stamp>/link.pcap` and
+`output/lab/<run>-<stamp>-pcap.txt` to `fixtures/lab-<date>/<run>-pcap/link.pcap` and
+`summary.txt`, after checking that it holds only lab addresses, as PR #15 published the
+hold-timer pcap; `sanitize_capture.py` does not copy it. A run that
 did not come out as predicted is published the same way, with what happened: its `SOURCE.md`
 and the README say which part of the prediction was wrong, and the expected file stays as the
 prediction that was made.
@@ -537,9 +589,11 @@ Still open from the design review, which no change on the branch settled:
 - Whether a CML link capture keeps 802.1Q tags, which the BGP VRF run's packet evidence needs.
 - Whether CML allows two captures on one link at once. The capture exit trap stops a capture a
   run leaves behind after an ordinary early exit, but not after a killed shell or a VPN drop.
-- `SENDLINE_AFTER_CRED` for the console testbed. It was verified offline to clear a leftover
-  `Password:` prompt, a possible second cause of the 2026-11-20 `CredentialsExhaustedError`
-  failures, and not adopted, because the published path works without it.
+- `SENDLINE_AFTER_CRED` for R1 and R2 in `testbeds/cml-console.yaml.example`. It was verified
+  offline to clear a leftover `Password:` prompt, a possible second cause of the 2026-11-20
+  `CredentialsExhaustedError` failures, and not adopted there, because the published path works
+  without it. It is used on R3's connection only, in `testbeds/cml-console-r3.yaml.example`
+  (checked against Unicon's mock devices only).
 - `lab_finish` warns when a password value appears in a run log; a very short password can
   give a false warning.
 

@@ -616,6 +616,13 @@ Assumptions the first session must check, each with how it fails:
 - **The console path and login chain for R3.** `open /default-lab/R3/0`, then for NX-OS the
   admin login, were checked only against Unicon's mock devices. If either is wrong, the pre
   capture fails at connect for R3; a device left at a first-boot dialog fails it the same way.
+- **What the console server shows when a console is opened.** If it replays old console output,
+  a first-boot dialog from R3's boot could still be in that history, and ncv would refuse a
+  healthy R3 at connect. The message does not name the dialog: it is Unicon's `failed to
+  connect to R3` and `Failed while bringing device to "any" state`, and ncv's own reason
+  (`device is at a first-boot setup dialog`) is only in the exception's cause, which `ncv` does
+  not print. Open R3's console by hand (`ssh developer@10.10.20.161 "open /default-lab/R3/0"`)
+  to see what it shows.
 - **Genie's NX-OS shapes on a real 9000v.** Taken from Genie's test data. A shape the adapter
   does not handle fails the pre capture at a named learn; a string that differs (`direct`, an
   interface name, a state) is named by the no-change check.
@@ -675,9 +682,13 @@ Set up: `cp testbeds/cml-ssh.yaml.example testbeds/lab-ssh.yaml` (gitignored). I
 (`NCV_SSH_USER`, default `cisco`, and `NCV_SSH_PASS`), and answers the `enable` prompt Unicon
 always sends on IOS XE with `NCV_LAB_PASS`. Host keys go to `output/lab/known_hosts`, which the
 run deletes before its SSH capture: a new reservation gives the routers new keys, and ssh
-refuses a changed one. With that file in place, any run script works over SSH with
-`NCV_TESTBED=testbeds/lab-ssh.yaml`, because `_lib.sh` asks for the SSH login whenever the
-testbed names it.
+refuses a changed one. With that file in place, the prepared runs that capture through
+`_lib.sh` (`run-ospf-deadtimer.sh`, `run-ibgp.sh`, and `run-bgp-vrf.sh`) can be pointed at it
+with `NCV_TESTBED=testbeds/lab-ssh.yaml`, and `_lib.sh` then asks for the SSH login. No run has
+gone over SSH yet. The others use their own testbed: `run-lab.sh`, `run-ospf.sh`, `run-bgp.sh`,
+`run-bgp-holdtimer.sh`, and `capture.sh` always capture through `testbeds/lab.yaml`,
+`run-ssh-path.sh` sets its two testbeds itself, and `run-second-platform.sh` needs a testbed
+with R3, which `lab-ssh.yaml` does not have.
 
 The steps:
 
@@ -833,10 +844,11 @@ its log is:
 | 1 | stopped early, shown with where it stopped: the last `== ` line of its log before the steps that stop a packet capture left running (for `probe`: the CML login or a console connection failed; it ran to its end, so no line says where it stopped) |
 | 2 | could not start |
 | 4 | the management addresses do not answer in this sandbox (a result, from `ssh-path`) |
+| `interrupted` | Ctrl-C during that run |
 | anything else | unexpected (N) |
 
-For `reset` and `remove-r3`, any exit but 0 reads `labctl.py reset failed (N)` or
-`cml_lab.py remove-r3 failed (N)`, and their output is in the session log.
+For `reset` and `remove-r3`, any exit but 0, Ctrl-C included, reads `labctl.py reset failed (N)`
+or `cml_lab.py remove-r3 failed (N)`, and their output is in the session log.
 
 The session exits 0 only when every named run exited 0, 3 when it ran every name but one did
 not, 1 when it stopped before the last name, 2 when it could not start, and 130 on Ctrl-C. No
@@ -848,7 +860,10 @@ with stand-in run scripts; it has not driven a real session.
     .venv/bin/python scripts/lab/sanitize_capture.py captures/run-<stamp> fixtures/lab-<date>/<run>
 
 The SSH path run is published the same way from `captures/ssh-path-<stamp>`, whose stages are
-`console/` and `ssh/`.
+`console/` and `ssh/`. The sanitizer does not copy a packet capture: after checking that it
+holds only lab addresses, copy `captures/<run>-<stamp>/link.pcap` and
+`output/lab/<run>-<stamp>-pcap.txt` to `fixtures/lab-<date>/<run>-pcap/link.pcap` and
+`summary.txt`, as the hold-timer pcap was published.
 
 The sanitizer knows the forms the sandbox routers carried: `enable password|secret`,
 `username ... password|secret`, the indented `password` of a console or vty line, and the

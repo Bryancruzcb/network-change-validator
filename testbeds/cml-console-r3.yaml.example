@@ -11,6 +11,10 @@
 # NCV_LAB_PASS as its password. `login_creds` must sit in the connection block next to
 # `command:`: under `arguments:` Unicon ignores it and the second prompt fails. `platform: n9k`
 # picks Unicon's 9000 plugin; do not use `platform: nxosv`, which is for the old NX-OSv.
+# `SENDLINE_AFTER_CRED: default` makes Unicon press Enter once after it sends the `default` (CML)
+# password, to clear a `Password:` prompt left over from the two-credential login; that was
+# checked against Unicon's mock devices only. R1 and R2 do not set it, as in
+# cml-console.yaml.example.
 #
 # For a Catalyst 8000V or IOSv R3 (`add-r3 cat8000v` or `add-r3 iosv`), replace the R3 entry
 # with the IOS form: the day-0 configuration sets no console login, so the console needs only

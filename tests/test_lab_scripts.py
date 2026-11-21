@@ -22,6 +22,9 @@ intents, the prediction on synthetic snapshots whose R3 records are shaped as ea
 Genie data writes them, the R3 testbed example, and the run script's order. After them, the
 session script: every name it knows names a script that exists, and every prepared run is one
 of its names, so a new run cannot be forgotten; and every script here has a row in the README.
+The last ones hold the README to the code: the runs it says can capture over SSH, each prepared
+run's prediction table against its expected file, and each configuration block against the
+builder that sends it.
 """
 
 from __future__ import annotations
@@ -1770,6 +1773,8 @@ def test_the_r3_testbed_example_adds_r3_through_the_console_server_and_holds_no_
     # Next to `command`, where Unicon reads it; under `arguments` it is silently ignored.
     assert cli["login_creds"] == ["default", "nxos"]
     assert cli["settings"] == {"SENDLINE_AFTER_CRED": "default"}
+    header = text.split("\ntestbed:")[0]
+    assert "`SENDLINE_AFTER_CRED: default`" in header  # every setting R3 adds is explained there
     assert cli["arguments"] == {"learn_hostname": True, "prompt_recovery": True, "connection_timeout": 120}
     assert r3["credentials"] == {"nxos": {"username": "admin", "password": "%ENV{NCV_LAB_PASS}"}}
     passwords = _password_values(testbed)
@@ -1908,3 +1913,113 @@ def test_every_lab_script_has_a_readme_row_and_every_row_names_a_file(root):
         assert list(lab.glob(name.replace("<platform>", "*"))), name
     scripts = {path.name for path in lab.iterdir() if path.suffix in (".sh", ".py")}
     assert scripts <= set(named), sorted(scripts - set(named))
+
+
+def _capturing_scripts(lab):
+    """Every shell script here that takes a capture, by name: through _lib.sh's `snap`, through a
+    `snap` of its own, or with `ncv snapshot` directly."""
+    texts = {path.name: path.read_text(encoding="utf-8") for path in lab.glob("*.sh")}
+    texts.pop("_lib.sh")
+    return {name: text for name, text in texts.items() if re.search(r"^snap |ncv snapshot", text, re.M)}
+
+
+def test_the_readme_names_the_runs_that_can_be_pointed_at_the_ssh_testbed(root):
+    """Only _lib.sh's `snap` captures through NCV_TESTBED, so only a run that sources _lib.sh and
+    never sets NCV_TESTBED itself can capture over SSH. The SSH section names exactly those, and
+    names every other capturing script as one that keeps its own testbed."""
+    lab = root / "scripts" / "lab"
+    scripts = _capturing_scripts(lab)
+    through_lib = {
+        name for name, text in scripts.items() if '. "$here/_lib.sh"' in text and "NCV_TESTBED=" not in text
+    }
+    assert through_lib == {"run-ospf-deadtimer.sh", "run-ibgp.sh", "run-bgp-vrf.sh"}
+    readme = (lab / "README.md").read_text(encoding="utf-8")
+    section = " ".join(readme[readme.index("## The SSH path") :].split("\nThe steps:")[0].split())
+    pointable = section[section.index("With that file in place") : section.index("No run has gone over SSH")]
+    others = section[section.index("The others use their own testbed") :]
+    assert set(re.findall(r"`(run-[\w-]+\.sh)`", pointable)) == through_lib
+    assert set(re.findall(r"`([\w-]+\.sh)`", others)) == set(scripts) - through_lib
+    for name in set(scripts) - through_lib:
+        text = scripts[name]
+        assert "NCV_TESTBED=" in text or "--testbed testbeds/lab.yaml" in text, name
+
+
+PREDICTED_TABLES = [
+    ("## The OSPF dead-timer run", "expect-ospf-deadtimer.txt"),
+    ("## The iBGP run", "expect-ibgp.txt"),
+    ("## The BGP VRF run", "expect-bgp-vrf.txt"),
+    ("## The second-platform run", "expect-second-platform-iosv.txt"),
+]
+COUNT_WORDS = {
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+}
+ADDRESS = r"\d+\.\d+\.\d+\.\d+(?:/\d+)?"
+
+
+@pytest.mark.parametrize(("title", "name"), PREDICTED_TABLES)
+def test_each_readme_prediction_table_names_the_findings_in_its_expect_file(root, title, name):
+    """The README's table of a prepared run is the same prediction as the expected file the run
+    checks its report against: the change row names every policy, device, and address in the
+    file and no other address, its count is the file's, and the other two rows are clean."""
+    readme = (root / "scripts" / "lab" / "README.md").read_text(encoding="utf-8")
+    section = readme[readme.index(title) :]
+    section = section[: section.index("\n## ", 1)]
+    table = section[section.index("Predicted findings, pinned on synthetic snapshots") :]
+    rows = {
+        line.split(" | ")[0]: line.split(" | ")[1:]
+        for line in table.splitlines()
+        if line.startswith("| pre vs")
+    }
+    assert rows["| pre vs pre"] == ["0", "none |"]
+    assert rows["| pre vs restored"] == ["0", "none |"]
+    ((exit_code, cell),) = [value for key, value in rows.items() if key.startswith("| pre vs post")]
+    assert exit_code == "1"
+    expected = _expected(root, name)
+    assert set(re.findall(ADDRESS, cell)) == {
+        re.search(ADDRESS + "$", path).group() for _, _, path in expected
+    }
+    for policy, device, _ in expected:
+        assert f"`{policy}`" in cell and device in cell, (policy, device)
+    count = re.match(r"(\w+)[:,]", cell)  # "nine: ...", "five, all in vrf NCV: ..."
+    if count:
+        assert COUNT_WORDS.get(count.group(1)) == len(expected), count.group(1)
+
+
+def _indented_blocks(text):
+    """The README's indented code blocks, each as its lines with the four-space indent removed."""
+    blocks, current = [], []
+    for line in [*text.splitlines(), ""]:
+        if line.startswith("    ") and line.strip():
+            current.append(line[4:])
+        elif current:
+            blocks.append(current)
+            current = []
+    return blocks
+
+
+def test_each_configuration_block_in_the_readme_is_what_its_builder_sends(root):
+    """Each block that shows what a command sends is the builder's output, indented the way IOS
+    shows it (less the `exit` that only leaves the ACL's mode); R3's NX-OS day-0 configuration is
+    exactly what add-r3 echoes."""
+    labctl = _load_script(root, "labctl.py")
+    cml = _load_script(root, "cml_lab.py")
+    blocks = _indented_blocks((root / "scripts" / "lab" / "README.md").read_text(encoding="utf-8"))
+    stripped = [[line.strip() for line in block] for block in blocks]
+    for lines in (
+        labctl.bgp_block_lines(),
+        labctl.ospf_block_lines(),
+        labctl.ibgp_setup_lines("R1"),
+        labctl.vrf_setup_lines("R1"),
+        labctl.r3_link_lines(),
+    ):
+        assert [line for line in lines if line != "exit"] in stripped, lines[0]
+    day0 = cml.redact(cml.day0_config("nxosv9000", "not-a-real-password"), "not-a-real-password")
+    assert day0.splitlines() in blocks
