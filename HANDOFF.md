@@ -1,21 +1,22 @@
 # Handoff
 
-Working notes for whoever picks this up next. The merged work is on `main`; the prepared lab
-runs are on the branch `lab/next-runs`.
+Working notes for whoever picks this up next. Everything described here is on `main`. Five lab
+runs are prepared and have not run.
 
 ## Current state
 
-- Everything below up to "PR #15" is on `main`. PRs [#1](https://github.com/Bryancruzcb/network-change-validator/pull/1)
+- Everything below is on `main`. PRs [#1](https://github.com/Bryancruzcb/network-change-validator/pull/1)
   through [#11](https://github.com/Bryancruzcb/network-change-validator/pull/11) went in as
   fast-forwards, so every hash quoted in these notes is the hash the commit carries on
   `main`. Six commits on 2026-09-18 went straight to `main` without a PR (see "Direct
   commits"). No open PRs, no open issues, and every merged branch is deleted.
 - PR #12 went in as a squash (`e539627`). PRs #13, #14, and #15 went in as fast-forwards, so
   `ee58e95`, `017541c`, and `914431e` are the hashes their commits carry on `main`.
-- The branch `lab/next-runs` holds eight pieces of prepared work and two rounds of fixes, one
-  after a design review and one after an examination of the whole branch, described below from
-  "Branch `lab/next-runs`, BGP neighbors keyed by VRF" on. None of it is merged and none of it
-  has run against a lab. `main` is unchanged at `914431e`.
+- PR [#16](https://github.com/Bryancruzcb/network-change-validator/pull/16) holds eight pieces
+  of prepared work and two rounds of fixes, one after a design review and one after an
+  examination of the whole branch, described below from "PR #16, BGP neighbors keyed by VRF"
+  on. It went in as a fast-forward, 17 commits on top of `914431e`. None of it has run against
+  a lab.
 - `main` is protected: a commit reaches it only after the three CI jobs passed on that
   exact commit, admins included, and force pushes and deletion are refused. Push a
   branch, let CI finish, then fast-forward `main` to it (or merge the PR).
@@ -224,7 +225,7 @@ both OPENs carrying a 9 s hold time after it came off. `summary.txt` is `bgp_pca
 reading of it, and `.gitattributes` keeps pcaps binary. 6 more tests: 5 for `cml_capture.py`
 against a fake CML, and 1 that replays the pcap.
 
-### Branch `lab/next-runs`, BGP neighbors keyed by VRF
+### PR #16, BGP neighbors keyed by VRF
 
 `normalize_learn` now writes BGP as `{device: {"vrfs": {vrf: {"neighbors": {address: {state,
 remote_as}}}}}}`, with the VRF as the key instead of a field. The same peer address in two VRFs
@@ -245,7 +246,7 @@ The shape was prepared from Genie 26.8's Ops model and its own IOS XE and NX-OS 
 which normalize to their `default` and `VRF1` peers. No lab capture of a non-default-VRF peer
 exists yet.
 
-### Branch `lab/next-runs`, the lab script foundation
+### PR #16, the lab script foundation
 
 - `labctl.py` looks commands up in one table, `COMMANDS`, and builds `USAGE` from it. Bad usage
   prints `USAGE` and exits 2 before Genie is imported. `NCV_TESTBED` picks another testbed file.
@@ -269,7 +270,7 @@ exists yet.
   findings check, and the tests read the same expected files. The four published run scripts
   are unchanged.
 
-### Branch `lab/next-runs`, the OSPF dead-timer run, prepared and not run
+### PR #16, the OSPF dead-timer run, prepared and not run
 
 `scripts/lab/run-ospf-deadtimer.sh` is the OSPF twin of the hold-timer run. It resets both
 routers, sets up OSPF with a 1 s hello (`setup-ospf-fast`; IOS derives the 4 s dead interval),
@@ -284,7 +285,7 @@ Predicted findings of the change comparison, pinned on synthetic snapshots built
 adapter: `V_ADJ` R1 2.2.2.2 (gone) and `V_ADJ` R2 1.1.1.1 (listed in INIT), and no `V_DRIFT`.
 Nothing has run against a lab and no document claims otherwise.
 
-### Branch `lab/next-runs`, the iBGP run, prepared and not run
+### PR #16, the iBGP run, prepared and not run
 
 `scripts/lab/run-ibgp.sh` builds iBGP the usual way. `setup-ibgp` gives each router Loopback0
 (10.255.255.x/32, in OSPF, the iBGP endpoint) and Loopback1 (172.16.x.1/24, originated into BGP
@@ -299,7 +300,7 @@ R1 and R2, `V_ROUTE` for each peer loopback /32, `V_ADJ` bgp at
 prediction is that no NOTIFICATION reaches the wire, the opposite of 2026-11-20. Nothing has run
 against a lab and no document claims otherwise.
 
-### Branch `lab/next-runs`, the BGP VRF run, prepared and not run
+### PR #16, the BGP VRF run, prepared and not run
 
 `scripts/lab/run-bgp-vrf.sh` is the live test of BGP neighbors keyed by VRF. After `reset` it
 waits with `wait-vrf-gone`, because IOS deletes a VRF in the background. `setup-bgp-fast` builds
@@ -314,7 +315,7 @@ the same address under `default` and `NCV`: five, all in vrf NCV. `V_ADJ` R1 1.1
 1.1.1.1, `V_ROUTE` R1 1.1.1.0/24 and 172.16.102.0/24, and `V_ROUTE` R2 172.16.101.0/24, with
 nothing for the default VRF. Nothing has run against a lab and no document claims otherwise.
 
-### Branch `lab/next-runs`, fixes after a design review
+### PR #16, fixes after a design review
 
 Three reviewers read the designs before any run. What changed:
 
@@ -333,7 +334,7 @@ Three reviewers read the designs before any run. What changed:
 - `_lib.sh` gained the re-asking prompts, `lab_reset` (a failed reset stops the run), and the
   capture exit trap.
 
-### Branch `lab/next-runs`, a read-only probe and the SSH path run, prepared and not run
+### PR #16, a read-only probe and the SSH path run, prepared and not run
 
 `scripts/lab/probe.sh` asks what the sandbox answers and changes nothing. From this machine it
 gives the VPN route, a TCP test of ports 22 and 23 on both management addresses that tells
@@ -357,7 +358,7 @@ stopped early.
 Prediction: both comparisons exit 0, with no difference between the two paths. Nothing has run
 against a lab and no document claims otherwise.
 
-### Branch `lab/next-runs`, the second-platform run, prepared and not run
+### PR #16, the second-platform run, prepared and not run
 
 `scripts/lab/run-second-platform.sh nxosv9000|cat8000v|iosv` adds a third router, R3, on another
 platform, and breaks the link from R1's end. `cml_lab.py add-r3 <platform>` checks the image,
@@ -379,7 +380,7 @@ platform's Genie shapes: nine. `V_ADJ` ospf and bgp on R1 and on R3, `V_ROUTE` R
 3.3.3.3/32, and 172.16.3.0/24, and `V_ROUTE` R3 1.1.1.0/24 and 10.10.10.0/24. Nothing has run
 against a lab and no document claims otherwise.
 
-### Branch `lab/next-runs`, one login for a whole session
+### PR #16, one login for a whole session
 
 `scripts/lab/run-session.sh [name ...]` asks for the logins once and runs the named runs in
 order: `probe`, `ospf-deadtimer`, `ibgp`, `bgp-vrf`, `ssh-path`, `second-platform:<platform>`,
@@ -396,7 +397,7 @@ run starts with `reset`; a run that could not start (exit 2) or a failed probe d
 script prints the names still to run as a ready command. Ctrl-C prints the table so far and the
 same command. It has run only against stand-in run scripts in `tests/test_lab_lib.py`.
 
-### Branch `lab/next-runs`, fixes after an examination of the whole branch
+### PR #16, fixes after an examination of the whole branch
 
 Once the eight pieces above were built, the whole branch was examined again before any run, and
 a second set of fixes followed. None of it has run against a lab. What changed:
@@ -443,7 +444,7 @@ a second set of fixes followed. None of it has run against a lab. What changed:
 
 ## Test count
 
-**579 tests on `lab/next-runs`, 131 on `main`.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
+**579 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
 the 2 policy regressions from PR #1, the 21 that came with BGP support and feature
 selection, 3 covering report provenance and the version flag, 1 that loads both
 bundled intents so the lab template cannot rot unnoticed, 2 covering the interface shape
@@ -456,9 +457,9 @@ three empty `--features` values, and a repeated feature. PR #12 brought `main` t
 hold-timer branch adds 12: 6 in `tests/test_lab_scripts.py` (the timers parser, the setup,
 block, and unblock lines, the draft intent, the predicted findings, and a pre capture without
 the timers failing the no-change check) and 6 in `tests/test_bgp_pcap.py` on captures built
-byte by byte. PR #14 adds 4 that replay the hold-timer captures, and PR #15 6.
+byte by byte. PR #14 adds 4 that replay the hold-timer captures, and PR #15 6, which made 131.
 
-`lab/next-runs` adds 448, in build order: 20 for BGP keyed by VRF (in `tests/test_normalize.py`,
+PR #16 adds 448, in build order: 20 for BGP keyed by VRF (in `tests/test_normalize.py`,
 `test_schema.py`, `test_policy.py`, and `test_snapshot.py`); 40 for the script foundation (7 in
 `tests/test_lab_scripts.py` pinning `reset`, 33 in the new `tests/test_labctl_commands.py`
 fake lab); 46 for the OSPF dead-timer run (`test_lab_scripts.py`, `test_labctl_commands.py`,
@@ -537,10 +538,10 @@ python -m venv .venv
 
 ## Open
 
-The five prepared runs on `lab/next-runs` wait for a reservation: the OSPF dead-timer run, the
-iBGP run, the BGP VRF run, the SSH path run, and the second-platform run. The probe has not run
-either. Run them from the WSL clone (`~/network-change-validator`) on that branch, in this order
-(`scripts/lab/README.md`, "A whole session with one login"):
+The five runs PR #16 prepared wait for a reservation: the OSPF dead-timer run, the iBGP run,
+the BGP VRF run, the SSH path run, and the second-platform run. The probe has not run either.
+Run them from the WSL clone (`~/network-change-validator`) after a `git pull` on `main`, in
+this order (`scripts/lab/README.md`, "A whole session with one login"):
 
 1. `bash scripts/lab/run-session.sh probe`, and read its three answers.
 2. `bash scripts/lab/run-session.sh ospf-deadtimer ibgp bgp-vrf reset`.
@@ -586,7 +587,7 @@ did not come out as predicted is published the same way, with what happened: its
 and the README say which part of the prediction was wrong, and the expected file stays as the
 prediction that was made.
 
-Still open from the design review, which no change on the branch settled:
+Still open from the design review, which no change in PR #16 settled:
 
 - OSPF neighbors are still keyed by router id only, so the same router id on two links is still
   refused. Keying them by interface or VRF, as BGP now is by VRF, has not started.

@@ -799,7 +799,7 @@ The names are `probe`, `ospf-deadtimer`, `ibgp`, `bgp-vrf`, `ssh-path`,
 `second-platform:<platform>`, `reset`, and `remove-r3`. `reset` runs `labctl.py reset` and
 `remove-r3` runs `cml_lab.py remove-r3`, both with the logins the session asked for, since the
 logins last only while a script runs. Run it from the WSL clone
-(`~/network-change-validator`), which must be on this branch, with `testbeds/lab.yaml` in place
+(`~/network-change-validator`), which must be on current `main`, with `testbeds/lab.yaml` in place
 and `testbeds/lab-ssh.yaml` or `testbeds/lab-r3.yaml` copied there when `ssh-path` or
 `second-platform:<platform>` is named. It refuses an unknown name, a platform
 `cml_lab.py`'s table does not have, a missing `testbeds/lab-ssh.yaml` when `ssh-path` is named,
