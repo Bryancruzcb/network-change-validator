@@ -15,10 +15,11 @@ the one planned change the captures are meant to catch.
 | `run-bgp-holdtimer.sh` | The hold-timer run: eBGP with a 9 s hold time, then the same sequence around an inbound ACL on R1 that drops BGP from R2. |
 | `run-ospf-deadtimer.sh` | The OSPF dead-timer run, prepared and not run: OSPF with a 1 s hello (so a 4 s dead interval), then the same sequence around an inbound ACL on R1 that drops OSPF from R2, with a packet capture of `ip proto 89`. It sources `_lib.sh` and exits 0 only when every comparison exits as predicted. |
 | `run-ibgp.sh` | The iBGP run, prepared and not run: iBGP between the routers' loopbacks, which reach each other only over OSPF, then the same sequence around the dead-timer run's OSPF ACL on R1, with a packet capture of `ip proto 89 or tcp port 179`. It sources `_lib.sh` and exits 0 only when every comparison exits as predicted. |
+| `run-bgp-vrf.sh` | The BGP VRF run, prepared and not run: the hold-timer run's eBGP session plus a second one to the same peer address in vrf NCV on the dot1Q subinterface Ethernet0/1.100, then the same sequence around `shutdown` on R1's subinterface, with a packet capture of `tcp port 179 or (vlan and tcp port 179)`. It sources `_lib.sh` and exits 0 only when every comparison exits as predicted. |
 | `capture.sh` | One capture (`pre`, `post`, or `restored`) for a run driven by hand. |
-| `change.sh` | The planned change by hand: `apply` shuts R1 Ethernet0/1 and `undo` brings it back; `bgp-apply` shuts the R1 peer and `bgp-undo` brings it back; `holdtimer-apply` adds the BGP ACL and `holdtimer-undo` removes it; `deadtimer-apply` adds the OSPF ACL and `deadtimer-undo` removes it. |
+| `change.sh` | The planned change by hand: `apply` shuts R1 Ethernet0/1 and `undo` brings it back; `bgp-apply` shuts the R1 peer and `bgp-undo` brings it back; `holdtimer-apply` adds the BGP ACL and `holdtimer-undo` removes it; `deadtimer-apply` adds the OSPF ACL and `deadtimer-undo` removes it; `vrf-apply` shuts R1 Ethernet0/1.100 and `vrf-undo` brings it back. |
 | `_lib.sh` | Sourced, not run: what new run scripts share (the VPN check, the login prompts, the capture and report paths, `step`, `ctl`, `cap`, `snap`, `compare`), plus `expect_exit` and `lab_finish`, which end a run with exit 0 when every comparison exited as predicted and 3 when one did not. The four published runs keep their own copy, since they reproduce recorded runs. |
-| `labctl.py` | The lab actions the scripts above call: `setup-ospf`, `shut`, `noshut`, `wait-full`, `wait-gone`, `setup-bgp`, `bgp-shut`, `bgp-noshut`, `wait-bgp-up`, `wait-bgp-down`, `setup-bgp-fast`, `check-hold-time`, `bgp-block`, `bgp-unblock`, `setup-ospf-fast`, `check-dead-time`, `ospf-block`, `ospf-unblock`, `wait-ospf-lost`, `setup-ibgp`, `wait-ibgp-up`, `wait-ibgp-down`, `check-ibgp-hold-time`, and `reset`, which removes what these scripts add from both routers. |
+| `labctl.py` | The lab actions the scripts above call: `setup-ospf`, `shut`, `noshut`, `wait-full`, `wait-gone`, `setup-bgp`, `bgp-shut`, `bgp-noshut`, `wait-bgp-up`, `wait-bgp-down`, `setup-bgp-fast`, `check-hold-time`, `bgp-block`, `bgp-unblock`, `setup-ospf-fast`, `check-dead-time`, `ospf-block`, `ospf-unblock`, `wait-ospf-lost`, `setup-ibgp`, `wait-ibgp-up`, `wait-ibgp-down`, `check-ibgp-hold-time`, `wait-vrf-gone`, `setup-vrf`, `wait-vrf-bgp-up`, `wait-vrf-bgp-down`, `check-vrf-hold-time`, `vrf-shut`, `vrf-noshut`, and `reset`, which removes what these scripts add from both routers. |
 | `sanitize_capture.py` | Copies a run's `pre/`, `post/`, `restored/` for publishing with passwords and certificate bodies replaced and `raw/` left out. |
 | `bgp_pcap.py` | Lists the BGP messages in a pcap of the lab link: TCP flags, retransmissions, and each message by name, with NOTIFICATION error codes spelled out. |
 | `link_pcap.py` | One timeline of the OSPF packets and BGP segments in a pcap of the lab link: each OSPF packet by type (a hello's timers, DR, BDR, and neighbor list; a database description's flags; an update's LSA count) and each BGP segment as `bgp_pcap.py` shows it, tagged with its VLAN when it has one. |
@@ -29,7 +30,8 @@ The runs compare against the intents kept with their evidence
 `fixtures/lab-2026-09-18/intent-bgp.yaml`, and
 `fixtures/lab-2026-11-20/intent-bgp-holdtimer.yaml`), so a rerun on the
 same sandbox is checked against the same rules. A prepared run's draft intent sits here in
-`scripts/lab` (`intent-ospf-deadtimer.yaml`, `intent-ibgp.yaml`) until a run is recorded.
+`scripts/lab` (`intent-ospf-deadtimer.yaml`, `intent-ibgp.yaml`, `intent-bgp-vrf.yaml`) until a
+run is recorded.
 
 ## The BGP run
 
@@ -289,6 +291,113 @@ What only the run can confirm:
 - whether one console session can still reach both routers while the control plane is down (it
   should: the console does not use the link).
 
+## The BGP VRF run (prepared, not run)
+
+Every BGP capture so far had one session, in the global table. This run adds a second session
+to the same peer address inside a VRF, then breaks only that one. It is the live test of ncv
+keeping BGP neighbors by VRF: the same address in two VRFs must be captured as two neighbors,
+and a change to one must be reported for that one only.
+
+The base is the hold-timer run's eBGP session in the global table (R1 AS 65001, R2 AS 65002,
+`timers 3 9`), unchanged and untagged on Ethernet0/1. `run-bgp-vrf.sh` starts with
+`labctl.py reset` and stops if it fails. IOS deletes a VRF in the background and refuses its
+route distinguisher until it has finished, so on a reservation that already had vrf NCV the
+script then waits with `labctl.py wait-vrf-gone 90`, which polls `show vrf` on both routers
+until NCV is no longer listed. Then `setup-bgp-fast`, and `labctl.py setup-vrf`, which adds to
+the same BGP process (R1 shown; R2 mirrors it with 1.1.1.2, `rd 65002:100`, Loopback100
+172.16.102.1/24, neighbor 1.1.1.1 remote-as 65001, and network 172.16.102.0):
+
+    vrf definition NCV
+     rd 65001:100
+     address-family ipv4
+     exit-address-family
+    interface Ethernet0/1.100
+     encapsulation dot1Q 100
+     vrf forwarding NCV
+     ip address 1.1.1.1 255.255.255.0
+    interface Loopback100
+     vrf forwarding NCV
+     ip address 172.16.101.1 255.255.255.0
+    router bgp 65001
+     address-family ipv4 vrf NCV
+      neighbor 1.1.1.2 remote-as 65002
+      neighbor 1.1.1.2 timers 3 9
+      neighbor 1.1.1.2 activate
+      neighbor 1.1.1.2 soft-reconfiguration inbound
+      network 172.16.101.0 mask 255.255.255.0
+     exit-address-family
+
+The order is forced at three points. IOS takes no address on a LAN subinterface before it has
+its `encapsulation dot1Q`. `vrf forwarding` strips any address already on the interface, and
+in the global table `ip address 1.1.1.1 255.255.255.0` would be refused as overlapping
+Ethernet0/1, so `vrf forwarding` comes before `ip address`. And BGP refuses a VRF address
+family until the VRF has an `rd`. The subinterface deliberately reuses the global link's
+addresses, so 1.1.1.2 is a BGP neighbor twice on R1, once in each table, and 1.1.1.0/24 is
+connected twice. Nothing is imported or exported between the tables, so no route target is set.
+
+`show bgp ipv4 unicast summary` lists only the global table, so the VRF commands read
+`show bgp vpnv4 unicast vrf NCV summary` and `show bgp vpnv4 unicast vrf NCV neighbors <peer>`
+with the parsers the global commands use. The script waits with `wait-bgp-up` and
+`wait-vrf-bgp-up`, which waits for each VRF session to have learned at least one prefix, since
+the intent names a BGP-learned prefix in the VRF. Then `check-hold-time` and
+`check-vrf-hold-time`, and the no-change check against the draft
+`scripts/lab/intent-bgp-vrf.yaml`. It names four BGP adjacencies, two per router, one per VRF;
+the hold-timer run's routes in the default VRF and, in vrf NCV, each router's connected
+1.1.1.0/24 and the other router's Loopback100 network through BGP; Ethernet0/1's counters (not
+the subinterface's, which IOS XE does not report); and the hold-timer run's required lines plus
+`vrf definition NCV`, `encapsulation dot1Q 100`, and `address-family ipv4 vrf NCV`. The
+`remote-as` and `timers` lines appear twice in each running config, and ncv matches a line
+without its block, so those rules prove only that one copy exists; `check-vrf-hold-time` is what
+proves the VRF session's timers. If the pre capture fails with
+`ambiguous BGP neighbor ...: multiple VRFs or instances`, the ncv in that clone predates BGP
+neighbors keyed by VRF, and the script says to update it.
+
+The planned change is `labctl.py vrf-shut`: `shutdown` on R1 `interface Ethernet0/1.100`. The
+prediction: R1 resets its VRF session at once, because the neighbor is directly connected eBGP
+and its interface went down, and it loses the VRF's connected 1.1.1.0/24 and the prefix it
+learned. R2's subinterface stays up, since link state belongs to the physical link, so R2 keeps
+the session until its 9 s hold timer runs out, then loses the prefix it learned. Both global
+sessions stay Established throughout. The script waits with `wait-vrf-bgp-down`.
+
+Predicted findings, pinned on synthetic snapshots in `tests/test_lab_scripts.py`:
+
+| Comparison | Exit | Findings |
+|---|---|---|
+| pre vs pre | 0 | none |
+| pre vs post (`shutdown` on R1 Ethernet0/1.100) | 1 | five, all in vrf NCV: `V_ADJ` R1 neighbor 1.1.1.2 and R2 neighbor 1.1.1.1; `V_ROUTE` R1 1.1.1.0/24 (connected) and 172.16.102.0/24 (bgp); `V_ROUTE` R2 172.16.101.0/24 (bgp) |
+| pre vs restored | 0 | none |
+
+Nothing for the default VRF: the same neighbor address there is still Established, and the same
+1.1.1.0/24 there is still connected. The synthetic BGP sections are built by passing a
+Genie-shaped dict with the same address under `vrf.default` and `vrf.NCV` through ncv's own
+adapter, so the test also fails if the adapter merges or drops the VRF neighbor; a mirror test
+takes the global sessions down instead and gets findings for the default VRF only. The script
+checks each comparison's exit against this table and exits 0 only when all three match, 3 when
+it ran to the end but one did not, and 1 when it stopped early. If a run stops with the
+subinterface shut, `change.sh vrf-undo` brings it back, or the next run's `labctl.py reset`
+removes it.
+
+Packet evidence: right before the change the script starts `cml_capture.py start --filter
+"tcp port 179 or (vlan and tcp port 179)"` (a plain `tcp port 179` would not match a tagged
+frame), and at the end it saves `captures/bgp-vrf-<stamp>/link.pcap` and prints
+`link_pcap.py`'s timeline, which marks the VRF session's segments `vlan 100`. The prediction:
+two TCP sessions between the same two addresses, told apart only by the tag. The untagged one
+keeps exchanging keepalives. On the tagged one R2 retransmits, then sends
+`NOTIFICATION 4/0 Hold Timer Expired`; this time it is R2's NOTIFICATION that reaches the wire,
+because R2's side is up, while R1 sends nothing on the tag because its subinterface is down.
+
+What only the run can confirm:
+
+- that IOL accepts a dot1Q subinterface on Ethernet0/1 and the CML link carries the tag;
+- that IOS accepts the same neighbor address in the global table and in the VRF;
+- how Genie files the VRF neighbor: its IOS XE test data puts it under
+  `instance.default.vrf.<name>.neighbor`, which is what ncv expects, and whether the
+  per-neighbor commands Genie runs cope with one address in two VRFs;
+- that `show bgp vpnv4 unicast vrf NCV summary` and `... neighbors 1.1.1.2` print the formats
+  the parsers expect, and that `show vrf` lists NCV while IOS is still deleting it;
+- that R1's session resets at once and R2's on its hold timer;
+- that CML accepts the `vlan` capture filter.
+
 ## Running a session
 
 Run from WSL or Linux: pyATS does not install on native Windows, and the VPN check uses
@@ -301,7 +410,7 @@ directory works.
    the lab differs.
 3. `.venv/bin/python -m pip install -e '.[dev,lab]'` once. The scripts use
    `.venv/bin/python`; set `NCV_PYTHON` to use another interpreter.
-4. `bash scripts/lab/run-lab.sh`, `run-ospf.sh`, `run-bgp.sh`, `run-bgp-holdtimer.sh`, or the prepared `run-ospf-deadtimer.sh` or `run-ibgp.sh`. Each asks for the CML
+4. `bash scripts/lab/run-lab.sh`, `run-ospf.sh`, `run-bgp.sh`, `run-bgp-holdtimer.sh`, or the prepared `run-ospf-deadtimer.sh`, `run-ibgp.sh`, or `run-bgp-vrf.sh`. Each asks for the CML
    username and password and the routers' enable password, keeps them in that terminal's
    environment (`NCV_CML_USER`, `NCV_CML_PASS`, `NCV_LAB_PASS`), and stops before touching
    the lab if the no-change check is not clean.

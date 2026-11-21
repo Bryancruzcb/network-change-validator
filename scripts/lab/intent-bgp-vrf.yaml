@@ -1,0 +1,116 @@
+# Draft intent for the BGP VRF run (scripts/lab/run-bgp-vrf.sh). It was written before any
+# capture of that run exists, and it moves next to its evidence under fixtures/ once a run is
+# recorded, as intent-bgp-holdtimer.yaml did.
+#
+# The hold-timer run's rules for the global table, plus the same peer address again in vrf NCV:
+# each router has two BGP adjacencies to one neighbor address, told apart only by `vrf`. In vrf
+# NCV each router keeps the link's 1.1.1.0/24 as connected (on Ethernet0/1.100) and learns the
+# other router's Loopback100 network through BGP, so listing that prefix is what makes the
+# no-change check refuse a VRF session that never learned it. The change is deliberately not
+# named here: no rule anticipates it, and the run shows whether the rules for vrf NCV catch it
+# while the default-VRF rules for the same addresses stay compliant. A `must_absent` rule on
+# `shutdown` could not single the change out anyway: config rules match a line without its
+# block, and the sandbox already ships Ethernet0/3 with `shutdown`.
+intent_id: devnet-default-lab-bgp-vrf
+version: 1
+
+devices:
+  - R1
+  - R2
+
+adjacencies:
+  - device: R1
+    protocol: bgp
+    neighbor: 1.1.1.2
+    vrf: default
+    remote_as: 65002
+  - device: R1
+    protocol: bgp
+    neighbor: 1.1.1.2
+    vrf: NCV
+    remote_as: 65002
+  - device: R2
+    protocol: bgp
+    neighbor: 1.1.1.1
+    vrf: default
+    remote_as: 65001
+  - device: R2
+    protocol: bgp
+    neighbor: 1.1.1.1
+    vrf: NCV
+    remote_as: 65001
+
+routes:
+  - device: R1
+    vrf: default
+    prefix: 20.20.20.0/24
+    protocol: static
+  - device: R1
+    vrf: default
+    prefix: 1.1.1.0/24
+    protocol: connected
+  - device: R1
+    vrf: NCV
+    prefix: 1.1.1.0/24
+    protocol: connected
+  - device: R1
+    vrf: NCV
+    prefix: 172.16.102.0/24
+    protocol: bgp
+  - device: R2
+    vrf: default
+    prefix: 10.10.10.0/24
+    protocol: static
+  - device: R2
+    vrf: default
+    prefix: 1.1.1.0/24
+    protocol: connected
+  - device: R2
+    vrf: NCV
+    prefix: 1.1.1.0/24
+    protocol: connected
+  - device: R2
+    vrf: NCV
+    prefix: 172.16.101.0/24
+    protocol: bgp
+
+# Ethernet0/1 only, not Ethernet0/1.100: IOS XE reports no input-error or CRC counters for a
+# subinterface (Genie's parser test data has none), so a limit there would always be a
+# "required counter evidence missing" finding. The parent carries the tagged frames too.
+interfaces:
+  - device: R1
+    name: Ethernet0/1
+    max_in_errors: 0
+    max_crc: 0
+  - device: R2
+    name: Ethernet0/1
+    max_in_errors: 0
+    max_crc: 0
+
+# What these lines do not prove: `neighbor 1.1.1.2 remote-as 65002` and
+# `neighbor 1.1.1.2 timers 3 9` appear twice in R1's running config (likewise 1.1.1.1 on R2),
+# once under router bgp and once in its vrf NCV address family, and ncv matches a line without
+# the block it sits in. So each rule proves only that one copy exists. What proves the VRF
+# session's timers is `labctl.py check-vrf-hold-time`, which the run script calls before the
+# pre capture. The list is kept short on purpose: every extra line is one more way for the
+# no-change check to fail on how IOS spells it.
+config:
+  must_include:
+    - device: R1
+      lines:
+        - "router bgp 65001"
+        - "neighbor 1.1.1.2 remote-as 65002"
+        - "neighbor 1.1.1.2 timers 3 9"
+        - "ip route 20.20.20.0 255.255.255.0 1.1.1.2"
+        - "vrf definition NCV"
+        - "encapsulation dot1Q 100"
+        - "address-family ipv4 vrf NCV"
+    - device: R2
+      lines:
+        - "router bgp 65002"
+        - "neighbor 1.1.1.1 remote-as 65001"
+        - "neighbor 1.1.1.1 timers 3 9"
+        - "ip route 10.10.10.0 255.255.255.0 1.1.1.1"
+        - "vrf definition NCV"
+        - "encapsulation dot1Q 100"
+        - "address-family ipv4 vrf NCV"

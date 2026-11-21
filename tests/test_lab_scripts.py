@@ -9,9 +9,9 @@ scripts/lab/labctl.py reads router show output to know when a change has taken. 
 its parsers on sample output, and the findings the BGP run's planned change was predicted to
 produce, on synthetic snapshots shaped like the 2026-09-12 captures. That prediction was
 written before the run; the 2026-09-18 run matched it, and tests/test_lab_evidence.py replays
-the real captures. The OSPF dead-timer run and the iBGP run are prepared the same way and have
-not run: their predictions are pinned here on synthetic snapshots, the iBGP one built through
-ncv's own adapter from Genie-shaped data. The last tests pin what `labctl.py reset`
+the real captures. The OSPF dead-timer run, the iBGP run, and the BGP VRF run are prepared the
+same way and have not run: their predictions are pinned here on synthetic snapshots, the iBGP
+and VRF ones built through ncv's own adapter from Genie-shaped data. The last tests pin what `labctl.py reset`
 would send, on the published configs and on ones built here; tests/test_labctl_commands.py runs
 the commands on a fake lab.
 """
@@ -144,16 +144,26 @@ LAB_ROUTES = {
 }
 
 
-def _write_lab_snapshot(path, ospf, bgp, configs, routes=None):
+def _write_lab_snapshot(path, ospf, bgp, configs, routes=None, other_vrfs=None):
     """A snapshot shaped like the recorded captures: the OSPF and BGP sections and the config
     lines given, around the link counters every lab run keeps unchanged and the routes given,
-    by default the static and connected ones every earlier run kept unchanged."""
+    by default the static and connected ones every earlier run kept unchanged. `routes` is the
+    default VRF's table per router; `other_vrfs` adds {vrf: table} per router beside it."""
     path.mkdir()
     routes = LAB_ROUTES if routes is None else routes
+    other_vrfs = other_vrfs or {}
     sections = {
         "ospf.json": ospf,
         "bgp.json": bgp,
-        "routing.json": {dev: {"vrfs": {"default": {"routes": table}}} for dev, table in routes.items()},
+        "routing.json": {
+            dev: {
+                "vrfs": {
+                    "default": {"routes": table},
+                    **{vrf: {"routes": rest} for vrf, rest in other_vrfs.get(dev, {}).items()},
+                }
+            }
+            for dev, table in routes.items()
+        },
         "interface.json": {
             dev: {"interfaces": {"Ethernet0/1": {"oper_status": "up", "in_errors": 0, "crc": 0}}}
             for dev in routes
@@ -595,10 +605,18 @@ def _genie_ospf(neighbors):
     }
 
 
+def _genie_bgp_by_vrf(peer, remote_as, states):
+    """`learn bgp` as Genie shapes it: one peer address in each VRF of `states` ({vrf: session
+    state}), all in the default instance, as Genie's IOS XE test data files 2.2.2.2 in both
+    `default` and `VRF1`."""
+    record = {"remote_as": remote_as}
+    vrfs = {vrf: {"neighbor": {peer: {**record, "session_state": state}}} for vrf, state in states.items()}
+    return {"instance": {"default": {"vrf": vrfs}}}
+
+
 def _genie_bgp(peer, state):
     """`learn bgp` as Genie shapes it: one peer in the default VRF of the default instance."""
-    record = {"session_state": state, "remote_as": 65010}
-    return {"instance": {"default": {"vrf": {"default": {"neighbor": {peer: record}}}}}}
+    return _genie_bgp_by_vrf(peer, 65010, {"default": state})
 
 
 def _ibgp_config(device, extra=()):
@@ -684,6 +702,277 @@ def test_ibgp_intent_refuses_a_setup_that_never_learned_the_bgp_prefix(root, tmp
         [
             ("V_ROUTE", "R1", "routing.vrfs.default.routes.172.16.2.0/24"),
             ("V_ROUTE", "R2", "routing.vrfs.default.routes.172.16.1.0/24"),
+        ],
+    )
+
+
+# The BGP VRF run, prepared and not run yet: the hold-timer run's eBGP session in the global
+# table plus a second one to the same peer address in vrf NCV on Ethernet0/1.100, and
+# `shutdown` on R1's subinterface as the planned change.
+
+
+def test_labctl_setup_vrf_lines_for_r1_in_the_order_ios_needs(root):
+    labctl = _load_script(root, "labctl.py")
+    r1 = labctl.vrf_setup_lines("R1")
+    assert r1 == [
+        "vrf definition NCV",
+        "rd 65001:100",
+        "address-family ipv4",
+        "exit-address-family",
+        "interface Ethernet0/1.100",
+        "encapsulation dot1Q 100",
+        "vrf forwarding NCV",
+        "ip address 1.1.1.1 255.255.255.0",
+        "interface Loopback100",
+        "vrf forwarding NCV",
+        "ip address 172.16.101.1 255.255.255.0",
+        "router bgp 65001",
+        "address-family ipv4 vrf NCV",
+        "neighbor 1.1.1.2 remote-as 65002",
+        "neighbor 1.1.1.2 timers 3 9",
+        "neighbor 1.1.1.2 activate",
+        "neighbor 1.1.1.2 soft-reconfiguration inbound",
+        "network 172.16.101.0 mask 255.255.255.0",
+        "exit-address-family",
+    ]
+    # The order is the point: the tag before any address on the subinterface, `vrf forwarding`
+    # before the address it would strip, and the route distinguisher before BGP's VRF family.
+    subinterface = r1[r1.index("interface Ethernet0/1.100") :]
+    assert (
+        subinterface.index("encapsulation dot1Q 100")
+        < subinterface.index("vrf forwarding NCV")
+        < subinterface.index("ip address 1.1.1.1 255.255.255.0")
+    )
+    assert r1.index("rd 65001:100") < r1.index("router bgp 65001")
+    # Each router's VRF address is its own global one, which the other router names as its peer.
+    for name, other in (("R1", "R2"), ("R2", "R1")):
+        assert labctl.VRF_ADDRESSES[name] == labctl.BGP[other]["peer"]
+
+
+def test_labctl_setup_vrf_lines_for_r2_differ_only_in_the_mirrored_values(root):
+    labctl = _load_script(root, "labctl.py")
+    mirror = {
+        "65001": "65002",
+        "65002": "65001",
+        "1.1.1.1": "1.1.1.2",
+        "1.1.1.2": "1.1.1.1",
+        "172.16.101.": "172.16.102.",
+    }
+
+    def mirrored(line):
+        return re.sub("|".join(map(re.escape, mirror)), lambda m: mirror[m.group(0)], line)
+
+    r1, r2 = labctl.vrf_setup_lines("R1"), labctl.vrf_setup_lines("R2")
+    assert [mirrored(line) for line in r1] == r2
+    assert "rd 65002:100" in r2 and "network 172.16.102.0 mask 255.255.255.0" in r2
+
+
+def test_labctl_vrf_change_shuts_only_the_subinterface(root):
+    labctl = _load_script(root, "labctl.py")
+    assert labctl.vrf_shut_lines() == ["interface Ethernet0/1.100", "shutdown"]
+    assert labctl.vrf_noshut_lines() == ["interface Ethernet0/1.100", "no shutdown"]
+
+
+# Synthetic VRF output, in the format the global commands printed on 2026-11-20; the research
+# for this run expects IOS XE to print the VRF table the same way. No VRF output has been captured.
+VRF_SUMMARY = """\
+BGP router identifier 1.1.1.1, local AS number 65001
+BGP table version is 3, main routing table version 3
+Neighbor        V           AS MsgRcvd MsgSent   TblVer  InQ OutQ Up/Down  State/PfxRcd
+1.1.1.2         4        65002      12      12        3    0    0 00:00:31        1
+"""
+VRF_NEIGHBOR = """\
+BGP neighbor is 1.1.1.2,  vrf NCV,  remote AS 65002, external link
+  BGP version 4, remote router ID 2.2.2.2
+  BGP state = Established, up for 00:00:31
+  Last read 00:00:01, last write 00:00:02, hold time is 9, keepalive interval is 3 seconds
+  Configured hold time is 9, keepalive interval is 3 seconds
+"""
+
+
+def test_labctl_reads_the_vrf_table_with_the_global_parsers(root):
+    labctl = _load_script(root, "labctl.py")
+    assert labctl.bgp_session_state(VRF_SUMMARY, "1.1.1.2") is True
+    assert labctl.bgp_prefixes_received(VRF_SUMMARY, "1.1.1.2") == 1
+    assert labctl.bgp_prefixes_received(VRF_SUMMARY.replace("        1\n", " Idle\n"), "1.1.1.2") is None
+    assert labctl.bgp_negotiated_timers(VRF_NEIGHBOR) == (9, 3)
+    assert labctl.VRF_BGP_SUMMARY == "show bgp vpnv4 unicast vrf NCV summary"
+    assert labctl.VRF_BGP_NEIGHBORS == "show bgp vpnv4 unicast vrf NCV neighbors"
+
+
+# Synthetic `show vrf` output, in the column format Genie's IOS XE ShowVrf parser documents: a
+# VRF with several interfaces continues on lines holding only interface names.
+SHOW_VRF = """\
+  Name                             Default RD            Protocols   Interfaces
+  Mgmt-intf                        <not set>             ipv4        Et0/2
+  NCV                              65001:100             ipv4        Et0/1.100
+                                                                     Lo100
+  NCV-OTHER                        65001:200             ipv4
+"""
+
+
+def test_labctl_reads_whether_show_vrf_still_lists_a_vrf(root):
+    labctl = _load_script(root, "labctl.py")
+    assert labctl.vrf_listed(SHOW_VRF, "NCV") is True
+    assert labctl.vrf_listed(SHOW_VRF, "Mgmt-intf") is True
+    without = "\n".join(line for line in SHOW_VRF.splitlines() if not line.strip().startswith("NCV "))
+    assert labctl.vrf_listed(without, "NCV") is False  # NCV-OTHER is another VRF
+    assert labctl.vrf_listed(SHOW_VRF, "Lo100") is False  # a continuation line is not a VRF row
+    assert labctl.vrf_listed("", "NCV") is False
+
+
+BGP_VRF_INTENT = ("scripts", "lab", "intent-bgp-vrf.yaml")
+
+
+def test_bgp_vrf_intent_names_four_bgp_adjacencies_two_per_router_one_per_vrf(root):
+    intent = load_intent(root.joinpath(*BGP_VRF_INTENT))
+    assert intent.intent_id == "devnet-default-lab-bgp-vrf"
+    adjacencies = [(a.device, a.protocol, a.neighbor, a.vrf, a.remote_as) for a in intent.adjacencies]
+    assert sorted(adjacencies) == [
+        ("R1", "bgp", "1.1.1.2", "NCV", 65002),
+        ("R1", "bgp", "1.1.1.2", "default", 65002),
+        ("R2", "bgp", "1.1.1.1", "NCV", 65001),
+        ("R2", "bgp", "1.1.1.1", "default", 65001),
+    ]
+    in_vrf = {(r.device, r.prefix, r.protocol) for r in intent.routes if r.vrf == "NCV"}
+    assert in_vrf == {
+        ("R1", "1.1.1.0/24", "connected"),
+        ("R1", "172.16.102.0/24", "bgp"),
+        ("R2", "1.1.1.0/24", "connected"),
+        ("R2", "172.16.101.0/24", "bgp"),
+    }
+    assert [(i.device, i.name) for i in intent.interfaces] == [("R1", "Ethernet0/1"), ("R2", "Ethernet0/1")]
+    required = {rule.device: rule.lines for rule in intent.must_include}
+    holdtimer = load_intent(root / "fixtures" / "lab-2026-11-20" / "intent-bgp-holdtimer.yaml")
+    added = ("vrf definition NCV", "encapsulation dot1Q 100", "address-family ipv4 vrf NCV")
+    for rule in holdtimer.must_include:
+        assert required[rule.device] == (*rule.lines, *added)
+    assert intent.must_absent == ()
+
+
+# Each router's peer address (the same in both tables), its remote AS, and the prefix it learns
+# in vrf NCV: the other router's Loopback100 network.
+VRF_PEER = {"R1": ("1.1.1.2", 65002, "172.16.102.0/24"), "R2": ("1.1.1.1", 65001, "172.16.101.0/24")}
+
+
+def _vrf_run_config(device, subinterface_extra=()):
+    """One router's running config with the run's setup in place, as IOS would list it: the
+    global session's lines appear twice, once under router bgp and once in the VRF family."""
+    hostname, router_bgp, router_id, remote_as, static = R1_CONFIG if device == "R1" else R2_CONFIG
+    peer, _, _ = VRF_PEER[device]
+    own = VRF_PEER["R2" if device == "R1" else "R1"][0]
+    timers = f" neighbor {peer} timers 3 9"
+    return [
+        hostname,
+        "vrf definition NCV",
+        f" rd {router_bgp.split()[-1]}:100",
+        " address-family ipv4",
+        " exit-address-family",
+        "interface Ethernet0/1.100",
+        " encapsulation dot1Q 100",
+        " vrf forwarding NCV",
+        f" ip address {own} 255.255.255.0",
+        *subinterface_extra,
+        router_bgp,
+        router_id,
+        remote_as,
+        timers,
+        " address-family ipv4 vrf NCV",
+        f" {remote_as}",
+        f" {timers}",
+        f"  neighbor {peer} activate",
+        " exit-address-family",
+        static,
+    ]
+
+
+def _write_vrf_snapshot(path, states, lost=(), r1_subinterface=()):
+    """The BGP VRF run's capture. `states` maps each router to {vrf: session state}; the BGP
+    section goes through ncv's adapter from Genie's shape, with the same peer address under
+    `default` and `NCV`, so an adapter that merged or dropped the VRF neighbor fails the
+    prediction. Each router's vrf NCV table holds the link's connected route and the prefix it
+    learns, less the (router, prefix) pairs in `lost`; the default table is the lab's."""
+    bgp_section, in_vrf = {}, {}
+    for device, (peer, remote_as, learned) in VRF_PEER.items():
+        bgp_section.update(normalize_learn(device, "bgp", _genie_bgp_by_vrf(peer, remote_as, states[device])))
+        table = {"1.1.1.0/24": {"protocol": "connected"}, learned: {"protocol": "bgp"}}
+        in_vrf[device] = {"NCV": {p: rec for p, rec in table.items() if (device, p) not in lost}}
+    configs = {"R1": _vrf_run_config("R1", r1_subinterface), "R2": _vrf_run_config("R2")}
+    _write_lab_snapshot(path, {}, bgp_section, configs, other_vrfs=in_vrf)
+
+
+BOTH_UP = {"default": "Established", "NCV": "Established"}
+
+
+def test_bgp_vrf_run_prediction_on_synthetic_snapshots(root, tmp_path):
+    """The same neighbor address in two VRFs on each router, and only the VRF session broken:
+    R1 resets it at once and loses the VRF's connected route with its subinterface, R2 loses it
+    on its hold timer and with it the prefix it learned. Five findings, all in vrf NCV; the
+    default VRF's session to the same address and its 1.1.1.0/24 stay compliant."""
+    intent = root.joinpath(*BGP_VRF_INTENT)
+    pre, post = tmp_path / "pre", tmp_path / "post"
+    _write_vrf_snapshot(pre, {"R1": BOTH_UP, "R2": BOTH_UP})
+    after = {"R1": {**BOTH_UP, "NCV": "Idle"}, "R2": {**BOTH_UP, "NCV": "Active"}}
+    lost = [("R1", "1.1.1.0/24"), ("R1", "172.16.102.0/24"), ("R2", "172.16.101.0/24")]
+    _write_vrf_snapshot(post, after, lost, [" shutdown"])
+    # The adapter kept both records: one address, two VRFs, two neighbors.
+    captured = json.loads((post / "bgp.json").read_text(encoding="utf-8"))
+    assert {dev: sorted(node["vrfs"]) for dev, node in captured.items()} == {
+        "R1": ["NCV", "default"],
+        "R2": ["NCV", "default"],
+    }
+    assert _bgp_diff(root, tmp_path, pre, pre, "baseline", intent) == (0, [])
+    assert _bgp_diff(root, tmp_path, pre, post, "change", intent) == (
+        1,
+        [
+            ("V_ADJ", "R1", "bgp.vrfs.NCV.neighbors.1.1.1.2"),
+            ("V_ADJ", "R2", "bgp.vrfs.NCV.neighbors.1.1.1.1"),
+            ("V_ROUTE", "R1", "routing.vrfs.NCV.routes.1.1.1.0/24"),
+            ("V_ROUTE", "R1", "routing.vrfs.NCV.routes.172.16.102.0/24"),
+            ("V_ROUTE", "R2", "routing.vrfs.NCV.routes.172.16.101.0/24"),
+        ],
+    )
+    report = json.loads((tmp_path / "report-change" / "report.json").read_text(encoding="utf-8"))
+    evidence = {(f["device"], f["path"]): (f["before"], f["after"]) for f in report["findings"]}
+    assert evidence[("R1", "bgp.vrfs.NCV.neighbors.1.1.1.2")] == (
+        {"state": "Established", "remote_as": 65002},
+        {"state": "Idle", "remote_as": 65002},
+    )
+    assert evidence[("R2", "routing.vrfs.NCV.routes.172.16.101.0/24")][1] is None
+    restored = tmp_path / "restored"
+    _write_vrf_snapshot(restored, {"R1": BOTH_UP, "R2": BOTH_UP})
+    assert _bgp_diff(root, tmp_path, pre, restored, "restored", intent) == (0, [])
+
+
+def test_bgp_vrf_mirror_case_the_global_session_down_is_reported_for_the_default_vrf_only(root, tmp_path):
+    """The other way round, to show the VRF key is what separates the two: the global sessions
+    down and the VRF ones up give findings at bgp.vrfs.default only. The default VRF's routes
+    are static and connected, which the global session never carried."""
+    intent = root.joinpath(*BGP_VRF_INTENT)
+    pre, post = tmp_path / "pre", tmp_path / "post"
+    _write_vrf_snapshot(pre, {"R1": BOTH_UP, "R2": BOTH_UP})
+    _write_vrf_snapshot(post, {"R1": {**BOTH_UP, "default": "Idle"}, "R2": {**BOTH_UP, "default": "Active"}})
+    assert _bgp_diff(root, tmp_path, pre, post, "change", intent) == (
+        1,
+        [
+            ("V_ADJ", "R1", "bgp.vrfs.default.neighbors.1.1.1.2"),
+            ("V_ADJ", "R2", "bgp.vrfs.default.neighbors.1.1.1.1"),
+        ],
+    )
+
+
+def test_bgp_vrf_intent_refuses_a_vrf_session_that_never_learned_its_prefix(root, tmp_path):
+    """Both sessions Established in both tables, but a VRF `network` statement forgotten: the
+    missing prefixes stop the run at the no-change check."""
+    intent = root.joinpath(*BGP_VRF_INTENT)
+    pre = tmp_path / "pre"
+    lost = [("R1", "172.16.102.0/24"), ("R2", "172.16.101.0/24")]
+    _write_vrf_snapshot(pre, {"R1": BOTH_UP, "R2": BOTH_UP}, lost)
+    assert _bgp_diff(root, tmp_path, pre, pre, "baseline", intent) == (
+        1,
+        [
+            ("V_ROUTE", "R1", "routing.vrfs.NCV.routes.172.16.102.0/24"),
+            ("V_ROUTE", "R2", "routing.vrfs.NCV.routes.172.16.101.0/24"),
         ],
     )
 
@@ -914,3 +1203,29 @@ def test_reset_after_the_ibgp_run_removes_bgp_ospf_the_hello_and_both_loopbacks(
         *setup_undo,
     ]
     assert labctl.reset_lines(running("R2")) == setup_undo
+
+
+def test_reset_after_the_bgp_vrf_run_removes_bgp_then_the_subinterface_and_loopback_then_the_vrf(root):
+    """Both routers as IOS would list them with this run's whole setup in place, R1 also with its
+    change (the subinterface shut down). BGP goes first, with its VRF address family inside it,
+    then the two interfaces in vrf NCV, and the VRF definition last, once nothing uses it."""
+    labctl = _load_script(root, "labctl.py")
+
+    def running(device, subinterface_extra=()):
+        n = 1 if device == "R1" else 2
+        config = _vrf_run_config(device, subinterface_extra)
+        loopback = [
+            "interface Loopback100",
+            " vrf forwarding NCV",
+            f" ip address 172.16.10{n}.1 255.255.255.0",
+        ]
+        # IOS lists the VRF definitions first, then the interfaces (loopbacks before Ethernet).
+        return "\n".join(config[:5] + loopback + config[5:])
+
+    for device, asn, extra in (("R1", 65001, [" shutdown"]), ("R2", 65002, [])):
+        assert labctl.reset_lines(running(device, extra)) == [
+            f"no router bgp {asn}",
+            "no interface Loopback100",
+            "no interface Ethernet0/1.100",
+            "no vrf definition NCV",
+        ]

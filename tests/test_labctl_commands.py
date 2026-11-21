@@ -19,6 +19,8 @@ from test_lab_scripts import (
     OSPF_INTERFACE_DEFAULT,
     OSPF_INTERFACE_FAST,
     OSPF_NOT_ENABLED,
+    SHOW_VRF,
+    VRF_NEIGHBOR,
     _load_script,
     _running,
 )
@@ -101,9 +103,10 @@ def _run(labctl, monkeypatch, argv, answers=None, fail_on=None):
 
 INTERFACE_BRIEF = "show ip interface brief"
 BGP_SUMMARY = "show bgp ipv4 unicast summary"
+VRF_SUMMARY = "show bgp vpnv4 unicast vrf NCV summary"
 OSPF = "show ip ospf neighbor"
 SHOWS = {
-    name: {INTERFACE_BRIEF: "Interface  IP-Address  Status", BGP_SUMMARY: "", OSPF: ""}
+    name: {INTERFACE_BRIEF: "Interface  IP-Address  Status", BGP_SUMMARY: "", VRF_SUMMARY: "", OSPF: ""}
     for name in ("R1", "R2")
 }
 
@@ -140,6 +143,9 @@ CONFIGURE_COMMANDS = {
     "ospf-block": (lambda m: {"R1": [m.ospf_block_lines()], "R2": []}, OSPF),
     "ospf-unblock": (lambda m: {"R1": [m.ospf_unblock_lines()], "R2": []}, OSPF),
     "setup-ibgp": (lambda m: {"R1": [m.ibgp_setup_lines("R1")], "R2": [m.ibgp_setup_lines("R2")]}, None),
+    "setup-vrf": (lambda m: {"R1": [m.vrf_setup_lines("R1")], "R2": [m.vrf_setup_lines("R2")]}, None),
+    "vrf-shut": (lambda m: {"R1": [["interface Ethernet0/1.100", "shutdown"]], "R2": []}, VRF_SUMMARY),
+    "vrf-noshut": (lambda m: {"R1": [["interface Ethernet0/1.100", "no shutdown"]], "R2": []}, VRF_SUMMARY),
 }
 
 
@@ -189,6 +195,24 @@ IBGP_DOWN = {
     "R2": BGP_HEADER + "10.255.255.1 4 65010       0       0      1   0    0 00:00:02 Active\n",
 }
 
+# The BGP VRF run's sessions, in vrf NCV's own summary: up with the peer's Loopback100 network
+# learned, up with nothing learned yet, and down (R1 Idle with its subinterface shut, R2 Active).
+VRF_UP = {
+    "R1": BGP_HEADER + "1.1.1.2      4 65002      12      12      3   0    0 00:00:31        1\n",
+    "R2": BGP_HEADER + "1.1.1.1      4 65001      12      12      3   0    0 00:00:31        1\n",
+}
+VRF_NOTHING_LEARNED = {name: output.replace("        1\n", "        0\n") for name, output in VRF_UP.items()}
+VRF_DOWN = {
+    "R1": BGP_HEADER + "1.1.1.2      4 65002       0       0      1   0    0 00:00:04 Idle\n",
+    "R2": BGP_HEADER + "1.1.1.1      4 65001       0       0      1   0    0 00:00:02 Active\n",
+}
+# `show vrf` with vrf NCV still there (as while IOS deletes it after reset) and without it.
+VRF_LISTED = {"R1": SHOW_VRF, "R2": SHOW_VRF.replace("65001:", "65002:")}
+VRF_GONE = {
+    name: "\n".join(line for line in output.splitlines() if not line.strip().startswith(("NCV ", "Lo100")))
+    for name, output in VRF_LISTED.items()
+}
+
 # command -> (the show it polls, output that satisfies it, output that never does)
 WAIT_COMMANDS = {
     "wait-full": (OSPF, OSPF_FULL, OSPF_GONE),
@@ -198,6 +222,9 @@ WAIT_COMMANDS = {
     "wait-ospf-lost": (OSPF, OSPF_LOST, OSPF_FULL),
     "wait-ibgp-up": (BGP_SUMMARY, IBGP_UP, IBGP_DOWN),
     "wait-ibgp-down": (BGP_SUMMARY, IBGP_DOWN, IBGP_UP),
+    "wait-vrf-gone": ("show vrf", VRF_GONE, VRF_LISTED),
+    "wait-vrf-bgp-up": (VRF_SUMMARY, VRF_UP, VRF_DOWN),
+    "wait-vrf-bgp-down": (VRF_SUMMARY, VRF_DOWN, VRF_UP),
 }
 
 
@@ -252,11 +279,23 @@ def test_the_ibgp_waits_ignore_the_ebgp_peers(labctl, monkeypatch):
     assert _run(labctl, monkeypatch, ["wait-bgp-up", "0"], _answers(BGP_SUMMARY, IBGP_UP))[0] == 1
 
 
-def _neighbors(r1_output, r2_output, peers=None):
+def test_wait_vrf_bgp_up_waits_for_a_learned_prefix_in_the_vrf_table(labctl, monkeypatch, capsys):
+    """The VRF waits read vrf NCV's summary only: the global sessions being up says nothing about
+    the VRF ones, and an Established VRF session that has learned nothing is not up yet."""
+    nothing_learned = _answers(VRF_SUMMARY, VRF_NOTHING_LEARNED)
+    assert _run(labctl, monkeypatch, ["wait-vrf-bgp-up", "0"], nothing_learned)[0] == 1
+    assert "{'R1': 0, 'R2': 0}" in capsys.readouterr().out
+    assert _run(labctl, monkeypatch, ["wait-vrf-bgp-down", "0"], nothing_learned)[0] == 1
+    # wait-bgp-up asks only for the global summary; a VRF answer there would not count.
+    code, devices = _run(labctl, monkeypatch, ["wait-bgp-up"], _answers(BGP_SUMMARY, BGP_UP))
+    assert code == 0 and devices["R1"].executed == [BGP_SUMMARY]
+
+
+def _neighbors(r1_output, r2_output, peers=None, command="show bgp ipv4 unicast neighbors"):
     peers = peers or {"R1": "1.1.1.2", "R2": "1.1.1.1"}
     return {
-        "R1": {f"show bgp ipv4 unicast neighbors {peers['R1']}": r1_output},
-        "R2": {f"show bgp ipv4 unicast neighbors {peers['R2']}": r2_output},
+        "R1": {f"{command} {peers['R1']}": r1_output},
+        "R2": {f"{command} {peers['R2']}": r2_output},
     }
 
 
@@ -280,6 +319,25 @@ def test_check_ibgp_hold_time_reads_the_loopback_peers(labctl, monkeypatch, caps
     stale = _neighbors(NEIGHBOR_STALE_TIMERS, NEIGHBOR_FAST_TIMERS, IBGP_PEERS)
     assert _run(labctl, monkeypatch, ["check-ibgp-hold-time"], stale)[0] == 1
     assert "`clear ip bgp 10.255.255.2` on R1" in capsys.readouterr().out
+
+
+VRF_NEIGHBORS = "show bgp vpnv4 unicast vrf NCV neighbors"
+
+
+def test_check_vrf_hold_time_reads_the_vrf_neighbors_and_names_the_vrf_clear(labctl, monkeypatch, capsys):
+    fast = _neighbors(VRF_NEIGHBOR, VRF_NEIGHBOR, command=VRF_NEIGHBORS)
+    code, devices = _run(labctl, monkeypatch, ["check-vrf-hold-time"], fast)
+    assert code == 0
+    assert devices["R1"].executed == ["show bgp vpnv4 unicast vrf NCV neighbors 1.1.1.2"]
+    assert devices["R2"].executed == ["show bgp vpnv4 unicast vrf NCV neighbors 1.1.1.1"]
+    assert "R1: negotiated (hold, keepalive) = (9, 3)" in capsys.readouterr().out
+    stale = _neighbors(VRF_NEIGHBOR, NEIGHBOR_STALE_TIMERS, command=VRF_NEIGHBORS)
+    assert _run(labctl, monkeypatch, ["check-vrf-hold-time"], stale)[0] == 1
+    assert "`clear ip bgp vrf NCV 1.1.1.2` on R1" in capsys.readouterr().out
+    # The global check is unchanged: same command, same advice.
+    stale = _neighbors(NEIGHBOR_STALE_TIMERS, NEIGHBOR_FAST_TIMERS)
+    assert _run(labctl, monkeypatch, ["check-hold-time"], stale)[0] == 1
+    assert "`clear ip bgp 1.1.1.2` on R1" in capsys.readouterr().out
 
 
 OSPF_INTERFACE = "show ip ospf interface Ethernet0/1"
@@ -327,6 +385,15 @@ def test_reset_configures_only_the_router_that_needs_it(root, labctl, monkeypatc
         (["wait-ibgp-up"], _answers(BGP_SUMMARY, IBGP_UP), {"R2": "execute"}),
         (["check-ibgp-hold-time"], _neighbors(NEIGHBOR_FAST_TIMERS, "", IBGP_PEERS), {"R2": "execute"}),
         (["reset"], {"R1": {"show running-config": ""}}, {"R2": "execute"}),
+        (["wait-vrf-gone"], _answers("show vrf", VRF_GONE), {"R2": "execute"}),
+        (["setup-vrf"], {}, {"R2": "configure"}),
+        (["wait-vrf-bgp-up"], _answers(VRF_SUMMARY, VRF_UP), {"R2": "execute"}),
+        (
+            ["check-vrf-hold-time"],
+            _neighbors(VRF_NEIGHBOR, "", command=VRF_NEIGHBORS),
+            {"R2": "execute"},
+        ),
+        (["vrf-shut"], SHOWS, {"R1": "configure"}),
     ],
 )
 def test_a_command_that_raises_still_disconnects_every_router_it_reached(
@@ -338,17 +405,19 @@ def test_a_command_that_raises_still_disconnects_every_router_it_reached(
 
 
 def test_every_command_in_the_table_is_exercised_here(labctl):
-    checks = {"check-hold-time", "check-dead-time", "check-ibgp-hold-time", "reset"}
+    checks = {"check-hold-time", "check-dead-time", "check-ibgp-hold-time", "check-vrf-hold-time", "reset"}
     assert set(CONFIGURE_COMMANDS) | set(WAIT_COMMANDS) | checks == set(labctl.COMMANDS)
 
 
-def test_usage_is_the_old_text_with_the_dead_timer_and_ibgp_commands_and_reset_added(labctl):
+def test_usage_is_the_old_text_with_the_dead_timer_ibgp_and_vrf_commands_and_reset_added(labctl):
     assert labctl.USAGE == (
         "usage: labctl.py setup-ospf | shut | noshut | wait-full [seconds] | wait-gone [seconds]"
         " | setup-bgp | bgp-shut | bgp-noshut | wait-bgp-up [seconds] | wait-bgp-down [seconds]"
         " | setup-bgp-fast | check-hold-time | bgp-block | bgp-unblock"
         " | setup-ospf-fast | check-dead-time | ospf-block | ospf-unblock | wait-ospf-lost [seconds]"
         " | setup-ibgp | wait-ibgp-up [seconds] | wait-ibgp-down [seconds] | check-ibgp-hold-time"
+        " | wait-vrf-gone [seconds] | setup-vrf | wait-vrf-bgp-up [seconds] | wait-vrf-bgp-down [seconds]"
+        " | check-vrf-hold-time | vrf-shut | vrf-noshut"
         " | reset"
     )
 

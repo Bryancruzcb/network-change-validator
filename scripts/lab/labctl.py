@@ -23,6 +23,12 @@ Usage, with the logins in the NCV_* environment (the run-*.sh scripts prompt for
   labctl.py wait-ibgp-up [seconds]    poll until both iBGP sessions are Established and have learned a prefix
   labctl.py wait-ibgp-down [seconds]  poll until neither iBGP session is Established
   labctl.py check-ibgp-hold-time      exit 1 unless both iBGP sessions negotiated the 9 s hold time
+  labctl.py wait-vrf-gone [seconds]   poll until neither router lists vrf NCV (IOS deletes a VRF slowly)
+  labctl.py setup-vrf                 add eBGP in vrf NCV on Ethernet0/1.100 to setup-bgp-fast's BGP process
+  labctl.py wait-vrf-bgp-up [seconds]  poll until both vrf NCV sessions are Established and have a prefix
+  labctl.py wait-vrf-bgp-down [seconds]  poll until neither vrf NCV session is Established
+  labctl.py check-vrf-hold-time       exit 1 unless both vrf NCV sessions negotiated the 9 s hold time
+  labctl.py vrf-shut | vrf-noshut     shutdown / no shutdown on R1 Ethernet0/1.100
   labctl.py reset                     remove what these scripts add from R1 and R2, back to what ships
 
 The testbed is testbeds/lab.yaml under the repository root, wherever this is run from, or the
@@ -84,6 +90,23 @@ IBGP_PREFIXES = {name: ip_interface(loopbacks["Loopback1"]).network for name, lo
 IBGP_PEERS = {
     name: str(ip_interface(LOOPBACKS[other]["Loopback0"]).ip) for name, other in (("R1", "R2"), ("R2", "R1"))
 }
+# The BGP VRF run: a second eBGP session between the same two routers, inside vrf NCV on a
+# dot1Q subinterface of the link, next to the hold-timer run's session in the global table.
+VRF = "NCV"
+VRF_VLAN = 100
+VRF_INTERFACE = "Ethernet0/1.100"
+# The subinterface reuses the link's own addresses (each router's address is the other's `peer`
+# in BGP). That is the point: the same neighbor address is then a BGP peer twice on each router,
+# once in each table, and only the VRF tells the two sessions apart.
+VRF_ADDRESSES = {name: BGP[other]["peer"] for name, other in (("R1", "R2"), ("R2", "R1"))}
+# What each router originates into the VRF session: its Loopback100 subnet, in vrf NCV only.
+VRF_LOOPBACKS = {"R1": "172.16.101.1/24", "R2": "172.16.102.1/24"}
+# IOS needs a route distinguisher before BGP takes a VRF address family; nothing is imported or
+# exported between tables, so no route target is set.
+VRF_RD = {name: f"{cfg['asn']}:{VRF_VLAN}" for name, cfg in BGP.items()}
+# `show bgp ipv4 unicast ...` lists only the global table; the VRF session is in the VPNv4 one.
+VRF_BGP_SUMMARY = f"show bgp vpnv4 unicast vrf {VRF} summary"
+VRF_BGP_NEIGHBORS = f"show bgp vpnv4 unicast vrf {VRF} neighbors"
 # What the sandbox ships in Ethernet0/3, the one spare port. reset puts it back when a run has
 # used it; the order IOS lists the two lines in does not matter.
 SHIPPED_ETHERNET0_3 = ("no ip address", "shutdown")
@@ -163,6 +186,13 @@ def ospf_interface_timers(output: str):
     return None
 
 
+def vrf_listed(output: str, vrf: str) -> bool:
+    """From `show vrf`: whether `vrf` has a row, its name being the row's first field. A VRF with
+    several interfaces continues on lines holding one interface name each, which a row, with
+    at least its name and route distinguisher, cannot be mistaken for."""
+    return any(len(fields) > 1 and fields[0] == vrf for fields in map(str.split, output.splitlines()))
+
+
 def ospf_setup_lines(name: str, hello=None) -> list[str]:
     """The configuration setup-ospf sends to one router: OSPF area 0 on the R1-R2 link. With
     `hello` (seconds), setup-ospf-fast first sets that hello interval on the link, so the
@@ -217,6 +247,49 @@ def ibgp_setup_lines(name: str) -> list[str]:
     peer = IBGP_PEERS[name]
     bgp = _bgp_lines(name, IBGP_ASN, peer, IBGP_ASN, IBGP_PREFIXES[name], FAST_TIMERS, "Loopback0")
     return addresses + ospf + bgp
+
+
+def vrf_setup_lines(name: str) -> list[str]:
+    """The configuration setup-vrf sends to one router, added to setup-bgp-fast's BGP process:
+    vrf NCV, the subinterface and Loopback100 in it, and the VRF session with the hold-timer
+    run's timers. The order is forced: the route distinguisher before BGP's VRF address family,
+    the dot1Q tag before any address on the subinterface, and `vrf forwarding` before
+    `ip address`, since it strips an address already there and the global table would refuse
+    the link's own subnet a second time."""
+    cfg, peer = BGP[name], BGP[name]["peer"]
+    link = ip_interface(f"{VRF_ADDRESSES[name]}/24")
+    loopback = ip_interface(VRF_LOOPBACKS[name])
+    return [
+        f"vrf definition {VRF}",
+        f"rd {VRF_RD[name]}",
+        "address-family ipv4",
+        "exit-address-family",
+        f"interface {VRF_INTERFACE}",
+        f"encapsulation dot1Q {VRF_VLAN}",
+        f"vrf forwarding {VRF}",
+        f"ip address {link.ip} {link.netmask}",
+        "interface Loopback100",
+        f"vrf forwarding {VRF}",
+        f"ip address {loopback.ip} {loopback.netmask}",
+        f"router bgp {cfg['asn']}",
+        f"address-family ipv4 vrf {VRF}",
+        f"neighbor {peer} remote-as {cfg['peer_asn']}",
+        f"neighbor {peer} timers {FAST_TIMERS[0]} {FAST_TIMERS[1]}",
+        f"neighbor {peer} activate",
+        f"neighbor {peer} soft-reconfiguration inbound",
+        f"network {loopback.network.network_address} mask {loopback.netmask}",
+        "exit-address-family",
+    ]
+
+
+def vrf_shut_lines() -> list[str]:
+    """The BGP VRF run's change on R1: the VRF's subinterface goes down, the link stays up."""
+    return [f"interface {VRF_INTERFACE}", "shutdown"]
+
+
+def vrf_noshut_lines() -> list[str]:
+    """The undo for vrf_shut_lines."""
+    return [f"interface {VRF_INTERFACE}", "no shutdown"]
 
 
 def _block_lines(acl: str, entries: list[str]) -> list[str]:
@@ -328,14 +401,22 @@ def ospf_check(dev, name):
     return ospf_neighbor_state(dev.execute("show ip ospf neighbor"), OSPF_PEERS[name])
 
 
-def bgp_check(peers, read=bgp_session_state):
-    """A wait check on the global BGP table: `read` applied to each router's summary for its
-    peer in `peers`. By default it reads whether the session is Established."""
+_BGP_SUMMARY = "show bgp ipv4 unicast summary"
+
+
+def bgp_check(peers, read=bgp_session_state, summary=_BGP_SUMMARY):
+    """A wait check on one BGP table: `read` applied to each router's `summary` output for its
+    peer in `peers`. By default it reads whether the session in the global table is
+    Established; the VRF table prints its summary in the same format."""
 
     def check(dev, name):
-        return read(dev.execute("show bgp ipv4 unicast summary"), peers[name])
+        return read(dev.execute(summary), peers[name])
 
     return check
+
+
+def vrf_check(dev, name):
+    return vrf_listed(dev.execute("show vrf"), VRF)
 
 
 def connect(tb, name):
@@ -385,20 +466,21 @@ def show_on(tb, name, command) -> str:
         dev.disconnect()
 
 
-def check_hold_time(tb, peers) -> int:
-    """Exit 0 only if each router's session to its peer in `peers` runs FAST_TIMERS. Timers
-    change at the next session start, so a session that was already up when the timers were
-    configured keeps the 180 s default."""
+def check_hold_time(tb, peers, neighbors="show bgp ipv4 unicast neighbors", clear="clear ip bgp") -> int:
+    """Exit 0 only if each router's session to its peer in `peers` runs FAST_TIMERS, read from
+    `<neighbors> <peer>`; `clear` is the command the advice names for resetting R1's session.
+    Timers change at the next session start, so a session that was already up when the timers
+    were configured keeps the 180 s default."""
     keepalive, hold = FAST_TIMERS
     ok = True
     for name, peer in peers.items():
-        got = bgp_negotiated_timers(show_on(tb, name, f"show bgp ipv4 unicast neighbors {peer}"))
+        got = bgp_negotiated_timers(show_on(tb, name, f"{neighbors} {peer}"))
         print(f"{name}: negotiated (hold, keepalive) = {got}")
         ok = ok and got == (hold, keepalive)
     if not ok:
         print(
             f"expected hold {hold} s and keepalive {keepalive} s on both peers; reset the session with "
-            f"`clear ip bgp {peers['R1']}` on R1 or use a fresh reservation"
+            f"`{clear} {peers['R1']}` on R1 or use a fresh reservation"
         )
     return 0 if ok else 1
 
@@ -470,7 +552,6 @@ def _wait_for(names, check, want, label):
 _LINK = "interface Ethernet0/1"  # the R1-R2 link
 _R1_PEER = f"neighbor {BGP['R1']['peer']} shutdown"
 _R1_BGP = f"router bgp {BGP['R1']['asn']}"
-_BGP_SUMMARY = "show bgp ipv4 unicast summary"
 _OSPF_NEIGHBORS = "show ip ospf neighbor"
 
 # name -> (what the usage line shows, run(testbed, seconds) -> exit code), in usage order.
@@ -539,6 +620,41 @@ COMMANDS: dict[str, tuple[str, Callable[[Any, int], int]]] = {
         ),
     ),
     "check-ibgp-hold-time": ("check-ibgp-hold-time", lambda tb, seconds: check_hold_time(tb, IBGP_PEERS)),
+    # reset removes vrf NCV, and IOS finishes deleting a VRF in the background, refusing its
+    # route distinguisher until then, so setup-vrf right after reset would fail.
+    "wait-vrf-gone": (
+        "wait-vrf-gone [seconds]",
+        _wait_for(
+            ROUTER_IDS, vrf_check, lambda listed: not listed, f"vrf {VRF} to be deleted on both routers"
+        ),
+    ),
+    "setup-vrf": ("setup-vrf", _setup_on_both(vrf_setup_lines)),
+    # As with the iBGP run: the intent names the prefix each VRF session learns, so the wait is
+    # for a learned prefix, not for Established alone.
+    "wait-vrf-bgp-up": (
+        "wait-vrf-bgp-up [seconds]",
+        _wait_for(
+            BGP,
+            bgp_check(EBGP_PEERS, bgp_prefixes_received, VRF_BGP_SUMMARY),
+            lambda count: count is not None and count >= 1,
+            f"both vrf {VRF} BGP sessions Established with a prefix learned",
+        ),
+    ),
+    "wait-vrf-bgp-down": (
+        "wait-vrf-bgp-down [seconds]",
+        _wait_for(
+            BGP,
+            bgp_check(EBGP_PEERS, summary=VRF_BGP_SUMMARY),
+            lambda s: s is not True,
+            f"both vrf {VRF} BGP sessions to leave Established",
+        ),
+    ),
+    "check-vrf-hold-time": (
+        "check-vrf-hold-time",
+        lambda tb, seconds: check_hold_time(tb, EBGP_PEERS, VRF_BGP_NEIGHBORS, f"clear ip bgp vrf {VRF}"),
+    ),
+    "vrf-shut": ("vrf-shut", _send("R1", vrf_shut_lines(), VRF_BGP_SUMMARY)),
+    "vrf-noshut": ("vrf-noshut", _send("R1", vrf_noshut_lines(), VRF_BGP_SUMMARY)),
     "reset": ("reset", lambda tb, seconds: reset(tb)),
 }
 USAGE = "usage: labctl.py " + " | ".join(usage for usage, _ in COMMANDS.values())

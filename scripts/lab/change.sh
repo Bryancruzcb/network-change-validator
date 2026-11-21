@@ -5,8 +5,9 @@
 #        change.sh bgp-apply|bgp-undo  neighbor 1.1.1.2 shutdown / no shutdown on R1
 #        change.sh holdtimer-apply|holdtimer-undo  add / remove the ACL on R1 that drops BGP from R2
 #        change.sh deadtimer-apply|deadtimer-undo  add / remove the ACL on R1 that drops OSPF from R2
+#        change.sh vrf-apply|vrf-undo  shutdown / no shutdown on R1 Ethernet0/1.100 (vrf NCV)
 set -uo pipefail
-usage="usage: change.sh apply|undo|bgp-apply|bgp-undo|holdtimer-apply|holdtimer-undo|deadtimer-apply|deadtimer-undo"
+usage="usage: change.sh apply|undo|bgp-apply|bgp-undo|holdtimer-apply|holdtimer-undo|deadtimer-apply|deadtimer-undo|vrf-apply|vrf-undo"
 action="${1:?$usage}"
 case "$action" in
   apply) cmd=shut ;;
@@ -17,6 +18,8 @@ case "$action" in
   holdtimer-undo) cmd=bgp-unblock ;;
   deadtimer-apply) cmd=ospf-block ;;
   deadtimer-undo) cmd=ospf-unblock ;;
+  vrf-apply) cmd=vrf-shut ;;
+  vrf-undo) cmd=vrf-noshut ;;
   *) echo "$usage"; exit 2 ;;
 esac
 here=$(cd "$(dirname "$0")" && pwd)
