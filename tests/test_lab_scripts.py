@@ -15,10 +15,12 @@ through ncv's own adapter from Genie-shaped data, and the predicted change findi
 from the scripts/lab/expect-<run>.txt file each run script checks its report against. The last
 tests pin what `labctl.py reset` would send, on the published configs and on ones built here;
 tests/test_labctl_commands.py runs the commands on a fake lab. Then come the SSH testbed
-example, the read-only probe, and the order of the prepared SSH path run. The very last ones
+example, the read-only probe, and the order of the prepared SSH path run. The next ones
 are the prepared second-platform run: R1's side of the R3 link, the three per-platform draft
 intents, the prediction on synthetic snapshots whose R3 records are shaped as each platform's
-Genie data writes them, the R3 testbed example, and the run script's order.
+Genie data writes them, the R3 testbed example, and the run script's order. After them, the
+session script: every name it knows names a script that exists, and every prepared run is one
+of its names, so a new run cannot be forgotten; and every script here has a row in the README.
 """
 
 from __future__ import annotations
@@ -1726,3 +1728,80 @@ def test_the_second_platform_run_checks_its_platform_first_and_adds_r3_after_the
     for platform in PLATFORMS:
         assert _second_platform_intent(root, platform).is_file()
         assert (root / "scripts" / "lab" / f"expect-second-platform-{platform}.txt").is_file()
+
+
+# run-session.sh runs the prepared runs after asking for the logins once. Its `case` is the one
+# place a session name meets its script, so a run added here and forgotten there would never run.
+
+BRANCH_RUNS = (
+    "probe.sh",
+    "run-ospf-deadtimer.sh",
+    "run-ibgp.sh",
+    "run-bgp-vrf.sh",
+    "run-ssh-path.sh",
+    "run-second-platform.sh",
+)
+
+
+def _session_map(root):
+    """{session name pattern: script} from session_script's case in run-session.sh."""
+    text = (root / "scripts" / "lab" / "run-session.sh").read_text(encoding="utf-8")
+    body = text[text.index("session_script() {") :]
+    body = body[: body.index("\n}\n")]
+    return dict(re.findall(r'^\s+([\w:*-]+)\) echo "([\w.-]+)', body, re.M))
+
+
+def test_every_session_name_names_a_script_that_exists_and_every_prepared_run_has_a_name(root):
+    lab = root / "scripts" / "lab"
+    names = _session_map(root)
+    assert set(names) == {
+        "probe",
+        "ospf-deadtimer",
+        "ibgp",
+        "bgp-vrf",
+        "ssh-path",
+        "second-platform:*",
+        "reset",
+    }
+    for script in names.values():
+        assert (lab / script).is_file(), script
+    sourcing = {
+        path.name for path in lab.glob("*.sh") if '\n. "$here/_lib.sh"\n' in path.read_text(encoding="utf-8")
+    }
+    assert sourcing - {"run-session.sh"} == set(BRANCH_RUNS)  # a new run script must be added here too
+    assert set(BRANCH_RUNS) <= set(names.values())
+    for name, script in names.items():
+        if script.endswith(".sh"):  # the session finds each run's log by the name it gives lab_init
+            run_name = name.removesuffix(":*")
+            assert f"\nlab_init {run_name}\n" in (lab / script).read_text(encoding="utf-8"), script
+
+
+def test_the_session_defaults_to_the_runs_that_need_only_the_three_logins_and_never_traces(root):
+    text = (root / "scripts" / "lab" / "run-session.sh").read_text(encoding="utf-8")
+    assert "names=(probe ospf-deadtimer ibgp bgp-vrf reset)\n" in text
+    assert "set -x" not in text
+    order = [
+        'session_script "$name" >/dev/null',
+        '"$here/cml_lab.py" platform-os',
+        "\nlab_vpn_up\n",
+        "\nlab_logins\n",
+        "lab_ssh_login",
+        '"$here/cml_lab.py" check-login',
+        "trap on_interrupt INT",
+        'NCV_STAMP="$stamp-$n" bash "$here/$script"',
+    ]
+    positions = [text.index(step) for step in order]
+    assert positions == sorted(positions)
+    assert re.findall(r"\$\{?NCV_\w+_PASS", text) == []  # no line ever expands a password
+
+
+def test_every_lab_script_has_a_readme_row_and_every_row_names_a_file(root):
+    lab = root / "scripts" / "lab"
+    readme = (lab / "README.md").read_text(encoding="utf-8")
+    table = readme[readme.index("| Script | What it does |") :].split("\n\n")[0]
+    rows = [line for line in table.splitlines() if line.startswith("| `")]
+    named = [name for row in rows for name in re.findall(r"`([^`]+)`", row.split(" | ")[0])]
+    for name in named:
+        assert list(lab.glob(name.replace("<platform>", "*"))), name
+    scripts = {path.name for path in lab.iterdir() if path.suffix in (".sh", ".py")}
+    assert scripts <= set(named), sorted(scripts - set(named))

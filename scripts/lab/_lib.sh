@@ -14,7 +14,7 @@
 #   cd to the repository root, refuse with exit 2 unless the sandbox VPN (tun0) is up and the
 #   testbed file exists (naming the example to copy), then ask for each login that is unset or
 #   empty: NCV_CML_USER (default developer), NCV_CML_PASS, and NCV_LAB_PASS, plus NCV_SSH_USER
-#   (default cisco) and NCV_SSH_PASS when the testbed mentions NCV_SSH_PASS. So a session script
+#   (default cisco) and NCV_SSH_PASS when the testbed mentions NCV_SSH_PASS. So run-session.sh
 #   can ask once and run several runs. Sets py (NCV_PYTHON or .venv/bin/python), testbed
 #   (NCV_TESTBED or testbeds/lab.yaml, exported so labctl.py uses the same file), stamp
 #   (NCV_STAMP, or the time to the minute), run=captures/<run-name>-<stamp>,
@@ -28,6 +28,8 @@
 #   (the passwords) nothing is echoed. It reads straight into the variable and tests it with
 #   ${!name:+x}, so `bash -x` never prints a value. Closed input with nothing typed is exit 2,
 #   not an endless prompt.
+# lab_vpn_up                           refuse with exit 2 unless the sandbox VPN (tun0) is up
+# lab_logins                           lab_ask for NCV_CML_USER, NCV_CML_PASS, and NCV_LAB_PASS
 # lab_ssh_login                        lab_ask for NCV_SSH_USER (default cisco) and NCV_SSH_PASS
 # lab_tcp <host> <port>
 #   A TCP connect test with a 3 s timeout. Logs "<host> port <port>: open", "refused", or
@@ -63,8 +65,8 @@
 # lab_finish
 #   Logs where the captures and reports are and warns, without printing it, when a password
 #   value appears in the log. Then exits 0 when every expect_exit and expect_findings passed,
-#   and 3 when one did not, so a session script can tell a run that matched its prediction
-#   from one that finished but did not. Exit 1 stays "stopped early" and exit 2 "could not
+#   and 3 when one did not, so run-session.sh can tell a run whose exits and findings came out
+#   as predicted from one that finished but did not. Exit 1 stays "stopped early" and exit 2 "could not
 #   start", as in the existing scripts.
 # lab_not_reachable <text>
 #   Logs the text and exits 4: a run whose devices do not answer on the path it tests
@@ -96,6 +98,16 @@ lab_ask() {
   export "$name"
 }
 
+lab_vpn_up() {
+  ip -brief addr show tun0 >/dev/null 2>&1 || { echo "The sandbox VPN is not connected. Start openconnect first."; exit 2; }
+}
+
+lab_logins() {
+  lab_ask NCV_CML_USER "CML username" developer
+  lab_ask NCV_CML_PASS "CML password (the developer one)"
+  lab_ask NCV_LAB_PASS "Router enable password (the cisco one)"
+}
+
 lab_ssh_login() {
   lab_ask NCV_SSH_USER "Router SSH username" cisco
   lab_ask NCV_SSH_PASS "Router SSH password"
@@ -105,7 +117,7 @@ lab_init() {
   local name=${1:?lab_init needs a run name}
   here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
   cd "$here/../.." || exit 2
-  ip -brief addr show tun0 >/dev/null 2>&1 || { echo "The sandbox VPN is not connected. Start openconnect first."; exit 2; }
+  lab_vpn_up
   testbed="${NCV_TESTBED:-testbeds/lab.yaml}"
   if [ ! -f "$testbed" ]; then
     if [ "$testbed" = testbeds/lab.yaml ]; then
@@ -116,9 +128,7 @@ lab_init() {
     exit 2
   fi
   export NCV_TESTBED="$testbed"
-  lab_ask NCV_CML_USER "CML username" developer
-  lab_ask NCV_CML_PASS "CML password (the developer one)"
-  lab_ask NCV_LAB_PASS "Router enable password (the cisco one)"
+  lab_logins
   if grep -q NCV_SSH_PASS "$testbed"; then lab_ssh_login; fi
 
   py="${NCV_PYTHON:-.venv/bin/python}"

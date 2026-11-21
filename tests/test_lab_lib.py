@@ -5,8 +5,11 @@ Each test sources _lib.sh in a fresh bash and sets by hand the variables lab_ini
 lab_init itself is never called. Commands that would reach the lab (`ctl`, `cap`) are replaced
 by shell functions that log what they were asked. The last tests run run-second-platform.sh
 itself up to lab_init, with `ip` replaced so the VPN check fails, to pin the checks it makes
-before asking for any login. The module is skipped on Windows, which has
-no dependable bash on PATH; the Ubuntu CI jobs run it.
+before asking for any login. The very last ones run run-session.sh from a copy of scripts/lab
+whose run scripts are stand-ins that log how they were called and exit as a test tells them,
+with an interpreter stand-in for labctl.py and cml_lab.py (only `platform-os` reaches the real
+cml_lab.py, which reads its platform table without a login or a call). The module is skipped
+on Windows, which has no dependable bash on PATH; the Ubuntu CI jobs run it.
 """
 
 from __future__ import annotations
@@ -339,3 +342,199 @@ def test_the_second_platform_run_goes_on_to_lab_init_when_the_testbed_fits(root,
     assert result.returncode == 2
     assert result.stderr == ""
     assert result.stdout == "The sandbox VPN is not connected. Start openconnect first.\n"
+
+
+# run-session.sh: one login for a whole session. Each stand-in run script logs one line to
+# $T_CALLS (its name, its arguments, its NCV_STAMP, and which logins it found set), writes two
+# step lines to the log lab_init would give it, and exits with the code in $T_CODES/<name>.
+SESSION_RUNS = {
+    "probe.sh": "probe",
+    "run-ospf-deadtimer.sh": "ospf-deadtimer",
+    "run-ibgp.sh": "ibgp",
+    "run-bgp-vrf.sh": "bgp-vrf",
+    "run-ssh-path.sh": "ssh-path",
+    "run-second-platform.sh": "second-platform",
+}
+STAND_IN_RUN = """#!/usr/bin/env bash
+set_logins="$NCV_CML_USER/${{NCV_CML_PASS:+set}}/${{NCV_LAB_PASS:+set}}/${{NCV_SSH_PASS:+set}}"
+echo "{run} $* stamp=$NCV_STAMP logins=$set_logins" >> "$T_CALLS"
+mkdir -p output/lab
+log="output/lab/{run}-$NCV_STAMP.log"
+printf '== 12:00:00 1/2 setup\\n== 12:00:01 2/2 the step it stopped at\\n' >> "$log"
+[ ! -f "$T_CODES/{run}-interrupt" ] || kill -INT "$PPID"
+[ ! -f "$T_CODES/{run}" ] || exit "$(cat "$T_CODES/{run}")"
+exit 0
+"""
+STAND_IN_PYTHON = """#!/usr/bin/env bash
+script=$(basename "$1"); shift
+echo "py $script $*" >> "$T_CALLS"
+code() { if [ -f "$T_CODES/$1" ]; then exit "$(cat "$T_CODES/$1")"; fi; exit 0; }
+case "$script $1" in
+  "cml_lab.py platform-os") exec "$T_REAL_PY" "$T_REAL_LAB/cml_lab.py" "$@" ;;
+  "cml_lab.py check-login") echo "the CML login was accepted"; code check-login ;;
+  "labctl.py reset") echo "R1: nothing to reset"; code reset ;;
+esac
+exit 99
+"""
+TYPED = "\n\nfirst-secret\nenable-secret\n"  # the default CML user, an empty password, then both
+SECRETS = ("first-secret", "enable-secret", "ssh-secret")
+PREDICTED_EXITS_AND_FINDINGS = (
+    "every comparison gave the predicted exit and the change comparison gave exactly the predicted findings"
+)
+
+
+def _session(root, tmp_path, names, codes=None, stdin=TYPED, trace=False, vpn=True):
+    """Run a copy of run-session.sh with stand-ins; returns (process, calls, session log)."""
+    lab = tmp_path / "scripts" / "lab"
+    lab.mkdir(parents=True)
+    for name in ("run-session.sh", "_lib.sh"):
+        shutil.copy(root / "scripts" / "lab" / name, lab / name)
+    for script, run in SESSION_RUNS.items():
+        (lab / script).write_text(STAND_IN_RUN.format(run=run), encoding="utf-8")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, text in (("ip", f"#!/bin/sh\nexit {0 if vpn else 1}\n"), ("python", STAND_IN_PYTHON)):
+        (bin_dir / name).write_text(text, encoding="utf-8")
+        (bin_dir / name).chmod(0o755)
+    code_dir = tmp_path / "codes"
+    code_dir.mkdir()
+    for name, code in (codes or {}).items():
+        (code_dir / name).write_text(str(code), encoding="utf-8")
+    calls = tmp_path / "calls.txt"
+    env = {key: value for key, value in os.environ.items() if key not in (*LOGINS, "NCV_TESTBED")}
+    env.update(
+        PATH=f"{bin_dir}{os.pathsep}{env['PATH']}",
+        NCV_PYTHON=str(bin_dir / "python"),
+        NCV_STAMP="t",
+        T_CALLS=str(calls),
+        T_CODES=str(code_dir),
+        T_REAL_PY=sys.executable,
+        T_REAL_LAB=str(root / "scripts" / "lab"),
+    )
+    command = ["bash", *(["-x"] if trace else []), str(lab / "run-session.sh"), *names]
+    result = subprocess.run(command, input=stdin, capture_output=True, text=True, env=env, timeout=60)
+    session_log = tmp_path / "output" / "lab" / "session-t.log"
+    logged = session_log.read_text(encoding="utf-8") if session_log.exists() else ""
+    called = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
+    return result, [line for line in called if "platform-os" not in line], logged
+
+
+def _row(text, name, code):
+    """The table line for one run: its name, its exit, and the meaning that follows them."""
+    return next(line for line in text.splitlines() if line.split()[:2] == [name, str(code)])
+
+
+@pytest.mark.parametrize(
+    "names",
+    [["frobnicate"], ["probe", "second-platform:csr1000v"], ["second-platform"], ["second-platform:"]],
+)
+def test_the_session_refuses_an_unknown_name_or_platform_before_any_prompt(root, tmp_path, names):
+    result, calls, logged = _session(root, tmp_path, names)
+    assert result.returncode == 2
+    assert "usage: run-session.sh [name ...]" in result.stderr
+    assert "password" not in result.stderr.lower()
+    assert (calls, logged) == ([], "")
+
+
+def test_the_session_asks_once_asks_again_for_an_empty_password_and_runs_the_default_order(root, tmp_path):
+    result, calls, logged = _session(root, tmp_path, [])
+    assert result.returncode == 0
+    # read shows no prompt when the input is not a terminal, but each hidden answer ends with a
+    # newline on stderr: two for the CML password (the empty one, then the real one), one for
+    # the enable password, and none for an SSH password nobody named a run for.
+    assert result.stderr == "\n" * 3
+    logins = "logins=developer/set/set/"
+    assert calls == [
+        "py cml_lab.py check-login",
+        f"probe  stamp=t-1 {logins}",
+        f"ospf-deadtimer  stamp=t-2 {logins}",
+        f"ibgp  stamp=t-3 {logins}",
+        f"bgp-vrf  stamp=t-4 {logins}",
+        "py labctl.py reset",
+    ]
+    assert "the probe finished: read its three answers in its log" in _row(logged, "probe", 0)
+    for name in ("ospf-deadtimer", "ibgp", "bgp-vrf"):
+        assert _row(logged, name, 0).endswith(PREDICTED_EXITS_AND_FINDINGS)
+    assert "log: output/lab/ibgp-t-3.log" in logged
+    assert "log: output/lab/session-t.log" in logged  # reset's output is in the session log
+    assert "R1: nothing to reset" in logged
+    assert "matched" not in logged
+    assert logged.split("session finished")[1] in result.stdout  # the table is on the screen too
+    for secret in SECRETS:
+        assert secret not in result.stdout + result.stderr + logged
+
+
+def test_a_refused_cml_login_stops_the_session_before_any_run(root, tmp_path):
+    result, calls, logged = _session(root, tmp_path, [], {"check-login": 1})
+    assert result.returncode == 2
+    assert calls == ["py cml_lab.py check-login"]
+    assert "the CML login did not work (see the line above); nothing ran" in logged
+
+
+def test_the_session_refuses_to_start_without_the_vpn_before_any_prompt(root, tmp_path):
+    result, calls, logged = _session(root, tmp_path, [], vpn=False)
+    assert (result.returncode, calls, logged) == (2, [], "")
+    assert result.stdout == "The sandbox VPN is not connected. Start openconnect first.\n"
+    assert "password" not in result.stderr.lower()
+
+
+def test_a_run_that_stops_early_shows_where_and_the_session_goes_on(root, tmp_path):
+    codes = {"ospf-deadtimer": 127, "ibgp": 1, "bgp-vrf": 3}
+    result, calls, logged = _session(root, tmp_path, [], codes)
+    assert result.returncode == 3
+    assert [line.split()[0] for line in calls] == ["py", "probe", "ospf-deadtimer", "ibgp", "bgp-vrf", "py"]
+    assert _row(logged, "ospf-deadtimer", 127).endswith("unexpected (127)")
+    assert _row(logged, "ibgp", 1).endswith("stopped early")
+    lines = logged.splitlines()
+    after_ibgp = lines[lines.index(_row(logged, "ibgp", 1)) + 1]
+    assert after_ibgp.strip() == "where it stopped: 12:00:01 2/2 the step it stopped at"
+    assert _row(logged, "bgp-vrf", 3).endswith(
+        "ran to the end, but a comparison or the findings differed from the prediction: read the report"
+    )
+    assert "to go on" not in logged
+
+
+def test_the_session_stops_at_the_first_exit_2_and_prints_the_rest_as_a_command(root, tmp_path):
+    result, calls, logged = _session(root, tmp_path, [], {"ospf-deadtimer": 2})
+    assert result.returncode == 1
+    assert [line.split()[0] for line in calls] == ["py", "probe", "ospf-deadtimer"]
+    assert _row(logged, "ospf-deadtimer", 2).endswith("could not start")
+    command = "bash scripts/lab/run-session.sh ospf-deadtimer ibgp bgp-vrf reset"
+    hint = f"to go on once the cause is fixed: {command}"
+    for text in (result.stdout, logged):
+        assert hint in text
+        assert "the next run's labctl.py reset clears whatever the stopped run left." in text
+
+
+def test_a_failed_probe_stops_the_session(root, tmp_path):
+    result, calls, logged = _session(root, tmp_path, [], {"probe": 1})
+    assert result.returncode == 1
+    assert [line.split()[0] for line in calls] == ["py", "probe"]
+    assert _row(logged, "probe", 1).endswith("the CML login or a console connection failed: read its log")
+    assert "bash scripts/lab/run-session.sh probe ospf-deadtimer ibgp bgp-vrf reset" in logged
+
+
+def test_ssh_path_and_second_platform_get_what_they_need_and_exit_4_is_a_result(root, tmp_path):
+    typed = "\nfirst-secret\nenable-secret\n\nssh-secret\n"  # the SSH user defaults to cisco
+    names = ["ssh-path", "second-platform:iosv"]
+    result, calls, logged = _session(root, tmp_path, names, {"ssh-path": 4}, stdin=typed, trace=True)
+    assert result.returncode == 3
+    assert calls[1:] == [
+        "ssh-path  stamp=t-1 logins=developer/set/set/set",
+        "second-platform iosv stamp=t-2 logins=developer/set/set/set",
+    ]
+    assert _row(logged, "ssh-path", 4).endswith(
+        "the management addresses do not answer in this sandbox (a result)"
+    )
+    assert "log: output/lab/second-platform-t-2.log" in logged
+    for secret in SECRETS:  # bash -x traced the whole session script
+        assert secret not in result.stdout + result.stderr + logged
+
+
+def test_ctrl_c_prints_the_table_so_far_and_the_command_to_go_on(root, tmp_path):
+    result, calls, logged = _session(root, tmp_path, [], {"ibgp-interrupt": 1})
+    assert result.returncode == 130
+    assert [line.split()[0] for line in calls] == ["py", "probe", "ospf-deadtimer", "ibgp"]
+    assert _row(logged, "ospf-deadtimer", 0)
+    assert _row(logged, "ibgp", "interrupted").endswith("interrupted by Ctrl-C")
+    assert "bash scripts/lab/run-session.sh ibgp bgp-vrf reset" in result.stdout
