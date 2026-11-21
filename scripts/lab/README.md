@@ -615,14 +615,16 @@ Assumptions the first session must check, each with how it fails:
   after 3 minutes), or a slow boot may outlast the 20-minute wait.
 - **The console path and login chain for R3.** `open /default-lab/R3/0`, then for NX-OS the
   admin login, were checked only against Unicon's mock devices. If either is wrong, the pre
-  capture fails at connect for R3; a device left at a first-boot dialog fails it the same way.
+  capture fails at connect for R3 with Unicon's own message (`failed to connect to R3`); a
+  device left at a first-boot dialog fails it too, with
+  `lab capture failed for R3 during connect: device is at a first-boot setup dialog; ncv will not answer it`.
+  On NX-OS the Enter that `SENDLINE_AFTER_CRED` sends after the CML password reaches that
+  dialog before ncv stops the connect (on Unicon's mock the prompt was only printed again); ncv
+  sends nothing after it.
 - **What the console server shows when a console is opened.** If it replays old console output,
   a first-boot dialog from R3's boot could still be in that history, and ncv would refuse a
-  healthy R3 at connect. The message does not name the dialog: it is Unicon's `failed to
-  connect to R3` and `Failed while bringing device to "any" state`, and ncv's own reason
-  (`device is at a first-boot setup dialog`) is only in the exception's cause, which `ncv` does
-  not print. Open R3's console by hand (`ssh developer@10.10.20.161 "open /default-lab/R3/0"`)
-  to see what it shows.
+  healthy R3 at connect with that same first-boot message. Open R3's console by hand
+  (`ssh developer@10.10.20.161 "open /default-lab/R3/0"`) to see what it shows now.
 - **Genie's NX-OS shapes on a real 9000v.** Taken from Genie's test data. A shape the adapter
   does not handle fails the pre capture at a named learn; a string that differs (`direct`, an
   interface name, a state) is named by the no-change check.

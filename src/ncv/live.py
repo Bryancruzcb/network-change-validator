@@ -22,11 +22,36 @@ RUNNING_CONFIG_STEP = "show running-config"
 RUNNING_CONFIG_REFUSAL = "empty, non-text, or CLI error running-config response"
 
 
+class FirstBootDialogError(RuntimeError):
+    """The first-boot guard's refusal. It has its own type so that a connect it stopped can be
+    told apart from every other failed connect, however Unicon wraps it."""
+
+
+def caused_by(exc: BaseException, kind: type[BaseException]) -> bool:
+    """Whether the exception, or anything it was raised from or while handling, is of the given
+    kind."""
+    seen: set[int] = set()
+    pending: list[BaseException | None] = [exc]
+    while pending:
+        link = pending.pop()
+        if link is None or id(link) in seen:
+            continue
+        if isinstance(link, kind):
+            return True
+        seen.add(id(link))
+        pending += [link.__cause__, link.__context__]
+    return False
+
+
 def failure_detail(operation: str, exc: Exception) -> str:
-    """What a failed capture step says about its exception. Unicon's timeout and failure
+    """What a failed capture step says about its exception. Unicon reports a connect the
+    first-boot guard stopped as its own `failed to connect`, with the guard's reason only in the
+    chain of causes, so that case gives the reason instead. Unicon's timeout and failure
     exceptions quote the device's output so far, and during the running-config read that output
     is a running config with its passwords, so that step names only the exception's type. ncv's
     own refusal of the response holds no device output and keeps its text."""
+    if caused_by(exc, FirstBootDialogError):
+        return FIRST_BOOT_REFUSAL
     if operation != RUNNING_CONFIG_STEP or (
         isinstance(exc, ValueError) and str(exc) == RUNNING_CONFIG_REFUSAL
     ):
@@ -37,7 +62,7 @@ def failure_detail(operation: str, exc: Exception) -> str:
 def _refuse_first_boot_dialog(spawn: Any) -> None:
     # Unicon calls an action with what its parameter names ask for, and refuses a `spawn` that is
     # not a plain positional parameter, so this one has no default.
-    raise RuntimeError(FIRST_BOOT_REFUSAL)
+    raise FirstBootDialogError(FIRST_BOOT_REFUSAL)
 
 
 def first_boot_guard() -> Any | None:

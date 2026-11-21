@@ -14,7 +14,8 @@
 # `SENDLINE_AFTER_CRED: default` makes Unicon press Enter once after it sends the `default` (CML)
 # password, to clear a `Password:` prompt left over from the two-credential login; that was
 # checked against Unicon's mock devices only. R1 and R2 do not set it, as in
-# cml-console.yaml.example.
+# cml-console.yaml.example. If R3 is still at a first-boot dialog, that Enter reaches the dialog
+# before ncv stops the connect (the mock only printed its prompt again); ncv sends nothing more.
 #
 # For a Catalyst 8000V or IOSv R3 (`add-r3 cat8000v` or `add-r3 iosv`), replace the R3 entry
 # with the IOS form: the day-0 configuration sets no console login, so the console needs only

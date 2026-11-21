@@ -44,7 +44,7 @@ undo_hint="run scripts/lab/change.sh vrf-undo, or let the next run's labctl.py r
 
 step "1/11 reset both routers to the shipped configuration (a router runs one BGP process, and a reused reservation may carry an earlier run), then wait for IOS to finish deleting any earlier vrf NCV"
 lab_reset
-ctl wait-vrf-gone 90 || { step "vrf NCV is still listed; IOS refuses its route distinguisher until the deletion ends, so run labctl.py wait-vrf-gone again before retrying"; exit 1; }
+ctl wait-vrf-gone 90 || { step "vrf NCV is still listed after 90 s; IOS refuses its route distinguisher until the deletion ends, so run this script again in a minute (it resets and waits again)"; exit 1; }
 step "2/11 set up eBGP with a 3 s keepalive and a 9 s hold time, then the second session in vrf NCV on Ethernet0/1.100 (operator setup, outside ncv)"
 ctl setup-bgp-fast || { step "BGP setup failed"; exit 1; }
 ctl setup-vrf || { step "VRF setup failed"; exit 1; }

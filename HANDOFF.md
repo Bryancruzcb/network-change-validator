@@ -371,8 +371,8 @@ differ only in R3's interface and its connected-route string (`direct` on NX-OS)
 
 In ncv: NX-OS interface records that carry no status are kept with unknown status, as long as
 one record in the learn reports a status (checked against Genie 26.8's NX-OS test data). A
-device at a first-boot setup dialog fails the capture at connect instead of Unicon answering it
-(checked against Unicon's mock devices only).
+device at a first-boot setup dialog fails the capture at connect instead of Unicon answering it,
+and the error names the dialog (checked against Unicon's mock devices only).
 
 Predicted findings, pinned on synthetic snapshots built through the adapter from each
 platform's Genie shapes: nine. `V_ADJ` ospf and bgp on R1 and on R3, `V_ROUTE` R1 10.1.3.0/24,
@@ -385,12 +385,13 @@ against a lab and no document claims otherwise.
 order: `probe`, `ospf-deadtimer`, `ibgp`, `bgp-vrf`, `ssh-path`, `second-platform:<platform>`,
 `reset`, and `remove-r3` (by default `probe ospf-deadtimer ibgp bgp-vrf reset`). The logins last
 only while a script runs, so `reset` and `remove-r3` run `labctl.py reset` and `cml_lab.py
-remove-r3` with the logins the session asked for. It refuses an unknown name or platform, or a
-testbed file a named run needs (R3's `os` included), before any prompt, asks again until each
-password is not empty (the routers' SSH login only when `ssh-path` is named), and checks the CML
-login once with `cml_lab.py check-login`. Each run gets its own `NCV_STAMP`, so the closing
-table, on the screen and in `output/lab/session-<stamp>.log`, names each run's log and, for a
-run that stopped early, its last step before the capture cleanup. A failed run does not stop the session, since the next
+remove-r3` with the logins the session asked for. It refuses an unknown name or platform, a
+missing testbed file a named run needs, or an R3 testbed whose `os` does not fit the platform,
+before any prompt, asks again until each password is not empty (the routers' SSH login only when
+`ssh-path` is named), and checks the CML login once with `cml_lab.py check-login`. Each run gets
+its own `NCV_STAMP`, so the closing table, on the screen and in
+`output/lab/session-<stamp>.log`, names each run's log and, for a run that stopped early, its
+last step before the capture cleanup. A failed run does not stop the session, since the next
 run starts with `reset`; a run that could not start (exit 2) or a failed probe does, and the
 script prints the names still to run as a ready command. Ctrl-C prints the table so far and the
 same command. It has run only against stand-in run scripts in `tests/test_lab_lib.py`.
@@ -403,7 +404,10 @@ a second set of fixes followed. None of it has run against a lab. What changed:
 - **The tool**: the capture's first-boot guard also refuses NX-OS's `Do you want to enforce
   secure password standard` question. A failed `show running-config` read names only the
   exception's type, because Unicon's timeout and failure messages quote the device's output so
-  far, which there is a running config with its passwords.
+  far, and during that read the output is a running config with its passwords. A connect the
+  guard stopped says `device is at a first-boot setup dialog; ncv will not answer it`:
+  Unicon reports it as its own `failed to connect`, with the guard's reason only in the chain
+  of causes, so ncv looks for its own exception type there.
 - **The lab scripts**: `labctl.py reset` prints `<router>: show running-config failed (<type>)`
   and exits 1 when that read fails, with no device output. `vrf_listed` counts IOS's `* NCV` row
   for a VRF still being deleted, and `setup-vrf` ends the subinterface block with `no shutdown`.
@@ -432,14 +436,14 @@ a second set of fixes followed. None of it has run against a lab. What changed:
   `SENDLINE_AFTER_CRED` is for; `docs/LIVE.md` says the first-boot guard was checked against
   Unicon's mock devices only; the README counts four live runs; the publishing steps under
   "Open" say where a run's packet capture goes; and the second-platform assumptions add a
-  console server that replays old output, whose first-boot dialog ncv would refuse without
-  naming it. New tests hold `scripts/lab/README.md` to the code: the SSH sentence, each
-  prediction table against its expected file, and each configuration block against its
-  builder.
+  console server that replays old output, whose first-boot dialog ncv would refuse, and say
+  that one Enter can reach such a dialog before ncv stops the connect. New tests hold
+  `scripts/lab/README.md` to the code: the SSH sentence, each prediction table against its
+  expected file, and each configuration block against its builder.
 
 ## Test count
 
-**573 tests on `lab/next-runs`, 131 on `main`.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
+**579 tests on `lab/next-runs`, 131 on `main`.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
 the 2 policy regressions from PR #1, the 21 that came with BGP support and feature
 selection, 3 covering report provenance and the version flag, 1 that loads both
 bundled intents so the lab template cannot rot unnoticed, 2 covering the interface shape
@@ -454,7 +458,7 @@ block, and unblock lines, the draft intent, the predicted findings, and a pre ca
 the timers failing the no-change check) and 6 in `tests/test_bgp_pcap.py` on captures built
 byte by byte. PR #14 adds 4 that replay the hold-timer captures, and PR #15 6.
 
-`lab/next-runs` adds 442, in build order: 20 for BGP keyed by VRF (in `tests/test_normalize.py`,
+`lab/next-runs` adds 448, in build order: 20 for BGP keyed by VRF (in `tests/test_normalize.py`,
 `test_schema.py`, `test_policy.py`, and `test_snapshot.py`); 40 for the script foundation (7 in
 `tests/test_lab_scripts.py` pinning `reset`, 33 in the new `tests/test_labctl_commands.py`
 fake lab); 46 for the OSPF dead-timer run (`test_lab_scripts.py`, `test_labctl_commands.py`,
@@ -468,7 +472,7 @@ and the SSH path (the new `tests/test_cml_lab.py` and `tests/test_compare_captur
 `test_lab_lib.py`); 89 for the second-platform run (`test_normalize.py`, `test_live.py`,
 `test_cml_lab.py`, `test_labctl_commands.py`, `test_lab_scripts.py`, `test_lab_lib.py`, and
 `test_check_findings.py`); 15 for the session script (12 in `test_lab_lib.py`, 3 in
-`test_lab_scripts.py`); and 76 in the second set of fixes: 19 for the tool and the Python lab
+`test_lab_scripts.py`); and 82 in the second set of fixes: 25 for the tool and the Python lab
 scripts (`test_live.py`, `test_labctl_commands.py`, `test_lab_scripts.py`,
 `test_compare_captures.py`, and `test_schema.py`), 15 for the CML client (`test_cml_lab.py`), 35
 for the shell (34 in `test_lab_lib.py`, 1 in `test_lab_scripts.py`), and 7 that hold the README
@@ -482,7 +486,7 @@ CI jobs run them.
 python3 -m pip install -e ".[dev]"
 python3 -m ruff check .
 python3 -m ruff format --check .
-python3 -m pytest                      # 573 passed (on Windows: 493 passed, 80 skipped)
+python3 -m pytest                      # 579 passed (on Windows: 499 passed, 80 skipped)
 git diff --check                       # clean
 python3 scripts/render_artifacts.py    # rewrites docs/artifacts with identical bytes
 git status --short docs/artifacts      # lists nothing (on Windows, run git diff instead;

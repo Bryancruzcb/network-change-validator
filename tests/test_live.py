@@ -7,13 +7,14 @@ import inspect
 import json
 import re
 import sys
+import threading
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
 from ncv.cli import main
-from ncv.live import FIRST_BOOT_REFUSAL, first_boot_guard, snapshot_live
+from ncv.live import FIRST_BOOT_REFUSAL, FirstBootDialogError, caused_by, first_boot_guard, snapshot_live
 from ncv.snapshot import load_snapshot
 
 
@@ -232,10 +233,91 @@ def test_the_guard_matches_each_first_boot_prompt_and_its_action_raises(fake_uni
     (statement,) = first_boot_guard().statements
     assert statement.loop_continue is False
     assert re.search(statement.pattern, prompt)
-    with pytest.raises(RuntimeError) as raised:
+    with pytest.raises(FirstBootDialogError) as raised:
         statement.action(object())
     assert str(raised.value) == "device is at a first-boot setup dialog; ncv will not answer it"
     assert str(raised.value) == FIRST_BOOT_REFUSAL
+
+
+def _wrapped_the_way_unicon_wraps(link: str) -> Exception:
+    """A failed connect whose chain of causes ends at the guard's refusal, linked one of the two
+    ways Python chains exceptions: `__cause__` (raise ... from) or `__context__` (a raise inside
+    an except)."""
+    refusal = FirstBootDialogError(FIRST_BOOT_REFUSAL)
+    inner, outer = TimeoutError("sub command failed"), ConnectionError("failed to connect to r1")
+    setattr(inner, f"__{link}__", refusal)
+    setattr(outer, f"__{link}__", inner)
+    return outer
+
+
+@pytest.mark.parametrize("link", ["cause", "context"])
+def test_a_connect_the_guard_stopped_names_the_first_boot_dialog(tmp_path, fake_lab, capsys, link):
+    """Real Unicon 26.8 reports it as `failed to connect to R3`, with the guard's reason two
+    causes down; without this the operator cannot tell it from a wrong console path."""
+    device, _ = fake_lab
+    device.connect.side_effect = _wrapped_the_way_unicon_wraps(link)
+    expected = f"lab capture failed for r1 during connect: {FIRST_BOOT_REFUSAL}"
+    with pytest.raises(RuntimeError) as raised:
+        snapshot_live("lab.yaml", str(tmp_path / "out"), True)
+    assert str(raised.value) == expected
+    device.disconnect.assert_called_once()
+    assert not (tmp_path / "out").exists()
+    assert (
+        main(["snapshot", "--testbed", "lab.yaml", "--output", str(tmp_path / "cli"), "--i-am-in-a-lab"]) == 2
+    )
+    assert capsys.readouterr().err.strip() == f"ncv: error: {expected}"
+
+
+def test_a_connect_that_failed_for_another_reason_keeps_its_own_message(tmp_path, fake_lab):
+    device, _ = fake_lab
+    try:
+        raise ConnectionError("failed to connect to r1") from TimeoutError("no answer")
+    except ConnectionError as failure:
+        device.connect.side_effect = failure
+    with pytest.raises(RuntimeError) as raised:
+        snapshot_live("lab.yaml", str(tmp_path / "out"), True)
+    assert str(raised.value) == "lab capture failed for r1 during connect: failed to connect to r1"
+
+
+def test_the_guards_own_refusal_is_the_one_the_capture_recognises(tmp_path, fake_lab, fake_unicon):
+    """The guard's action and the capture's message meet only through the exception's type, so
+    this takes the exception from the action itself and wraps it as real Unicon 26.8 does: a
+    connection error raised from a state machine error raised from the refusal."""
+    device, _ = fake_lab
+    (statement,) = first_boot_guard().statements
+    with pytest.raises(FirstBootDialogError) as refused:
+        statement.action(object())
+    state_machine, failed = RuntimeError("state machine"), ConnectionError("failed to connect to r1")
+    state_machine.__cause__, failed.__cause__ = refused.value, state_machine
+    device.connect.side_effect = failed
+    with pytest.raises(RuntimeError) as raised:
+        snapshot_live("lab.yaml", str(tmp_path / "out"), True)
+    assert str(raised.value) == f"lab capture failed for r1 during connect: {FIRST_BOOT_REFUSAL}"
+
+
+def test_caused_by_reads_the_whole_chain():
+    refusal, middle, outer = FirstBootDialogError("x"), TimeoutError("y"), ConnectionError("z")
+    middle.__cause__, outer.__context__ = refusal, middle
+    assert caused_by(refusal, FirstBootDialogError)
+    assert caused_by(outer, FirstBootDialogError)
+    assert not caused_by(outer, KeyError)
+    raised_from_another = ConnectionError("z")
+    raised_from_another.__cause__, raised_from_another.__context__ = OSError("w"), refusal
+    assert caused_by(raised_from_another, FirstBootDialogError)
+
+
+def test_caused_by_ends_on_a_loop_of_causes():
+    """Run on its own thread with a time limit, so a walk that never ends fails here instead of
+    hanging the suite."""
+    first, second = ValueError("a"), ValueError("b")
+    first.__cause__, second.__cause__ = second, first
+    answers: list[bool] = []
+    walk = threading.Thread(
+        target=lambda: answers.append(caused_by(first, FirstBootDialogError)), daemon=True
+    )
+    walk.start()
+    walk.join(timeout=5)
+    assert answers == [False]
 
 
 def test_the_guard_action_takes_spawn_the_way_unicon_requires(fake_unicon):

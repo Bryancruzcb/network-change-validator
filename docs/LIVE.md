@@ -192,15 +192,21 @@ Unicon's initialization command lists are set to empty, including overrides in
 connection arguments, to avoid default configuration initialization. A device
 sitting at a first-boot setup dialog (NX-OS POAP, its secure-password or
 admin-password prompt, the IOS setup dialog, or `Enter enable secret`) fails the
-capture at connect, because Unicon would otherwise answer that dialog and so change
-the device; this was checked against Unicon's mock devices only, not a real device at
-a first-boot dialog. Device plugins and testbeds are trusted executable dependencies:
-this is not a security boundary against arbitrary custom plugins.
+capture at connect with
+`device is at a first-boot setup dialog; ncv will not answer it`, because Unicon
+would otherwise answer that dialog and so change the device; this was checked against
+Unicon's mock devices only, not a real device at a first-boot dialog. A return can
+still reach the dialog before `ncv` stops the connect: Unicon's prompt recovery sends
+one when a console stays silent, and a connection that sets `SENDLINE_AFTER_CRED`
+sends one after its password. On the mock devices that only printed the prompt again;
+what a real device does with a bare return there is its own default. Device plugins
+and testbeds are trusted executable dependencies: this is not a security boundary
+against arbitrary custom plugins.
 
 Connection, learning, unsupported normalization, and config-read errors abort the
 capture. When the `show running-config` read itself fails, the error names only the
 exception's type: Unicon's timeout and failure messages quote the device's output so
-far, which there is a running config with its passwords. Connections are
+far, and during that read the output is a running config with its passwords. Connections are
 disconnected on success or failure, and a failed capture does not publish a partial
 snapshot. Missing individual counters remain unknown
 and produce `V_ERR` when requested by intent. NX-OS interface records that carry no
