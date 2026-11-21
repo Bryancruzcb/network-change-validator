@@ -13,7 +13,15 @@ import sys
 from types import SimpleNamespace
 
 import pytest
-from test_lab_scripts import NEIGHBOR_FAST_TIMERS, NEIGHBOR_STALE_TIMERS, _load_script, _running
+from test_lab_scripts import (
+    NEIGHBOR_FAST_TIMERS,
+    NEIGHBOR_STALE_TIMERS,
+    OSPF_INTERFACE_DEFAULT,
+    OSPF_INTERFACE_FAST,
+    OSPF_NOT_ENABLED,
+    _load_script,
+    _running,
+)
 
 
 class FakeDevice:
@@ -93,7 +101,11 @@ def _run(labctl, monkeypatch, argv, answers=None, fail_on=None):
 
 INTERFACE_BRIEF = "show ip interface brief"
 BGP_SUMMARY = "show bgp ipv4 unicast summary"
-SHOWS = {name: {INTERFACE_BRIEF: "Interface  IP-Address  Status", BGP_SUMMARY: ""} for name in ("R1", "R2")}
+OSPF = "show ip ospf neighbor"
+SHOWS = {
+    name: {INTERFACE_BRIEF: "Interface  IP-Address  Status", BGP_SUMMARY: "", OSPF: ""}
+    for name in ("R1", "R2")
+}
 
 # command -> (the configure calls each router gets, built from labctl, and the show it prints after)
 CONFIGURE_COMMANDS = {
@@ -118,6 +130,15 @@ CONFIGURE_COMMANDS = {
     ),
     "bgp-block": (lambda m: {"R1": [m.bgp_block_lines()], "R2": []}, BGP_SUMMARY),
     "bgp-unblock": (lambda m: {"R1": [m.bgp_unblock_lines()], "R2": []}, BGP_SUMMARY),
+    "setup-ospf-fast": (
+        lambda m: {
+            "R1": [m.ospf_setup_lines("R1", m.OSPF_FAST_HELLO)],
+            "R2": [m.ospf_setup_lines("R2", m.OSPF_FAST_HELLO)],
+        },
+        None,
+    ),
+    "ospf-block": (lambda m: {"R1": [m.ospf_block_lines()], "R2": []}, OSPF),
+    "ospf-unblock": (lambda m: {"R1": [m.ospf_unblock_lines()], "R2": []}, OSPF),
 }
 
 
@@ -131,13 +152,18 @@ def test_each_change_command_sends_its_lines_to_its_router(labctl, monkeypatch, 
     assert shown == {"R1": [show] if show else [], "R2": []}
 
 
-OSPF = "show ip ospf neighbor"
 OSPF_HEADER = "Neighbor ID     Pri   State           Dead Time   Address         Interface\n"
 OSPF_FULL = {
     "R1": OSPF_HEADER + "2.2.2.2           1   FULL/DR         00:00:35    1.1.1.2         Ethernet0/1\n",
     "R2": OSPF_HEADER + "1.1.1.1           1   FULL/BDR        00:00:33    1.1.1.1         Ethernet0/1\n",
 }
 OSPF_GONE = {"R1": OSPF_HEADER, "R2": OSPF_HEADER}
+# What the dead-timer run predicts once R1's ACL drops OSPF from R2: R1 has deleted 2.2.2.2,
+# and R2, which still hears R1's hellos without itself in them, holds 1.1.1.1 in INIT.
+OSPF_LOST = {
+    "R1": OSPF_HEADER,
+    "R2": OSPF_HEADER + "1.1.1.1           1   INIT/DROTHER    00:00:03    1.1.1.1         Ethernet0/1\n",
+}
 BGP_HEADER = "Neighbor     V    AS MsgRcvd MsgSent TblVer InQ OutQ Up/Down  State/PfxRcd\n"
 BGP_UP = {
     "R1": BGP_HEADER + "1.1.1.2      4 65002      15      15      3   0    0 00:10:12        1\n",
@@ -154,6 +180,7 @@ WAIT_COMMANDS = {
     "wait-gone": (OSPF, OSPF_GONE, OSPF_FULL),
     "wait-bgp-up": (BGP_SUMMARY, BGP_UP, BGP_DOWN),
     "wait-bgp-down": (BGP_SUMMARY, BGP_DOWN, BGP_UP),
+    "wait-ospf-lost": (OSPF, OSPF_LOST, OSPF_FULL),
 }
 
 
@@ -181,6 +208,13 @@ def test_a_wait_that_never_comes_true_times_out_with_exit_1(labctl, monkeypatch,
     assert all(dev.configured == [] for dev in devices.values())
 
 
+def test_after_the_dead_timer_change_only_wait_ospf_lost_finishes(labctl, monkeypatch):
+    """R2 keeps an entry for R1, so the wait-gone the 2026-09-12 run used would time out."""
+    lost = _answers(OSPF, OSPF_LOST)
+    assert _run(labctl, monkeypatch, ["wait-gone", "0"], lost)[0] == 1
+    assert _run(labctl, monkeypatch, ["wait-ospf-lost", "0"], lost)[0] == 0
+
+
 def _neighbors(r1_output, r2_output):
     return {
         "R1": {"show bgp ipv4 unicast neighbors 1.1.1.2": r1_output},
@@ -193,6 +227,26 @@ def test_check_hold_time_passes_only_when_both_sessions_run_the_fast_timers(labc
     assert _run(labctl, monkeypatch, ["check-hold-time"], fast)[0] == 0
     stale = _neighbors(NEIGHBOR_FAST_TIMERS, NEIGHBOR_STALE_TIMERS)
     assert _run(labctl, monkeypatch, ["check-hold-time"], stale)[0] == 1
+
+
+OSPF_INTERFACE = "show ip ospf interface Ethernet0/1"
+
+
+def _interface(r1_output, r2_output):
+    return {"R1": {OSPF_INTERFACE: r1_output}, "R2": {OSPF_INTERFACE: r2_output}}
+
+
+def test_check_dead_time_passes_only_when_both_routers_run_the_fast_timers(labctl, monkeypatch, capsys):
+    fast = _interface(OSPF_INTERFACE_FAST, OSPF_INTERFACE_FAST)
+    assert _run(labctl, monkeypatch, ["check-dead-time"], fast)[0] == 0
+    out = capsys.readouterr().out
+    assert "R1: Ethernet0/1 (hello, dead) = (1, 4)" in out
+    assert "R2: Ethernet0/1 (hello, dead) = (1, 4)" in out
+    for r2 in (OSPF_INTERFACE_DEFAULT, OSPF_NOT_ENABLED):
+        assert _run(labctl, monkeypatch, ["check-dead-time"], _interface(OSPF_INTERFACE_FAST, r2))[0] == 1
+        out = capsys.readouterr().out
+        assert "expected Hello 1 s and Dead 4 s" in out
+        assert "`labctl.py reset` followed by `labctl.py setup-ospf-fast`" in out
 
 
 def test_reset_configures_only_the_router_that_needs_it(root, labctl, monkeypatch, capsys):
@@ -214,6 +268,8 @@ def test_reset_configures_only_the_router_that_needs_it(root, labctl, monkeypatc
         (["setup-bgp"], {}, {"R2": "configure"}),
         (["wait-bgp-up"], {}, {"R1": "execute"}),
         (["check-hold-time"], _neighbors(NEIGHBOR_FAST_TIMERS, ""), {"R2": "execute"}),
+        (["check-dead-time"], _interface(OSPF_INTERFACE_FAST, ""), {"R2": "execute"}),
+        (["ospf-block"], SHOWS, {"R1": "configure"}),
         (["reset"], {"R1": {"show running-config": ""}}, {"R2": "execute"}),
     ],
 )
@@ -226,15 +282,17 @@ def test_a_command_that_raises_still_disconnects_every_router_it_reached(
 
 
 def test_every_command_in_the_table_is_exercised_here(labctl):
-    covered = set(CONFIGURE_COMMANDS) | set(WAIT_COMMANDS) | {"check-hold-time", "reset"}
+    covered = set(CONFIGURE_COMMANDS) | set(WAIT_COMMANDS) | {"check-hold-time", "check-dead-time", "reset"}
     assert covered == set(labctl.COMMANDS)
 
 
-def test_usage_is_the_old_text_with_reset_added(labctl):
+def test_usage_is_the_old_text_with_the_dead_timer_commands_and_reset_added(labctl):
     assert labctl.USAGE == (
         "usage: labctl.py setup-ospf | shut | noshut | wait-full [seconds] | wait-gone [seconds]"
         " | setup-bgp | bgp-shut | bgp-noshut | wait-bgp-up [seconds] | wait-bgp-down [seconds]"
-        " | setup-bgp-fast | check-hold-time | bgp-block | bgp-unblock | reset"
+        " | setup-bgp-fast | check-hold-time | bgp-block | bgp-unblock"
+        " | setup-ospf-fast | check-dead-time | ospf-block | ospf-unblock | wait-ospf-lost [seconds]"
+        " | reset"
     )
 
 

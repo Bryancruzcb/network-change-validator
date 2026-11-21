@@ -78,6 +78,7 @@ class Segment:
     seq: int
     flags: int
     payload: bytes
+    vlan: int | None = None  # the 802.1Q VLAN id when the frame is tagged
 
 
 def pcap_frames(data: bytes) -> list[tuple[float, bytes]]:
@@ -103,21 +104,33 @@ def pcap_frames(data: bytes) -> list[tuple[float, bytes]]:
     return frames
 
 
-def tcp_segment(time: float, frame: bytes) -> Segment | None:
-    """Decode Ethernet, IPv4, and TCP; None unless the frame is TCP to or from port 179."""
+def ipv4_packet(frame: bytes) -> tuple[int | None, bytes] | None:
+    """Decode Ethernet II and an optional 802.1Q tag: (the VLAN id or None, the IPv4 packet cut
+    at its total length, so Ethernet padding is never read as data), or None unless the frame
+    carries IPv4 with at least a whole header's worth of bytes."""
     if len(frame) < 14:
         return None
     (ethertype,) = struct.unpack_from("!H", frame, 12)
-    ip_start = 14
+    ip_start, vlan = 14, None
     if ethertype == ETHERTYPE_VLAN and len(frame) >= 18:
-        (ethertype,) = struct.unpack_from("!H", frame, 16)
-        ip_start = 18
+        (tag, ethertype) = struct.unpack_from("!HH", frame, 14)
+        ip_start, vlan = 18, tag & 0x0FFF
     ip = frame[ip_start:]
-    if ethertype != ETHERTYPE_IPV4 or len(ip) < 20 or ip[0] >> 4 != 4 or ip[9] != IPPROTO_TCP:
+    if ethertype != ETHERTYPE_IPV4 or len(ip) < 20 or ip[0] >> 4 != 4:
         return None
-    header_len = (ip[0] & 0x0F) * 4
     (total_len,) = struct.unpack_from("!H", ip, 2)
-    tcp = ip[header_len:total_len]
+    ip = ip[:total_len]
+    return (vlan, ip) if len(ip) >= 20 else None
+
+
+def tcp_segment(time: float, frame: bytes) -> Segment | None:
+    """Decode Ethernet, IPv4, and TCP; None unless the frame is TCP to or from port 179."""
+    packet = ipv4_packet(frame)
+    if packet is None or packet[1][9] != IPPROTO_TCP:
+        return None
+    vlan, ip = packet
+    header_len = (ip[0] & 0x0F) * 4
+    tcp = ip[header_len:]
     if len(tcp) < 20:
         return None
     sport, dport, seq = struct.unpack_from("!HHI", tcp, 0)
@@ -133,6 +146,7 @@ def tcp_segment(time: float, frame: bytes) -> Segment | None:
         seq=seq,
         flags=tcp[13],
         payload=tcp[data_offset:],
+        vlan=vlan,
     )
 
 
@@ -180,16 +194,14 @@ def flag_names(flags: int) -> str:
     return ",".join(name for name, bit in TCP_FLAGS if flags & bit)
 
 
-def summarize(data: bytes) -> list[str]:
-    """The report: one line per BGP-port segment in the capture, oldest first."""
-    segments = [s for s in (tcp_segment(t, frame) for t, frame in pcap_frames(data)) if s]
-    if not segments:
-        return ["no TCP segments to or from port 179"]
-    start = segments[0].time
+def describe_segments(segments: list[Segment]) -> list[str]:
+    """Each segment in words, in the order given and without a time: endpoints, TCP flags, the
+    BGP messages, and a retransmission mark. The whole list is needed at once, because a
+    segment is a retransmission only against the ones before it."""
     seen, lines = set(), []
     for seg in segments:
         endpoints = f"{seg.src}:{seg.sport} -> {seg.dst}:{seg.dport}"
-        line = f"{seg.time - start:8.3f}  {endpoints}  [{flag_names(seg.flags)}]"
+        line = f"{endpoints}  [{flag_names(seg.flags)}]"
         if seg.payload:
             line += "  " + bgp_messages(seg.payload)
         # A segment that carries data, SYN, or FIN uses sequence space; the same one again on
@@ -201,6 +213,18 @@ def summarize(data: bytes) -> list[str]:
             seen.add(key)
         lines.append(line)
     return lines
+
+
+def summarize(data: bytes) -> list[str]:
+    """The report: one line per BGP-port segment in the capture, oldest first."""
+    segments = [s for s in (tcp_segment(t, frame) for t, frame in pcap_frames(data)) if s]
+    if not segments:
+        return ["no TCP segments to or from port 179"]
+    start = segments[0].time
+    return [
+        f"{seg.time - start:8.3f}  {text}"
+        for seg, text in zip(segments, describe_segments(segments), strict=True)
+    ]
 
 
 def main(argv: list[str]) -> int:

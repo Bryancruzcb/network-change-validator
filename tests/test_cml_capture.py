@@ -2,7 +2,9 @@
 
 The field names follow CML 2.7.2's own OpenAPI description (/api/v0/openapi.json), read from
 the sandbox controller on 2026-11-20: a lab has lab_title, a link has node_a, node_b,
-interface_a, and interface_b, and nodes and interfaces have a label.
+interface_a, and interface_b, and nodes and interfaces have a label. The last tests pin the
+command line, including the optional capture filter, and that the filter reaches the start
+request, with the HTTP calls replaced.
 """
 
 from __future__ import annotations
@@ -78,3 +80,68 @@ def test_cli_refuses_bad_usage_and_a_missing_login(cml, monkeypatch, capsys):
     monkeypatch.delenv("NCV_CML_PASS", raising=False)
     assert cml.main(["cml_capture.py", "start"]) == 2
     assert "NCV_CML_USER is not set" in capsys.readouterr().out
+
+
+def test_parse_args_reads_the_action_the_filter_and_the_path(cml):
+    assert cml.parse_args(["cml_capture.py", "start"]) == ("start", "tcp port 179", None)
+    assert cml.parse_args(["cml_capture.py", "start", "--filter", "ip proto 89"]) == (
+        "start",
+        "ip proto 89",
+        None,
+    )
+    assert cml.parse_args(["cml_capture.py", "stop", "link.pcap"]) == ("stop", None, "link.pcap")
+    longest = "x" * 128
+    assert cml.parse_args(["cml_capture.py", "start", "--filter", longest]) == ("start", longest, None)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        [],
+        ["capture"],
+        ["start", "extra"],
+        ["start", "--filter"],
+        ["start", "--filter", ""],
+        ["start", "--filter", "x" * 129],  # the CML API refuses a bpfilter over 128 characters
+        ["start", "--filter", "ip proto 89", "extra"],
+        ["start", "ip proto 89", "--filter"],
+        ["stop"],
+        ["stop", "link.pcap", "--filter", "ip proto 89"],
+    ],
+)
+def test_parse_args_refuses_bad_usage(cml, monkeypatch, capsys, args):
+    assert cml.parse_args(["cml_capture.py", *args]) is None
+    monkeypatch.setenv("NCV_CML_USER", "user")
+    monkeypatch.setenv("NCV_CML_PASS", "unused")
+    assert cml.main(["cml_capture.py", *args]) == 2
+    assert capsys.readouterr().out == cml.USAGE + "\n"
+
+
+def _fake_api(cml, monkeypatch):
+    """Replaces the HTTP calls and the link lookup; returns the list of (method, path, body) sent."""
+    sent = []
+
+    def request(host, method, path, token=None, body=None):
+        sent.append((method, path, body))
+        return b'"token"' if path == "/authenticate" else b"{}"
+
+    monkeypatch.setattr(cml, "_request", request)
+    monkeypatch.setattr(cml, "locate", lambda get, title: (LAB, "link-r1r2"))
+    monkeypatch.setenv("NCV_CML_USER", "user")
+    monkeypatch.setenv("NCV_CML_PASS", "unused")
+    return sent
+
+
+def test_capture_body_carries_the_filter_it_is_given(cml):
+    assert cml.capture_body(bpfilter="ip proto 89") == {"maxtime": 900, "bpfilter": "ip proto 89"}
+
+
+@pytest.mark.parametrize(
+    "args, bpfilter", [([], "tcp port 179"), (["--filter", "ip proto 89"], "ip proto 89")]
+)
+def test_start_sends_the_filter_to_the_capture_and_names_it(cml, monkeypatch, capsys, args, bpfilter):
+    sent = _fake_api(cml, monkeypatch)
+    assert cml.main(["cml_capture.py", "start", *args]) == 0
+    start = f"/labs/{LAB}/links/link-r1r2/capture/start"
+    assert sent[-1] == ("PUT", start, {"maxtime": 900, "bpfilter": bpfilter})
+    assert f"capturing {bpfilter} on the R1-R2 link of default-lab" in capsys.readouterr().out

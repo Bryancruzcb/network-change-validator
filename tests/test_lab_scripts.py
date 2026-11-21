@@ -9,8 +9,10 @@ scripts/lab/labctl.py reads router show output to know when a change has taken. 
 its parsers on sample output, and the findings the BGP run's planned change was predicted to
 produce, on synthetic snapshots shaped like the 2026-09-12 captures. That prediction was
 written before the run; the 2026-09-18 run matched it, and tests/test_lab_evidence.py replays
-the real captures. The last tests pin what `labctl.py reset` would send, on the published
-configs and on one built here; tests/test_labctl_commands.py runs the commands on a fake lab.
+the real captures. The OSPF dead-timer run is prepared the same way and has not run: its
+prediction is pinned here on synthetic snapshots. The last tests pin what `labctl.py reset`
+would send, on the published configs and on ones built here; tests/test_labctl_commands.py runs
+the commands on a fake lab.
 """
 
 from __future__ import annotations
@@ -133,30 +135,70 @@ R2_CONFIG = [
 ]
 
 
-def _write_snapshot(path, states, r1_extra=(), r2_extra=()):
-    """A snapshot shaped like the recorded captures, with the BGP states and extra config given."""
+def _write_lab_snapshot(path, ospf, bgp, configs):
+    """A snapshot shaped like the recorded captures: the OSPF and BGP sections and the config
+    lines given, around the routes and link counters every lab run keeps unchanged."""
     path.mkdir()
     routes = {
         "R1": {"20.20.20.0/24": {"protocol": "static"}, "1.1.1.0/24": {"protocol": "connected"}},
         "R2": {"10.10.10.0/24": {"protocol": "static"}, "1.1.1.0/24": {"protocol": "connected"}},
     }
-    peers = {"R1": ("1.1.1.2", 65002), "R2": ("1.1.1.1", 65001)}
-    configs = {"R1": R1_CONFIG + list(r1_extra), "R2": R2_CONFIG + list(r2_extra)}
     sections = {
-        "ospf.json": {},
-        "bgp.json": {
-            dev: {"neighbors": {peer: {"state": states[dev], "vrf": "default", "remote_as": asn}}}
-            for dev, (peer, asn) in peers.items()
-        },
+        "ospf.json": ospf,
+        "bgp.json": bgp,
         "routing.json": {dev: {"vrfs": {"default": {"routes": table}}} for dev, table in routes.items()},
         "interface.json": {
             dev: {"interfaces": {"Ethernet0/1": {"oper_status": "up", "in_errors": 0, "crc": 0}}}
-            for dev in peers
+            for dev in routes
         },
         "config.json": {dev: {"running": "\n".join(lines) + "\n"} for dev, lines in configs.items()},
     }
     for name, data in sections.items():
         (path / name).write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _write_snapshot(path, states, r1_extra=(), r2_extra=()):
+    """A snapshot shaped like the recorded captures, with the BGP states and extra config given."""
+    peers = {"R1": ("1.1.1.2", 65002), "R2": ("1.1.1.1", 65001)}
+    bgp = {
+        dev: {"neighbors": {peer: {"state": states[dev], "vrf": "default", "remote_as": asn}}}
+        for dev, (peer, asn) in peers.items()
+    }
+    configs = {"R1": R1_CONFIG + list(r1_extra), "R2": R2_CONFIG + list(r2_extra)}
+    _write_lab_snapshot(path, {}, bgp, configs)
+
+
+R1_OSPF_CONFIG = [
+    "hostname R1",
+    "router ospf 1",
+    " router-id 1.1.1.1",
+    " network 1.1.1.0 0.0.0.255 area 0",
+    "ip route 20.20.20.0 255.255.255.0 1.1.1.2",
+]
+R2_OSPF_CONFIG = [
+    "hostname R2",
+    "router ospf 1",
+    " router-id 2.2.2.2",
+    " network 1.1.1.0 0.0.0.255 area 0",
+    "ip route 10.10.10.0 255.255.255.0 1.1.1.1",
+]
+
+
+def _write_ospf_snapshot(path, neighbors, r1_extra=(), r2_extra=()):
+    """The OSPF twin of _write_snapshot. `neighbors` maps each router to {neighbor: state},
+    recorded as Genie's learn writes them: lowercase state, on Ethernet0/1. A router left out
+    of `neighbors`, or given {}, lists no neighbor at all."""
+    ospf = {
+        dev: {
+            "neighbors": {
+                nbr: {"state": state, "interface": "Ethernet0/1"}
+                for nbr, state in neighbors.get(dev, {}).items()
+            }
+        }
+        for dev in ("R1", "R2")
+    }
+    configs = {"R1": R1_OSPF_CONFIG + list(r1_extra), "R2": R2_OSPF_CONFIG + list(r2_extra)}
+    _write_lab_snapshot(path, ospf, {}, configs)
 
 
 def _bgp_diff(root, tmp_path, before, after, label, intent=None):
@@ -305,6 +347,113 @@ def test_holdtimer_intent_refuses_a_session_without_the_fast_timers(root, tmp_pa
     ]
 
 
+# The OSPF dead-timer run, prepared and not run yet: OSPF on the link with a 1 s hello (so a
+# 4 s dead interval), and an inbound ACL on R1 that drops OSPF from R2 as the planned change.
+
+# Synthetic `show ip ospf interface Ethernet0/1` output; the timers line follows the format
+# Genie's IOS XE parser documents. No real output of this command has been captured yet.
+OSPF_INTERFACE_FAST = """\
+Ethernet0/1 is up, line protocol is up
+  Internet Address 1.1.1.1/24, Interface ID 3, Area 0
+  Attached via Network Statement
+  Process ID 1, Router ID 1.1.1.1, Network Type BROADCAST, Cost: 10
+  Transmit Delay is 1 sec, State BDR, Priority 1
+  Designated Router (ID) 2.2.2.2, Interface address 1.1.1.2
+  Backup Designated router (ID) 1.1.1.1, Interface address 1.1.1.1
+  Timer intervals configured, Hello 1, Dead 4, Wait 4, Retransmit 5
+    Hello due in 00:00:00
+  Neighbor Count is 1, Adjacent neighbor count is 1
+"""
+OSPF_INTERFACE_DEFAULT = OSPF_INTERFACE_FAST.replace("Hello 1, Dead 4, Wait 4", "Hello 10, Dead 40, Wait 40")
+OSPF_NOT_ENABLED = "%OSPF: OSPF not enabled on Ethernet0/1\n"
+
+
+def test_labctl_reads_the_ospf_interface_timers(root):
+    labctl = _load_script(root, "labctl.py")
+    assert labctl.ospf_interface_timers(OSPF_INTERFACE_FAST) == (1, 4)
+    assert labctl.ospf_interface_timers(OSPF_INTERFACE_DEFAULT) == (10, 40)
+    assert labctl.ospf_interface_timers(OSPF_NOT_ENABLED) is None
+    assert labctl.ospf_interface_timers("") is None
+
+
+def test_labctl_setup_ospf_fast_sets_the_hello_before_router_ospf(root):
+    labctl = _load_script(root, "labctl.py")
+    fast = labctl.ospf_setup_lines("R1", labctl.OSPF_FAST_HELLO)
+    assert fast[:2] == ["interface Ethernet0/1", "ip ospf hello-interval 1"]
+    assert fast.index("ip ospf hello-interval 1") < fast.index("router ospf 1")
+    assert fast[2:] == labctl.ospf_setup_lines("R1")
+    assert not any("dead-interval" in line for line in fast)
+    assert labctl.ospf_setup_lines("R2", 1)[2:] == labctl.ospf_setup_lines("R2")
+
+
+def test_labctl_ospf_block_drops_ospf_from_r2_and_nothing_else(root):
+    labctl = _load_script(root, "labctl.py")
+    assert labctl.ospf_block_lines() == [
+        "ip access-list extended NCV-BLOCK-OSPF",
+        "deny ospf host 1.1.1.2 any",
+        "permit ip any any",
+        "exit",
+        "interface Ethernet0/1",
+        "ip access-group NCV-BLOCK-OSPF in",
+    ]
+    assert labctl.ospf_unblock_lines() == [
+        "interface Ethernet0/1",
+        "no ip access-group NCV-BLOCK-OSPF in",
+        "exit",
+        "no ip access-list extended NCV-BLOCK-OSPF",
+    ]
+
+
+DEADTIMER_INTENT = ("scripts", "lab", "intent-ospf-deadtimer.yaml")
+
+
+def test_deadtimer_intent_names_both_adjacencies_and_requires_the_fast_hello(root):
+    intent = load_intent(root.joinpath(*DEADTIMER_INTENT))
+    assert intent.intent_id == "devnet-default-lab-ospf-deadtimer"
+    peers = [(a.device, a.protocol, a.neighbor, a.interface) for a in intent.adjacencies]
+    assert peers == [("R1", "ospf", "2.2.2.2", "Ethernet0/1"), ("R2", "ospf", "1.1.1.1", "Ethernet0/1")]
+    required = {rule.device: rule.lines for rule in intent.must_include}
+    assert "ip ospf hello-interval 1" in required["R1"]
+    assert "ip ospf hello-interval 1" in required["R2"]
+    assert not any("NCV-BLOCK" in line for lines in required.values() for line in lines)
+
+
+FAST_HELLO = ["interface Ethernet0/1", " ip ospf hello-interval 1"]
+OSPF_ACL_ON_R1 = [
+    "ip access-list extended NCV-BLOCK-OSPF",
+    " 10 deny ospf host 1.1.1.2 any",
+    " 20 permit ip any any",
+    "interface Ethernet0/1",
+    " ip access-group NCV-BLOCK-OSPF in",
+]
+
+
+def test_deadtimer_run_prediction_on_synthetic_snapshots(root, tmp_path):
+    """R1 deletes its neighbor when the dead timer runs out; R2 still hears R1 and holds its
+    neighbor in INIT. The two sides differ, both are caught, and nothing else moves."""
+    intent = root.joinpath(*DEADTIMER_INTENT)
+    pre, post = tmp_path / "pre", tmp_path / "post"
+    full = {"R1": {"2.2.2.2": "full"}, "R2": {"1.1.1.1": "full"}}
+    _write_ospf_snapshot(pre, full, FAST_HELLO, FAST_HELLO)
+    _write_ospf_snapshot(post, {"R1": {}, "R2": {"1.1.1.1": "init"}}, FAST_HELLO + OSPF_ACL_ON_R1, FAST_HELLO)
+    assert _bgp_diff(root, tmp_path, pre, pre, "baseline", intent) == (0, [])
+    assert _bgp_diff(root, tmp_path, pre, post, "change", intent) == (
+        1,
+        [("V_ADJ", "R1", "ospf.neighbors.2.2.2.2"), ("V_ADJ", "R2", "ospf.neighbors.1.1.1.1")],
+    )
+
+
+def test_deadtimer_intent_refuses_a_capture_without_the_fast_hello(root, tmp_path):
+    """The no-change check is what proves the 1 s hello is configured before the change."""
+    intent = root.joinpath(*DEADTIMER_INTENT)
+    pre = tmp_path / "pre"
+    _write_ospf_snapshot(pre, {"R1": {"2.2.2.2": "full"}, "R2": {"1.1.1.1": "full"}})
+    assert _bgp_diff(root, tmp_path, pre, pre, "baseline", intent) == (
+        1,
+        [("V_DRIFT", "R1", "config.running.must_include"), ("V_DRIFT", "R2", "config.running.must_include")],
+    )
+
+
 # labctl.py reset: what it would send to undo the lab scripts' work, read from a running config.
 
 
@@ -451,3 +600,29 @@ def test_reset_leaves_what_the_scripts_did_not_add(root):
         ]
     )
     assert labctl.reset_lines(config) == []
+
+
+def test_reset_after_the_deadtimer_run_removes_the_acl_ospf_and_the_hello(root):
+    """Both routers as IOS would list them with this run's setup in place, R1 also with its
+    change: one Ethernet0/1 block carrying the hello line and, on R1, the ACL binding."""
+    labctl = _load_script(root, "labctl.py")
+    link = ["interface Ethernet0/1", " ip address 1.1.1.{} 255.255.255.0"]
+    r1 = "\n".join(
+        [R1_OSPF_CONFIG[0], *link, " ip access-group NCV-BLOCK-OSPF in", " ip ospf hello-interval 1"]
+        + R1_OSPF_CONFIG[1:]
+        + OSPF_ACL_ON_R1[:3]
+    ).format(1)
+    r2 = "\n".join([R2_OSPF_CONFIG[0], *link, " ip ospf hello-interval 1", *R2_OSPF_CONFIG[1:]]).format(2)
+    assert labctl.reset_lines(r1) == [
+        "interface Ethernet0/1",
+        "no ip access-group NCV-BLOCK-OSPF in",
+        "no ip access-list extended NCV-BLOCK-OSPF",
+        "no router ospf 1",
+        "interface Ethernet0/1",
+        "no ip ospf hello-interval",
+    ]
+    assert labctl.reset_lines(r2) == [
+        "no router ospf 1",
+        "interface Ethernet0/1",
+        "no ip ospf hello-interval",
+    ]

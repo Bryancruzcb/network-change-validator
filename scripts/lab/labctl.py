@@ -15,6 +15,10 @@ Usage, with the logins in the NCV_* environment (the run-*.sh scripts prompt for
   labctl.py setup-bgp-fast            setup-bgp with a 3 s keepalive and a 9 s hold time on both peers
   labctl.py check-hold-time           exit 1 unless both sessions negotiated the 9 s hold time
   labctl.py bgp-block | bgp-unblock   add / remove an inbound ACL on R1 Ethernet0/1 that drops BGP from R2
+  labctl.py setup-ospf-fast           setup-ospf with a 1 s hello on Ethernet0/1 of both routers
+  labctl.py check-dead-time           exit 1 unless both routers report Hello 1, Dead 4 on Ethernet0/1
+  labctl.py ospf-block | ospf-unblock  add / remove an inbound ACL on R1 Ethernet0/1 that drops OSPF from R2
+  labctl.py wait-ospf-lost [seconds]  poll until neither router has its OSPF neighbor FULL
   labctl.py reset                     remove what these scripts add from R1 and R2, back to what ships
 
 The testbed is testbeds/lab.yaml under the repository root, wherever this is run from, or the
@@ -48,6 +52,15 @@ FAST_TIMERS = (3, 9)
 # passes everything else. Inbound interface ACLs also filter traffic addressed to the router.
 BLOCK_ACL = "NCV-BLOCK-BGP"
 BLOCK_INTERFACE = "Ethernet0/1"
+# The dead-timer run: the OSPF hello interval in seconds on the link, 1 s instead of IOS's 10 s.
+# IOS then sets the dead interval to four hellos by itself (4 s instead of 40 s), so R1 gives up
+# on R2 seconds after OSPF stops arriving. Only the hello is configured: IOS writes just that
+# line into the running config, and whether it would also store a dead interval equal to the
+# derived one is not known, while the run's intent has to match the running config exactly.
+OSPF_FAST_HELLO = 1
+# The dead-timer run's change: an inbound ACL on R1's side of the link that drops every OSPF
+# packet from R2 (hellos to 224.0.0.5 and the unicast exchange alike) and passes everything else.
+OSPF_BLOCK_ACL = "NCV-BLOCK-OSPF"
 # What the sandbox ships in Ethernet0/3, the one spare port. reset puts it back when a run has
 # used it; the order IOS lists the two lines in does not matter.
 SHIPPED_ETHERNET0_3 = ("no ip address", "shutdown")
@@ -101,9 +114,27 @@ def bgp_negotiated_timers(output: str):
     return None
 
 
-def ospf_setup_lines(name: str) -> list[str]:
-    """The configuration setup-ospf sends to one router: OSPF area 0 on the R1-R2 link."""
-    return ["router ospf 1", f"router-id {ROUTER_IDS[name]}", "network 1.1.1.0 0.0.0.255 area 0"]
+_OSPF_INTERFACE_TIMERS = re.compile(r"Timer intervals configured, Hello (\d+), Dead (\d+)")
+
+
+def ospf_interface_timers(output: str):
+    """From `show ip ospf interface <intf>`: the (hello, dead) intervals in seconds, read from
+    the line `Timer intervals configured, Hello 1, Dead 4, Wait 4, Retransmit 5`, or None if
+    the output has no such line (OSPF is not enabled on the interface). Genie's IOS XE parser
+    documents the same line, with Hello 10, Dead 40 for the defaults."""
+    for line in output.splitlines():
+        match = _OSPF_INTERFACE_TIMERS.search(line)
+        if match:
+            return int(match.group(1)), int(match.group(2))
+    return None
+
+
+def ospf_setup_lines(name: str, hello=None) -> list[str]:
+    """The configuration setup-ospf sends to one router: OSPF area 0 on the R1-R2 link. With
+    `hello` (seconds), setup-ospf-fast first sets that hello interval on the link, so the
+    adjacency forms with the fast timers instead of changing them under a live one."""
+    timers = [f"interface {BLOCK_INTERFACE}", f"ip ospf hello-interval {hello}"] if hello else []
+    return timers + ["router ospf 1", f"router-id {ROUTER_IDS[name]}", "network 1.1.1.0 0.0.0.255 area 0"]
 
 
 def bgp_setup_lines(name: str, timers=None) -> list[str]:
@@ -129,28 +160,52 @@ def bgp_setup_lines(name: str, timers=None) -> list[str]:
     ]
 
 
-def bgp_block_lines() -> list[str]:
-    """The hold-timer run's change on R1: the ACL, then its inbound binding on the link."""
-    local, remote = BGP["R2"]["peer"], BGP["R1"]["peer"]
+def _block_lines(acl: str, entries: list[str]) -> list[str]:
+    """An ACL whose `entries` drop what a run blocks and whose last line passes everything else,
+    then its inbound binding on the link. `exit` leaves ACL mode before the interface line."""
     return [
-        f"ip access-list extended {BLOCK_ACL}",
-        f"deny tcp host {remote} host {local} eq bgp",
-        f"deny tcp host {remote} eq bgp host {local}",
+        f"ip access-list extended {acl}",
+        *entries,
         "permit ip any any",
         "exit",
         f"interface {BLOCK_INTERFACE}",
-        f"ip access-group {BLOCK_ACL} in",
+        f"ip access-group {acl} in",
     ]
+
+
+def _unblock_lines(acl: str) -> list[str]:
+    """The undo for _block_lines: unbind the ACL first, then delete it."""
+    return [
+        f"interface {BLOCK_INTERFACE}",
+        f"no ip access-group {acl} in",
+        "exit",
+        f"no ip access-list extended {acl}",
+    ]
+
+
+def bgp_block_lines() -> list[str]:
+    """The hold-timer run's change on R1: the ACL, then its inbound binding on the link."""
+    local, remote = BGP["R2"]["peer"], BGP["R1"]["peer"]
+    return _block_lines(
+        BLOCK_ACL,
+        [f"deny tcp host {remote} host {local} eq bgp", f"deny tcp host {remote} eq bgp host {local}"],
+    )
 
 
 def bgp_unblock_lines() -> list[str]:
     """The undo for bgp_block_lines: unbind the ACL first, then delete it."""
-    return [
-        f"interface {BLOCK_INTERFACE}",
-        f"no ip access-group {BLOCK_ACL} in",
-        "exit",
-        f"no ip access-list extended {BLOCK_ACL}",
-    ]
+    return _unblock_lines(BLOCK_ACL)
+
+
+def ospf_block_lines() -> list[str]:
+    """The dead-timer run's change on R1: the ACL, then its inbound binding on the link. One
+    deny line covers every destination R2's OSPF uses: 224.0.0.5, 224.0.0.6, and R1 itself."""
+    return _block_lines(OSPF_BLOCK_ACL, [f"deny ospf host {BGP['R1']['peer']} any"])
+
+
+def ospf_unblock_lines() -> list[str]:
+    """The undo for ospf_block_lines: unbind the ACL first, then delete it."""
+    return _unblock_lines(OSPF_BLOCK_ACL)
 
 
 def config_blocks(running_config: str) -> list[tuple[str, tuple[str, ...]]]:
@@ -256,23 +311,46 @@ def wait(tb, names, check, want, seconds, label) -> int:
             dev.disconnect()
 
 
+def show_on(tb, name, command) -> str:
+    """One show command on one router, disconnecting whatever happens."""
+    dev = connect(tb, name)
+    try:
+        return dev.execute(command)
+    finally:
+        dev.disconnect()
+
+
 def check_hold_time(tb) -> int:
     """Exit 0 only if both sessions run FAST_TIMERS. Timers change at the next session start,
     so a session that was already up when setup-bgp-fast ran keeps the 180 s default."""
     keepalive, hold = FAST_TIMERS
     ok = True
     for name, cfg in BGP.items():
-        dev = connect(tb, name)
-        try:
-            got = bgp_negotiated_timers(dev.execute(f"show bgp ipv4 unicast neighbors {cfg['peer']}"))
-        finally:
-            dev.disconnect()
+        got = bgp_negotiated_timers(show_on(tb, name, f"show bgp ipv4 unicast neighbors {cfg['peer']}"))
         print(f"{name}: negotiated (hold, keepalive) = {got}")
         ok = ok and got == (hold, keepalive)
     if not ok:
         print(
             f"expected hold {hold} s and keepalive {keepalive} s on both peers; reset the session with "
             f"`clear ip bgp {BGP['R1']['peer']}` on R1 or use a fresh reservation"
+        )
+    return 0 if ok else 1
+
+
+def check_dead_time(tb) -> int:
+    """Exit 0 only if both routers run a 1 s hello and the 4 s dead interval IOS derives from it
+    on the link. A mismatch on one end means the adjacency would never form, or a stale one from
+    a reused reservation is still carrying the old timers."""
+    hello, dead = OSPF_FAST_HELLO, 4 * OSPF_FAST_HELLO  # IOS sets the dead interval to four hellos
+    ok = True
+    for name in ROUTER_IDS:
+        got = ospf_interface_timers(show_on(tb, name, f"show ip ospf interface {BLOCK_INTERFACE}"))
+        print(f"{name}: {BLOCK_INTERFACE} (hello, dead) = {got}")
+        ok = ok and got == (hello, dead)
+    if not ok:
+        print(
+            f"expected Hello {hello} s and Dead {dead} s on {BLOCK_INTERFACE} of both routers; "
+            "`labctl.py reset` followed by `labctl.py setup-ospf-fast` gives a clean start"
         )
     return 0 if ok else 1
 
@@ -327,6 +405,7 @@ _LINK = "interface Ethernet0/1"  # the R1-R2 link
 _R1_PEER = f"neighbor {BGP['R1']['peer']} shutdown"
 _R1_BGP = f"router bgp {BGP['R1']['asn']}"
 _BGP_SUMMARY = "show bgp ipv4 unicast summary"
+_OSPF_NEIGHBORS = "show ip ospf neighbor"
 
 # name -> (what the usage line shows, run(testbed, seconds) -> exit code), in usage order.
 COMMANDS: dict[str, tuple[str, Callable[[Any, int], int]]] = {
@@ -356,6 +435,19 @@ COMMANDS: dict[str, tuple[str, Callable[[Any, int], int]]] = {
     "check-hold-time": ("check-hold-time", lambda tb, seconds: check_hold_time(tb)),
     "bgp-block": ("bgp-block", _send("R1", bgp_block_lines(), _BGP_SUMMARY)),
     "bgp-unblock": ("bgp-unblock", _send("R1", bgp_unblock_lines(), _BGP_SUMMARY)),
+    "setup-ospf-fast": (
+        "setup-ospf-fast",
+        _setup_on_both(lambda name: ospf_setup_lines(name, OSPF_FAST_HELLO)),
+    ),
+    "check-dead-time": ("check-dead-time", lambda tb, seconds: check_dead_time(tb)),
+    "ospf-block": ("ospf-block", _send("R1", ospf_block_lines(), _OSPF_NEIGHBORS)),
+    "ospf-unblock": ("ospf-unblock", _send("R1", ospf_unblock_lines(), _OSPF_NEIGHBORS)),
+    # wait-gone would never finish after ospf-block: R2 still hears R1 and keeps its entry,
+    # in a state other than FULL, while R1 drops R2 when its dead timer runs out.
+    "wait-ospf-lost": (
+        "wait-ospf-lost [seconds]",
+        _wait_for(OSPF_PEERS, ospf_check, lambda s: s is not True, "both OSPF neighbors to leave FULL"),
+    ),
     "reset": ("reset", lambda tb, seconds: reset(tb)),
 }
 USAGE = "usage: labctl.py " + " | ".join(usage for usage, _ in COMMANDS.values())

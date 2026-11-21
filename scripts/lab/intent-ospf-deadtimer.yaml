@@ -1,0 +1,66 @@
+# Draft intent for the OSPF dead-timer run (scripts/lab/run-ospf-deadtimer.sh). It was written
+# before any capture of that run exists, and it moves next to its evidence under fixtures/ once
+# a run is recorded, as intent-bgp-holdtimer.yaml did.
+#
+# The same rules as fixtures/lab-2026-09-12/intent-ospf.yaml, plus the 1 s hello line on both
+# routers, so the no-change check proves the fast timer is configured before the change. IOS
+# derives the 4 s dead interval from the hello and writes no line for it, so no rule names one.
+# The change (an inbound ACL on R1 that drops OSPF from R2) is deliberately not named here: no
+# rule anticipates it, and the run shows whether the adjacency rules catch it anyway.
+intent_id: devnet-default-lab-ospf-deadtimer
+version: 1
+
+devices:
+  - R1
+  - R2
+
+adjacencies:
+  - device: R1
+    protocol: ospf
+    neighbor: 2.2.2.2
+    interface: Ethernet0/1
+  - device: R2
+    protocol: ospf
+    neighbor: 1.1.1.1
+    interface: Ethernet0/1
+
+routes:
+  - device: R1
+    vrf: default
+    prefix: 20.20.20.0/24
+    protocol: static
+  - device: R1
+    vrf: default
+    prefix: 1.1.1.0/24
+    protocol: connected
+  - device: R2
+    vrf: default
+    prefix: 10.10.10.0/24
+    protocol: static
+  - device: R2
+    vrf: default
+    prefix: 1.1.1.0/24
+    protocol: connected
+
+interfaces:
+  - device: R1
+    name: Ethernet0/1
+    max_in_errors: 0
+    max_crc: 0
+  - device: R2
+    name: Ethernet0/1
+    max_in_errors: 0
+    max_crc: 0
+
+config:
+  must_include:
+    - device: R1
+      lines:
+        - "router ospf 1"
+        - "ip route 20.20.20.0 255.255.255.0 1.1.1.2"
+        - "ip ospf hello-interval 1"
+    - device: R2
+      lines:
+        - "router ospf 1"
+        - "ip route 10.10.10.0 255.255.255.0 1.1.1.1"
+        - "ip ospf hello-interval 1"

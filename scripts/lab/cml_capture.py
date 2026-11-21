@@ -5,7 +5,9 @@ controller, and with the sandbox VPN running inside WSL a Windows browser cannot
 the same capture through the CML 2.7 REST API (/api/v0) from where the run scripts already run.
 
 Usage, with the CML login in NCV_CML_USER and NCV_CML_PASS (the run-*.sh scripts set them):
-  cml_capture.py start              start capturing TCP port 179 on the R1-R2 link
+  cml_capture.py start [--filter "<bpf expression>"]
+                                    start capturing on the R1-R2 link what the filter matches
+                                    (default tcp port 179, BGP; the OSPF run uses ip proto 89)
   cml_capture.py stop <file.pcap>   stop the capture and save it
 
 The controller is NCV_CML_HOST (default 10.10.20.161) and the lab NCV_CML_LAB (default
@@ -25,12 +27,13 @@ import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 
-USAGE = "usage: cml_capture.py start | stop <file.pcap>"
+USAGE = 'usage: cml_capture.py start [--filter "<bpf expression>"] | stop <file.pcap>'
 DEFAULT_HOST = "10.10.20.161"
 DEFAULT_LAB = "default-lab"
 # The link the lab runs change: R1 Ethernet0/1 to R2 Ethernet0/1, in either direction.
 LINK_ENDS = frozenset({("R1", "Ethernet0/1"), ("R2", "Ethernet0/1")})
 BPF_FILTER = "tcp port 179"
+MAX_FILTER_LEN = 128  # the CML API's limit on bpfilter
 MAX_SECONDS = 900  # a run takes about six minutes from the change to the end
 
 Get = Callable[[str], object]
@@ -58,6 +61,20 @@ def find_link(links: list[dict], node_labels: dict, interface_labels: dict, ends
     if len(matches) != 1:
         raise LookupError(f"expected one link joining {sorted(ends)}, found {len(matches)}")
     return matches[0]
+
+
+def parse_args(argv: list[str]) -> tuple[str, str | None, str | None] | None:
+    """(action, filter, output path) from the command line, or None for bad usage. `start`
+    takes an optional `--filter <expression>` and gives no path; `stop` takes the path and no
+    filter. An empty filter, or one longer than the API accepts, is bad usage too."""
+    args = argv[1:]
+    if args[:1] == ["stop"] and len(args) == 2:
+        return "stop", None, args[1]
+    if args == ["start"]:
+        return "start", BPF_FILTER, None
+    if len(args) == 3 and args[:2] == ["start", "--filter"] and 0 < len(args[2]) <= MAX_FILTER_LEN:
+        return "start", args[2], None
+    return None
 
 
 def capture_body(seconds: int = MAX_SECONDS, bpfilter: str = BPF_FILTER) -> dict:
@@ -94,9 +111,11 @@ def _request(host: str, method: str, path: str, token: str | None = None, body=N
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) < 2 or argv[1] not in ("start", "stop") or (argv[1] == "stop") != (len(argv) == 3):
+    parsed = parse_args(argv)
+    if parsed is None:
         print(USAGE)
         return 2
+    action, bpfilter, output = parsed
     host = os.environ.get("NCV_CML_HOST", DEFAULT_HOST)
     title = os.environ.get("NCV_CML_LAB", DEFAULT_LAB)
     try:
@@ -112,15 +131,15 @@ def main(argv: list[str]) -> int:
 
         lab_id, link_id = locate(get, title)
         capture = f"/labs/{lab_id}/links/{link_id}/capture"
-        if argv[1] == "start":
-            _request(host, "PUT", f"{capture}/start", token, capture_body())
-            print(f"capturing {BPF_FILTER} on the R1-R2 link of {title} for up to {MAX_SECONDS} s")
+        if action == "start":
+            _request(host, "PUT", f"{capture}/start", token, capture_body(bpfilter=bpfilter))
+            print(f"capturing {bpfilter} on the R1-R2 link of {title} for up to {MAX_SECONDS} s")
             return 0
         key = get(f"{capture}/key")
         _request(host, "PUT", f"{capture}/stop", token)
         pcap = _request(host, "GET", f"/pcap/{key}", token)
-        Path(argv[2]).write_bytes(pcap)
-        print(f"saved {len(pcap)} bytes to {argv[2]}")
+        Path(output).write_bytes(pcap)
+        print(f"saved {len(pcap)} bytes to {output}")
         return 0
     except (urllib.error.URLError, LookupError, KeyError, ValueError, OSError) as err:
         print(f"cml_capture.py: {err}")
