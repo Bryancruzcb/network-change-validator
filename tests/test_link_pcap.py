@@ -1,9 +1,10 @@
 """scripts/lab/link_pcap.py, the OSPF and BGP timeline of a lab link, on captures built here.
 
 No OSPF capture exists yet. The OSPF packets follow RFC 2328 appendix A.3 and the frames reuse
-tests/test_bgp_pcap.py's builders, with checksums left at zero because nothing reads them. The
-one real capture, the 2026-11-20 hold-timer run's BGP-only pcap, must read exactly as
-bgp_pcap.py reads it.
+tests/test_bgp_pcap.py's builders, with checksums left at zero because nothing reads them. One
+Hello is also written out byte by byte from the RFC, so the decoder and the builders here are
+checked against the RFC and not only against each other. The one real capture, the 2026-11-20
+hold-timer run's BGP-only pcap, must read exactly as bgp_pcap.py reads it.
 """
 
 from __future__ import annotations
@@ -186,6 +187,73 @@ def test_a_hello_whose_length_field_claims_more_than_the_packet_holds_is_malform
     hello = bytearray(_hello("1.1.1.1", R2, R1, ["2.2.2.2"]))
     struct.pack_into("!H", hello, 2, len(hello) + 4)
     assert link_pcap.describe_ospf(bytes(hello)) == "OSPF (malformed)"
+
+
+def test_an_ospf_length_field_shorter_than_the_common_header_is_malformed(link_pcap):
+    hello = bytearray(_hello("1.1.1.1", R2, R1, ["2.2.2.2"]))
+    struct.pack_into("!H", hello, 2, 20)
+    assert link_pcap.describe_ospf(bytes(hello)) == "OSPF (malformed)"
+
+
+# One Hello written out from RFC 2328 appendix A.3.1 (the common header) and A.3.2 (the Hello
+# body), as a router with router ID 1.1.1.1 and the fast timers could send it on the link.
+# Offset in bytes, size, field = value.
+RFC2328_HELLO = bytes.fromhex(
+    "02"  # 0, 1 byte: Version # = 2
+    "01"  # 1, 1 byte: Type = 1, Hello
+    "0030"  # 2, 2 bytes: Packet length = 48: the 24-byte header, the 20-byte body, one neighbor
+    "01010101"  # 4, 4 bytes: Router ID = 1.1.1.1
+    "00000000"  # 8, 4 bytes: Area ID = 0.0.0.0, the backbone
+    "0000"  # 12, 2 bytes: Checksum, left at zero (link_pcap.py does not check it)
+    "0000"  # 14, 2 bytes: AuType = 0, null authentication
+    "0000000000000000"  # 16, 8 bytes: Authentication, unused with AuType 0
+    "ffffff00"  # 24, 4 bytes: Network Mask = 255.255.255.0
+    "0001"  # 28, 2 bytes: HelloInterval = 1 second
+    "12"  # 30, 1 byte: Options = 0x12: the E bit (0x02) and the L bit (0x10, RFC 5613: LLS follows)
+    "01"  # 31, 1 byte: Rtr Pri = 1
+    "00000004"  # 32, 4 bytes: RouterDeadInterval = 4 seconds
+    "01010102"  # 36, 4 bytes: Designated Router = 1.1.1.2 (an interface address)
+    "01010101"  # 40, 4 bytes: Backup Designated Router = 1.1.1.1
+    "02020202"  # 44, 4 bytes: Neighbor = 2.2.2.2, the only one: (48 - 44) / 4 = 1
+)
+RFC2328_HELLO_READS = (
+    "OSPF Hello rid 1.1.1.1 area 0.0.0.0 hello 1 dead 4 dr 1.1.1.2 bdr 1.1.1.1 neighbors 2.2.2.2"
+)
+# An RFC 5613 LLS data block as IOS XE appends it after a Hello or Database Description whose
+# L bit is set: 12 bytes the IPv4 length counts and the OSPF packet length does not.
+LLS_BLOCK = bytes.fromhex(
+    "0000"  # Checksum
+    "0003"  # LLS Data Length = 3 32-bit words, this header included
+    "0001"  # TLV type 1, Extended Options and Flags
+    "0004"  # TLV length = 4 bytes
+    "00000001"  # the flags: LR, out-of-band resynchronization capable
+)
+
+
+def test_a_hello_written_out_from_rfc_2328_reads_field_by_field(link_pcap):
+    assert len(RFC2328_HELLO) == 48
+    assert link_pcap.describe_ospf(RFC2328_HELLO) == RFC2328_HELLO_READS
+    # the builder the other tests use produces exactly these bytes
+    assert _hello("1.1.1.1", R2, R1, ["2.2.2.2"]) == RFC2328_HELLO
+
+
+def test_a_hello_with_an_lls_block_lists_only_its_real_neighbor(link_pcap):
+    """Read to the end of the IPv4 payload, the 12 LLS bytes would be three more neighbors
+    (0.0.0.3, 0.1.0.4, 0.0.0.1); the OSPF packet length ends the list after 2.2.2.2."""
+    assert RFC2328_HELLO[30] & 0x10  # the L bit
+    capture = _pcap([(3.0, _ospf_frame(R1, ALL_SPF_ROUTERS, RFC2328_HELLO + LLS_BLOCK))])
+    assert link_pcap.summarize(capture) == [f"   0.000  1.1.1.1 -> 224.0.0.5  {RFC2328_HELLO_READS}"]
+
+
+def test_a_database_description_with_an_lls_block_reads_as_without_it(link_pcap):
+    dd = _ospf(2, "2.2.2.2", struct.pack("!HBBI", 1500, 0x52, 0x07, 4660))  # options: O, L, E bits
+    assert struct.unpack_from("!H", dd, 2) == (len(dd),)  # the packet length leaves LLS out
+    capture = _pcap([(1.0, _ospf_frame(R2, R1, dd + LLS_BLOCK)), (1.1, _ospf_frame(R2, R1, dd))])
+    line = "OSPF DB Description rid 2.2.2.2 area 0.0.0.0 [I,M,MS] seq 4660"
+    assert link_pcap.summarize(capture) == [
+        f"   0.000  1.1.1.2 -> 1.1.1.1  {line}",
+        f"   0.100  1.1.1.2 -> 1.1.1.1  {line}",
+    ]
 
 
 def test_a_capture_with_neither_protocol_says_so(link_pcap):

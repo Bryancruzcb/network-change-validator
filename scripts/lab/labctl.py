@@ -1,7 +1,8 @@
 """Operator-side actions on the DevNet CML default-lab, deliberately outside ncv.
 
-ncv never pushes configuration. These are the hands that make the one planned change in
-the lab, so the captures around it have something to catch. Isolated lab only.
+ncv never pushes configuration. These are the hands that set each run up in the lab and make
+its one planned change, so the captures around it have something to catch, and `reset` takes
+it all away again. Isolated lab only.
 
 Usage, with the logins in the NCV_* environment (the run-*.sh scripts prompt for them):
   labctl.py setup-ospf                router ospf 1 on R1 and R2, area 0 on the R1-R2 link
@@ -31,10 +32,12 @@ Usage, with the logins in the NCV_* environment (the run-*.sh scripts prompt for
   labctl.py vrf-shut | vrf-noshut     shutdown / no shutdown on R1 Ethernet0/1.100
   labctl.py reset                     remove what these scripts add from R1 and R2, back to what ships
 
-The testbed is testbeds/lab.yaml under the repository root, wherever this is run from, or the
-file NCV_TESTBED names (a relative path is read from the repository root). Genie is imported
-only when a command runs, so the show-output parsers, the planned configuration lines, and the
-command table here can be tested without the lab extra installed.
+The testbed is the file NCV_TESTBED names (a relative path is read from the repository root),
+or testbeds/lab.yaml under the repository root when NCV_TESTBED is unset or empty, wherever
+this is run from. The check-* commands print each show command and the raw text they parsed
+before their reading, so a run's log keeps that text. Genie is imported only when a command
+runs, so the show-output parsers, the planned configuration lines, and the command table here
+can be tested without the lab extra installed.
 """
 
 import os
@@ -95,6 +98,7 @@ IBGP_PEERS = {
 VRF = "NCV"
 VRF_VLAN = 100
 VRF_INTERFACE = "Ethernet0/1.100"
+VRF_LOOPBACK = "Loopback100"
 # The subinterface reuses the link's own addresses (each router's address is the other's `peer`
 # in BGP). That is the point: the same neighbor address is then a BGP peer twice on each router,
 # once in each table, and only the VRF tells the two sessions apart.
@@ -171,16 +175,17 @@ def bgp_negotiated_timers(output: str):
     return None
 
 
-_OSPF_INTERFACE_TIMERS = re.compile(r"Timer intervals configured, Hello (\d+), Dead (\d+)")
+_OSPF_INTERFACE_TIMERS = re.compile(r"Hello (\d+), Dead (\d+)")
 
 
 def ospf_interface_timers(output: str):
     """From `show ip ospf interface <intf>`: the (hello, dead) intervals in seconds, read from
     the line `Timer intervals configured, Hello 1, Dead 4, Wait 4, Retransmit 5`, or None if
     the output has no such line (OSPF is not enabled on the interface). Genie's IOS XE parser
-    documents the same line, with Hello 10, Dead 40 for the defaults."""
+    documents the same line, with Hello 10, Dead 40 for the defaults. Only the two numbers are
+    matched on that line, since some IOS XE trains append more timers to it."""
     for line in output.splitlines():
-        match = _OSPF_INTERFACE_TIMERS.search(line)
+        match = _OSPF_INTERFACE_TIMERS.search(line) if "Timer intervals configured" in line else None
         if match:
             return int(match.group(1)), int(match.group(2))
     return None
@@ -268,7 +273,7 @@ def vrf_setup_lines(name: str) -> list[str]:
         f"encapsulation dot1Q {VRF_VLAN}",
         f"vrf forwarding {VRF}",
         f"ip address {link.ip} {link.netmask}",
-        "interface Loopback100",
+        f"interface {VRF_LOOPBACK}",
         f"vrf forwarding {VRF}",
         f"ip address {loopback.ip} {loopback.netmask}",
         f"router bgp {cfg['asn']}",
@@ -358,8 +363,13 @@ def config_blocks(running_config: str) -> list[tuple[str, tuple[str, ...]]]:
 
 _ACCESS_GROUP = re.compile(r"ip access-group (NCV-\S+) (in|out)")
 _ACCESS_LIST = re.compile(r"ip access-list extended (NCV-\S+)")
-_ROUTER_BGP = re.compile(r"router bgp (\S+)")
-_ADDED_INTERFACE = re.compile(r"interface (Loopback\d+|Ethernet0/1\.\d+)")
+# The BGP processes and interfaces the scripts create, by name, so reset never removes one a
+# reservation shipped with or an operator added: the eBGP runs' AS 65001 and 65002, the iBGP
+# run's AS 65010, the iBGP loopbacks, and the VRF run's loopback and subinterface.
+_ADDED_BGP = frozenset(f"router bgp {asn}" for asn in (*(cfg["asn"] for cfg in BGP.values()), IBGP_ASN))
+_ADDED_INTERFACES = frozenset(
+    f"interface {name}" for name in [*LOOPBACKS["R1"], *LOOPBACKS["R2"], VRF_LOOPBACK, VRF_INTERFACE]
+)
 _LINK_RESETS = (
     ("shutdown", "no shutdown"),
     ("ip ospf hello-interval", "no ip ospf hello-interval"),
@@ -370,8 +380,10 @@ _LINK_RESETS = (
 def reset_lines(running_config: str) -> list[str]:
     """The configuration that undoes the lab scripts' work on one router, read from its
     running config. A line is emitted only for something present, unbinding before deleting,
-    so a config the sandbox shipped gives []. Mgmt-intf, Ethernet0/0 and 0/2, the static
-    routes, users, and lines are never touched: they are how the scripts reach the routers."""
+    so a config the sandbox shipped gives []. BGP processes and interfaces are removed only
+    when they carry a name the scripts create, so one a reservation ships with stays.
+    Mgmt-intf, Ethernet0/0 and 0/2, the static routes, users, and lines are never touched:
+    they are how the scripts reach the routers."""
     blocks = config_blocks(running_config)
     body = dict(blocks)
     lines: list[str] = []
@@ -381,14 +393,14 @@ def reset_lines(running_config: str) -> list[str]:
             if bound:
                 lines += [head, *(f"no ip access-group {m.group(1)} {m.group(2)}" for m in bound)]
     lines += [f"no {head}" for head, _ in blocks if _ACCESS_LIST.fullmatch(head)]
-    lines += [f"no {head}" for head, _ in blocks if _ROUTER_BGP.fullmatch(head)]
+    lines += [f"no {head}" for head, _ in blocks if head in _ADDED_BGP]
     if "router ospf 1" in body:
         lines.append("no router ospf 1")
     link = body.get("interface Ethernet0/1", ())
     undo = [no for prefix, no in _LINK_RESETS if any(c.startswith(prefix) for c in link)]
     if undo:
         lines += ["interface Ethernet0/1", *undo]
-    lines += [f"no {head}" for head, _ in blocks if _ADDED_INTERFACE.fullmatch(head)]
+    lines += [f"no {head}" for head, _ in blocks if head in _ADDED_INTERFACES]
     spare = body.get("interface Ethernet0/3")
     if spare is not None and sorted(c for c in spare if c != "!") != sorted(SHIPPED_ETHERNET0_3):
         lines += ["default interface Ethernet0/3", "interface Ethernet0/3", "shutdown"]
@@ -466,6 +478,20 @@ def show_on(tb, name, command) -> str:
         dev.disconnect()
 
 
+def echoed(name: str, command: str, output: str) -> str:
+    """The command as a router prompt would show it, then its output exactly as it came, for a
+    run's log. No saved capture holds the text the check-* commands parse, and a fresh lab runs
+    neither OSPF nor BGP, so a run's own log is the only place that text can be recorded."""
+    return f"{name}# {command}\n{output}" + ("" if output.endswith("\n") else "\n")
+
+
+def show_and_echo(tb, name, command) -> str:
+    """show_on, printing the command and the raw output it returned before handing it back."""
+    output = show_on(tb, name, command)
+    print(echoed(name, command, output), end="")
+    return output
+
+
 def check_hold_time(tb, peers, neighbors="show bgp ipv4 unicast neighbors", clear="clear ip bgp") -> int:
     """Exit 0 only if each router's session to its peer in `peers` runs FAST_TIMERS, read from
     `<neighbors> <peer>`; `clear` is the command the advice names for resetting R1's session.
@@ -474,7 +500,7 @@ def check_hold_time(tb, peers, neighbors="show bgp ipv4 unicast neighbors", clea
     keepalive, hold = FAST_TIMERS
     ok = True
     for name, peer in peers.items():
-        got = bgp_negotiated_timers(show_on(tb, name, f"{neighbors} {peer}"))
+        got = bgp_negotiated_timers(show_and_echo(tb, name, f"{neighbors} {peer}"))
         print(f"{name}: negotiated (hold, keepalive) = {got}")
         ok = ok and got == (hold, keepalive)
     if not ok:
@@ -492,7 +518,7 @@ def check_dead_time(tb) -> int:
     hello, dead = OSPF_FAST_HELLO, 4 * OSPF_FAST_HELLO  # IOS sets the dead interval to four hellos
     ok = True
     for name in ROUTER_IDS:
-        got = ospf_interface_timers(show_on(tb, name, f"show ip ospf interface {BLOCK_INTERFACE}"))
+        got = ospf_interface_timers(show_and_echo(tb, name, f"show ip ospf interface {BLOCK_INTERFACE}"))
         print(f"{name}: {BLOCK_INTERFACE} (hello, dead) = {got}")
         ok = ok and got == (hello, dead)
     if not ok:

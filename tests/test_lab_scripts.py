@@ -393,6 +393,18 @@ def test_labctl_reads_the_ospf_interface_timers(root):
     assert labctl.ospf_interface_timers("") is None
 
 
+def test_labctl_reads_the_ospf_timers_on_their_line_whatever_follows_them(root):
+    """Some IOS XE trains append more timers to the line; only the two numbers on it count, and
+    a Hello/Dead pair on any other line is not the configured timers."""
+    labctl = _load_script(root, "labctl.py")
+    longer = OSPF_INTERFACE_FAST.replace("Retransmit 5", "Retransmit 5, oob-resync timeout 40")
+    assert "Retransmit 5, oob-resync timeout 40\n" in longer
+    assert labctl.ospf_interface_timers(longer) == (1, 4)
+    elsewhere = "  Last seen Hello 10, Dead 40 from a neighbor\n"
+    assert labctl.ospf_interface_timers(elsewhere + OSPF_INTERFACE_FAST) == (1, 4)
+    assert labctl.ospf_interface_timers(elsewhere) is None
+
+
 def test_labctl_setup_ospf_fast_sets_the_hello_before_router_ospf(root):
     labctl = _load_script(root, "labctl.py")
     fast = labctl.ospf_setup_lines("R1", labctl.OSPF_FAST_HELLO)
@@ -1105,18 +1117,24 @@ def test_reset_never_touches_the_management_path_or_the_static_routes(root):
 
 
 def test_reset_leaves_what_the_scripts_did_not_add(root):
-    """Only NCV- ACLs, OSPF process 1, and the named interfaces are the scripts' own, and the
-    spare port in either order is still what ships."""
+    """Only NCV- ACLs, OSPF process 1, the BGP processes and interfaces the scripts name, and
+    vrf NCV are the scripts' own, and the spare port in either order is still what ships."""
     labctl = _load_script(root, "labctl.py")
     config = "\n".join(
         [
+            "interface Loopback7",
+            " ip address 7.7.7.7 255.255.255.255",
             "interface Ethernet0/1",
             " ip address 1.1.1.1 255.255.255.0",
             " ip access-group OPERATOR in",
+            "interface Ethernet0/1.200",
+            " encapsulation dot1Q 200",
             "interface Ethernet0/3",
             " shutdown",
             " no ip address",
             "router ospf 2",
+            "router bgp 64512",
+            " bgp log-neighbor-changes",
             "ip access-list extended OPERATOR",
             " permit ip any any",
             "vrf definition NCV-OTHER",

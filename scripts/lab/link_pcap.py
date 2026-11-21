@@ -8,8 +8,17 @@ and backup designated router (interface addresses, as RFC 2328 carries them), an
 neighbors it lists; a Database Description shows its I, M, and MS flags and sequence number;
 a Link State Update shows how many LSAs it carries. A BGP line is exactly what bgp_pcap.py
 prints for that segment. A frame tagged with 802.1Q is prefixed with its VLAN id, so a
-session that rides a VLAN on the same link can be told apart. A packet too short for its own
-headers, or not OSPF version 2, is shown as `OSPF (malformed)` rather than stopping the read.
+session that rides a VLAN on the same link can be told apart.
+
+Every OSPF body ends at the packet length in the OSPF header, not at the end of the IPv4
+payload. IOS XE runs link-local signaling (RFC 5613) and appends an LLS block after the OSPF
+packet on every Hello and Database Description; the IPv4 length counts it and the OSPF length
+does not, so reading a Hello's neighbor list to the end of the IPv4 payload would list the LLS
+bytes as about three more neighbors. A Hello therefore lists (packet length - 44) / 4
+neighbors, and whatever follows the packet length is ignored. A packet whose length field is
+smaller than the OSPF header or larger than the bytes present, one too short for its own
+body, or one that is not OSPF version 2, is shown as `OSPF (malformed)` rather than stopping
+the read.
 
 It reads classic libpcap only, as bgp_pcap.py does, and reuses that script's frame walk and
 BGP descriptions. Standard library only, and outside ncv like the rest of scripts/lab.
@@ -42,7 +51,8 @@ NOTHING = "no OSPF packets or BGP segments"
 
 def ospf_packet(frame: bytes) -> tuple[int | None, str, str, bytes] | None:
     """(VLAN id or None, source, destination, the OSPF bytes) for an IPv4 protocol 89 frame,
-    else None. The packet is cut at its IPv4 total length by bgp_pcap's frame walk."""
+    else None. The bytes are cut at the IPv4 total length by bgp_pcap's frame walk, so they
+    may still carry an LLS block after the OSPF packet; describe_ospf cuts that off."""
     packet = bgp_pcap.ipv4_packet(frame)
     if packet is None or packet[1][9] != IPPROTO_OSPF:
         return None
@@ -56,13 +66,14 @@ def _ip(data: bytes, offset: int) -> str:
 
 
 def describe_ospf(data: bytes) -> str:
-    """One OSPFv2 packet in words (RFC 2328 appendix A.3), from its common header and body."""
+    """One OSPFv2 packet in words (RFC 2328 appendix A.3), from its common header and body.
+    The body ends at the header's packet length; bytes after it (an LLS block) are not read."""
     if len(data) < OSPF_HEADER_LEN:
         return MALFORMED
     version, kind, length = struct.unpack_from("!BBH", data, 0)
     if version != 2 or kind not in OSPF_TYPES or not OSPF_HEADER_LEN <= length <= len(data):
         return MALFORMED
-    body = data[OSPF_HEADER_LEN:length]
+    body = data[OSPF_HEADER_LEN:length]  # not data[OSPF_HEADER_LEN:]: an LLS block may follow
     text = f"OSPF {OSPF_TYPES[kind]} rid {_ip(data, 4)} area {_ip(data, 8)}"
     if kind == 1:
         if len(body) < HELLO_BODY_LEN or (len(body) - HELLO_BODY_LEN) % 4:

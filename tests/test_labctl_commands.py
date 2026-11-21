@@ -1,9 +1,13 @@
 """scripts/lab/labctl.py's commands, run through main() against a fake lab.
 
 The lab is reachable only during a reservation, so a typo in a command would otherwise be
-found there. Each test replaces load_testbed with a fake testbed whose R1 and R2 record what
-they were sent and answer show commands from a table the test gives; a show command the test
-did not expect fails it. The clock is replaced too, so the waits never sleep.
+found there. Each test replaces load_testbed with a fake testbed whose R1 and R2 append every
+connect, configure, show, and disconnect to one shared log, as (device, operation, payload),
+and answer show commands from a table the test gives; a show command the test did not expect
+fails it. Each command's test compares the whole log, so it also catches a command that
+touches the other router, a show sent before the configure it should follow, or a router left
+connected. The line builders the log is compared against are pinned literally in
+tests/test_lab_scripts.py. The clock is replaced too, so the waits never sleep.
 """
 
 from __future__ import annotations
@@ -11,6 +15,7 @@ from __future__ import annotations
 import re
 import sys
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from test_lab_scripts import (
@@ -27,28 +32,28 @@ from test_lab_scripts import (
 
 
 class FakeDevice:
+    """One router of the fake lab. What it is sent goes onto the log it shares with the other."""
+
     def __init__(self, name, answers, log, fail_on=None):
         self.name, self.answers, self.log, self.fail_on = name, answers, log, fail_on
-        self.configured: list[list[str]] = []
-        self.executed: list[str] = []
 
     def connect(self, **kwargs):
-        self.log.append((self.name, "connect"))
+        self.log.append((self.name, "connect", None))
 
     def disconnect(self):
-        self.log.append((self.name, "disconnect"))
+        self.log.append((self.name, "disconnect", None))
 
     def configure(self, lines):
         if self.fail_on == "configure":
             raise RuntimeError(f"{self.name} refused the configuration")
-        self.configured.append(list(lines))
+        self.log.append((self.name, "configure", list(lines)))
 
     def execute(self, command):
         if self.fail_on == "execute":
             raise RuntimeError(f"{self.name} dropped the connection")
         if command not in self.answers:
             pytest.fail(f"{self.name} was sent {command!r}, which this test has no answer for")
-        self.executed.append(command)
+        self.log.append((self.name, "execute", command))
         return self.answers[command]
 
 
@@ -78,9 +83,10 @@ def labctl(root, monkeypatch):
 
 
 def _run(labctl, monkeypatch, argv, answers=None, fail_on=None):
-    """main(argv) on a fake R1 and R2; checks every device connected was disconnected."""
+    """main(argv) on a fake R1 and R2: the exit code and the shared log. Checks every device
+    connected was disconnected, even when the command raised."""
     answers = answers or {}
-    log: list[tuple[str, str]] = []
+    log: list[tuple[str, str, Any]] = []
     devices = {
         name: FakeDevice(name, answers.get(name, {}), log, fail_on.get(name) if fail_on else None)
         for name in ("R1", "R2")
@@ -96,9 +102,41 @@ def _run(labctl, monkeypatch, argv, answers=None, fail_on=None):
         code = labctl.main(["labctl.py", *argv])
     finally:
         for name in devices:
-            assert log.count((name, "connect")) == log.count((name, "disconnect")), log
+            assert log.count((name, "connect", None)) == log.count((name, "disconnect", None)), log
     assert loaded == [labctl.testbed_path({})]
-    return code, devices
+    return code, log
+
+
+def _session(name, *operations):
+    """What one connection to a router logs: connect, each (operation, payload), disconnect."""
+    return [
+        (name, "connect", None),
+        *((name, op, payload) for op, payload in operations),
+        (name, "disconnect", None),
+    ]
+
+
+def _polls(show, polls):
+    """What a wait logs: it connects to both routers, reads `show` on each `polls` times, then
+    disconnects them, without configuring anything."""
+    names = ("R1", "R2")
+    return (
+        [(name, "connect", None) for name in names]
+        + [(name, "execute", show) for _ in range(polls) for name in names]
+        + [(name, "disconnect", None) for name in names]
+    )
+
+
+def _shows(command_for):
+    """What a check logs: one connection per router in turn, each sending one show command."""
+    return [entry for name in ("R1", "R2") for entry in _session(name, ("execute", command_for[name]))]
+
+
+def _echoed(name, command, output, reading):
+    """A check's printout for one router: its prompt and command, the raw output, then the
+    reading parsed from it."""
+    newline = "" if output.endswith("\n") else "\n"
+    return f"{name}# {command}\n{output}{newline}{reading}\n"
 
 
 INTERFACE_BRIEF = "show ip interface brief"
@@ -110,53 +148,67 @@ SHOWS = {
     for name in ("R1", "R2")
 }
 
-# command -> (the configure calls each router gets, built from labctl, and the show it prints after)
+
+def _on_both(build):
+    """The log of a setup: R1 is configured with build(labctl, "R1") and let go, then R2 with
+    its own lines, and nothing is shown."""
+    return lambda m: [
+        entry for name in ("R1", "R2") for entry in _session(name, ("configure", build(m, name)))
+    ]
+
+
+def _on_r1(build, show):
+    """The log of a change: R1 alone is configured with build(labctl), then shows `show`."""
+    return lambda m: _session("R1", ("configure", build(m)), ("execute", show))
+
+
+# command -> the whole log it should leave, built from labctl's line builders
 CONFIGURE_COMMANDS = {
-    "setup-ospf": (lambda m: {"R1": [m.ospf_setup_lines("R1")], "R2": [m.ospf_setup_lines("R2")]}, None),
-    "shut": (lambda m: {"R1": [["interface Ethernet0/1", "shutdown"]], "R2": []}, INTERFACE_BRIEF),
-    "noshut": (lambda m: {"R1": [["interface Ethernet0/1", "no shutdown"]], "R2": []}, INTERFACE_BRIEF),
-    "setup-bgp": (lambda m: {"R1": [m.bgp_setup_lines("R1")], "R2": [m.bgp_setup_lines("R2")]}, None),
-    "bgp-shut": (
-        lambda m: {"R1": [["router bgp 65001", "neighbor 1.1.1.2 shutdown"]], "R2": []},
-        BGP_SUMMARY,
-    ),
-    "bgp-noshut": (
-        lambda m: {"R1": [["router bgp 65001", "no neighbor 1.1.1.2 shutdown"]], "R2": []},
-        BGP_SUMMARY,
-    ),
-    "setup-bgp-fast": (
-        lambda m: {
-            "R1": [m.bgp_setup_lines("R1", m.FAST_TIMERS)],
-            "R2": [m.bgp_setup_lines("R2", m.FAST_TIMERS)],
-        },
-        None,
-    ),
-    "bgp-block": (lambda m: {"R1": [m.bgp_block_lines()], "R2": []}, BGP_SUMMARY),
-    "bgp-unblock": (lambda m: {"R1": [m.bgp_unblock_lines()], "R2": []}, BGP_SUMMARY),
-    "setup-ospf-fast": (
-        lambda m: {
-            "R1": [m.ospf_setup_lines("R1", m.OSPF_FAST_HELLO)],
-            "R2": [m.ospf_setup_lines("R2", m.OSPF_FAST_HELLO)],
-        },
-        None,
-    ),
-    "ospf-block": (lambda m: {"R1": [m.ospf_block_lines()], "R2": []}, OSPF),
-    "ospf-unblock": (lambda m: {"R1": [m.ospf_unblock_lines()], "R2": []}, OSPF),
-    "setup-ibgp": (lambda m: {"R1": [m.ibgp_setup_lines("R1")], "R2": [m.ibgp_setup_lines("R2")]}, None),
-    "setup-vrf": (lambda m: {"R1": [m.vrf_setup_lines("R1")], "R2": [m.vrf_setup_lines("R2")]}, None),
-    "vrf-shut": (lambda m: {"R1": [["interface Ethernet0/1.100", "shutdown"]], "R2": []}, VRF_SUMMARY),
-    "vrf-noshut": (lambda m: {"R1": [["interface Ethernet0/1.100", "no shutdown"]], "R2": []}, VRF_SUMMARY),
+    "setup-ospf": _on_both(lambda m, name: m.ospf_setup_lines(name)),
+    "shut": _on_r1(lambda m: ["interface Ethernet0/1", "shutdown"], INTERFACE_BRIEF),
+    "noshut": _on_r1(lambda m: ["interface Ethernet0/1", "no shutdown"], INTERFACE_BRIEF),
+    "setup-bgp": _on_both(lambda m, name: m.bgp_setup_lines(name)),
+    "bgp-shut": _on_r1(lambda m: ["router bgp 65001", "neighbor 1.1.1.2 shutdown"], BGP_SUMMARY),
+    "bgp-noshut": _on_r1(lambda m: ["router bgp 65001", "no neighbor 1.1.1.2 shutdown"], BGP_SUMMARY),
+    "setup-bgp-fast": _on_both(lambda m, name: m.bgp_setup_lines(name, m.FAST_TIMERS)),
+    "bgp-block": _on_r1(lambda m: m.bgp_block_lines(), BGP_SUMMARY),
+    "bgp-unblock": _on_r1(lambda m: m.bgp_unblock_lines(), BGP_SUMMARY),
+    "setup-ospf-fast": _on_both(lambda m, name: m.ospf_setup_lines(name, m.OSPF_FAST_HELLO)),
+    "ospf-block": _on_r1(lambda m: m.ospf_block_lines(), OSPF),
+    "ospf-unblock": _on_r1(lambda m: m.ospf_unblock_lines(), OSPF),
+    "setup-ibgp": _on_both(lambda m, name: m.ibgp_setup_lines(name)),
+    "setup-vrf": _on_both(lambda m, name: m.vrf_setup_lines(name)),
+    "vrf-shut": _on_r1(lambda m: ["interface Ethernet0/1.100", "shutdown"], VRF_SUMMARY),
+    "vrf-noshut": _on_r1(lambda m: ["interface Ethernet0/1.100", "no shutdown"], VRF_SUMMARY),
 }
 
 
 @pytest.mark.parametrize("command", CONFIGURE_COMMANDS)
 def test_each_change_command_sends_its_lines_to_its_router(labctl, monkeypatch, command):
-    expected, show = CONFIGURE_COMMANDS[command]
-    code, devices = _run(labctl, monkeypatch, [command], SHOWS)
+    code, log = _run(labctl, monkeypatch, [command], SHOWS)
     assert code == 0
-    assert {name: dev.configured for name, dev in devices.items()} == expected(labctl)
-    shown = {name: dev.executed for name, dev in devices.items()}
-    assert shown == {"R1": [show] if show else [], "R2": []}
+    assert log == CONFIGURE_COMMANDS[command](labctl)
+
+
+def test_the_log_shows_the_order_across_both_routers(labctl, monkeypatch):
+    """A literal log, so the shape every comparison above relies on is pinned once by hand: a
+    change reaches R1 only and shows after it configures; a setup lets R1 go before R2."""
+    _, change = _run(labctl, monkeypatch, ["shut"], SHOWS)
+    assert change == [
+        ("R1", "connect", None),
+        ("R1", "configure", ["interface Ethernet0/1", "shutdown"]),
+        ("R1", "execute", "show ip interface brief"),
+        ("R1", "disconnect", None),
+    ]
+    _, setup = _run(labctl, monkeypatch, ["setup-ospf"], SHOWS)
+    assert setup == [
+        ("R1", "connect", None),
+        ("R1", "configure", ["router ospf 1", "router-id 1.1.1.1", "network 1.1.1.0 0.0.0.255 area 0"]),
+        ("R1", "disconnect", None),
+        ("R2", "connect", None),
+        ("R2", "configure", ["router ospf 1", "router-id 2.2.2.2", "network 1.1.1.0 0.0.0.255 area 0"]),
+        ("R2", "disconnect", None),
+    ]
 
 
 OSPF_HEADER = "Neighbor ID     Pri   State           Dead Time   Address         Interface\n"
@@ -235,21 +287,21 @@ def _answers(show, outputs):
 @pytest.mark.parametrize("command", WAIT_COMMANDS)
 def test_a_wait_that_is_already_satisfied_returns_on_the_first_poll(labctl, monkeypatch, command):
     show, satisfied, _ = WAIT_COMMANDS[command]
-    code, devices = _run(labctl, monkeypatch, [command], _answers(show, satisfied))
+    code, log = _run(labctl, monkeypatch, [command], _answers(show, satisfied))
     assert code == 0
-    assert {name: dev.executed for name, dev in devices.items()} == {"R1": [show], "R2": [show]}
+    assert log == _polls(show, 1)
     assert labctl.time.sleeps == []
-    assert all(dev.configured == [] for dev in devices.values())
 
 
 @pytest.mark.parametrize("command", WAIT_COMMANDS)
 def test_a_wait_that_never_comes_true_times_out_with_exit_1(labctl, monkeypatch, capsys, command):
     show, _, never = WAIT_COMMANDS[command]
-    code, devices = _run(labctl, monkeypatch, [command, "0"], _answers(show, never))
+    code, log = _run(labctl, monkeypatch, [command, "0"], _answers(show, never))
     assert code == 1
     assert "timed out waiting for" in capsys.readouterr().out
+    # with 0 seconds: one poll, one 5 s sleep that passes the deadline, a last poll, and out
+    assert log == _polls(show, 2)
     assert labctl.time.sleeps == [5]
-    assert all(dev.configured == [] for dev in devices.values())
 
 
 def test_after_the_dead_timer_change_only_wait_ospf_lost_finishes(labctl, monkeypatch):
@@ -287,11 +339,14 @@ def test_wait_vrf_bgp_up_waits_for_a_learned_prefix_in_the_vrf_table(labctl, mon
     assert "{'R1': 0, 'R2': 0}" in capsys.readouterr().out
     assert _run(labctl, monkeypatch, ["wait-vrf-bgp-down", "0"], nothing_learned)[0] == 1
     # wait-bgp-up asks only for the global summary; a VRF answer there would not count.
-    code, devices = _run(labctl, monkeypatch, ["wait-bgp-up"], _answers(BGP_SUMMARY, BGP_UP))
-    assert code == 0 and devices["R1"].executed == [BGP_SUMMARY]
+    code, log = _run(labctl, monkeypatch, ["wait-bgp-up"], _answers(BGP_SUMMARY, BGP_UP))
+    assert code == 0 and log == _polls(BGP_SUMMARY, 1)
 
 
-def _neighbors(r1_output, r2_output, peers=None, command="show bgp ipv4 unicast neighbors"):
+BGP_NEIGHBORS = "show bgp ipv4 unicast neighbors"
+
+
+def _neighbors(r1_output, r2_output, peers=None, command=BGP_NEIGHBORS):
     peers = peers or {"R1": "1.1.1.2", "R2": "1.1.1.1"}
     return {
         "R1": {f"{command} {peers['R1']}": r1_output},
@@ -299,11 +354,22 @@ def _neighbors(r1_output, r2_output, peers=None, command="show bgp ipv4 unicast 
     }
 
 
-def test_check_hold_time_passes_only_when_both_sessions_run_the_fast_timers(labctl, monkeypatch):
+GLOBAL_NEIGHBORS = {"R1": f"{BGP_NEIGHBORS} 1.1.1.2", "R2": f"{BGP_NEIGHBORS} 1.1.1.1"}
+
+
+def test_check_hold_time_passes_only_when_both_sessions_run_the_fast_timers(labctl, monkeypatch, capsys):
     fast = _neighbors(NEIGHBOR_FAST_TIMERS, NEIGHBOR_FAST_TIMERS)
-    assert _run(labctl, monkeypatch, ["check-hold-time"], fast)[0] == 0
+    code, log = _run(labctl, monkeypatch, ["check-hold-time"], fast)
+    assert code == 0
+    assert log == _shows(GLOBAL_NEIGHBORS)
+    out = capsys.readouterr().out
+    for name in ("R1", "R2"):
+        reading = f"{name}: negotiated (hold, keepalive) = (9, 3)"
+        assert _echoed(name, GLOBAL_NEIGHBORS[name], NEIGHBOR_FAST_TIMERS, reading) in out
     stale = _neighbors(NEIGHBOR_FAST_TIMERS, NEIGHBOR_STALE_TIMERS)
     assert _run(labctl, monkeypatch, ["check-hold-time"], stale)[0] == 1
+    reading = "R2: negotiated (hold, keepalive) = (180, 60)"
+    assert _echoed("R2", GLOBAL_NEIGHBORS["R2"], NEIGHBOR_STALE_TIMERS, reading) in capsys.readouterr().out
 
 
 IBGP_PEERS = {"R1": "10.255.255.2", "R2": "10.255.255.1"}
@@ -311,11 +377,14 @@ IBGP_PEERS = {"R1": "10.255.255.2", "R2": "10.255.255.1"}
 
 def test_check_ibgp_hold_time_reads_the_loopback_peers(labctl, monkeypatch, capsys):
     fast = _neighbors(NEIGHBOR_FAST_TIMERS, NEIGHBOR_FAST_TIMERS, IBGP_PEERS)
-    code, devices = _run(labctl, monkeypatch, ["check-ibgp-hold-time"], fast)
+    code, log = _run(labctl, monkeypatch, ["check-ibgp-hold-time"], fast)
     assert code == 0
-    assert devices["R1"].executed == ["show bgp ipv4 unicast neighbors 10.255.255.2"]
-    assert devices["R2"].executed == ["show bgp ipv4 unicast neighbors 10.255.255.1"]
-    assert "R2: negotiated (hold, keepalive) = (9, 3)" in capsys.readouterr().out
+    commands = {"R1": f"{BGP_NEIGHBORS} 10.255.255.2", "R2": f"{BGP_NEIGHBORS} 10.255.255.1"}
+    assert log == _shows(commands)
+    out = capsys.readouterr().out
+    for name in ("R1", "R2"):
+        reading = f"{name}: negotiated (hold, keepalive) = (9, 3)"
+        assert _echoed(name, commands[name], NEIGHBOR_FAST_TIMERS, reading) in out
     stale = _neighbors(NEIGHBOR_STALE_TIMERS, NEIGHBOR_FAST_TIMERS, IBGP_PEERS)
     assert _run(labctl, monkeypatch, ["check-ibgp-hold-time"], stale)[0] == 1
     assert "`clear ip bgp 10.255.255.2` on R1" in capsys.readouterr().out
@@ -326,11 +395,14 @@ VRF_NEIGHBORS = "show bgp vpnv4 unicast vrf NCV neighbors"
 
 def test_check_vrf_hold_time_reads_the_vrf_neighbors_and_names_the_vrf_clear(labctl, monkeypatch, capsys):
     fast = _neighbors(VRF_NEIGHBOR, VRF_NEIGHBOR, command=VRF_NEIGHBORS)
-    code, devices = _run(labctl, monkeypatch, ["check-vrf-hold-time"], fast)
+    code, log = _run(labctl, monkeypatch, ["check-vrf-hold-time"], fast)
     assert code == 0
-    assert devices["R1"].executed == ["show bgp vpnv4 unicast vrf NCV neighbors 1.1.1.2"]
-    assert devices["R2"].executed == ["show bgp vpnv4 unicast vrf NCV neighbors 1.1.1.1"]
-    assert "R1: negotiated (hold, keepalive) = (9, 3)" in capsys.readouterr().out
+    commands = {"R1": f"{VRF_NEIGHBORS} 1.1.1.2", "R2": f"{VRF_NEIGHBORS} 1.1.1.1"}
+    assert log == _shows(commands)
+    out = capsys.readouterr().out
+    for name in ("R1", "R2"):
+        reading = f"{name}: negotiated (hold, keepalive) = (9, 3)"
+        assert _echoed(name, commands[name], VRF_NEIGHBOR, reading) in out
     stale = _neighbors(VRF_NEIGHBOR, NEIGHBOR_STALE_TIMERS, command=VRF_NEIGHBORS)
     assert _run(labctl, monkeypatch, ["check-vrf-hold-time"], stale)[0] == 1
     assert "`clear ip bgp vrf NCV 1.1.1.2` on R1" in capsys.readouterr().out
@@ -349,26 +421,41 @@ def _interface(r1_output, r2_output):
 
 def test_check_dead_time_passes_only_when_both_routers_run_the_fast_timers(labctl, monkeypatch, capsys):
     fast = _interface(OSPF_INTERFACE_FAST, OSPF_INTERFACE_FAST)
-    assert _run(labctl, monkeypatch, ["check-dead-time"], fast)[0] == 0
+    code, log = _run(labctl, monkeypatch, ["check-dead-time"], fast)
+    assert code == 0
+    assert log == _shows({"R1": OSPF_INTERFACE, "R2": OSPF_INTERFACE})
     out = capsys.readouterr().out
-    assert "R1: Ethernet0/1 (hello, dead) = (1, 4)" in out
-    assert "R2: Ethernet0/1 (hello, dead) = (1, 4)" in out
-    for r2 in (OSPF_INTERFACE_DEFAULT, OSPF_NOT_ENABLED):
+    for name in ("R1", "R2"):
+        reading = f"{name}: Ethernet0/1 (hello, dead) = (1, 4)"
+        assert _echoed(name, OSPF_INTERFACE, OSPF_INTERFACE_FAST, reading) in out
+    for r2, reading in (
+        (OSPF_INTERFACE_DEFAULT, "R2: Ethernet0/1 (hello, dead) = (10, 40)"),
+        (OSPF_NOT_ENABLED, "R2: Ethernet0/1 (hello, dead) = None"),
+    ):
         assert _run(labctl, monkeypatch, ["check-dead-time"], _interface(OSPF_INTERFACE_FAST, r2))[0] == 1
         out = capsys.readouterr().out
+        assert _echoed("R2", OSPF_INTERFACE, r2, reading) in out
         assert "expected Hello 1 s and Dead 4 s" in out
         assert "`labctl.py reset` followed by `labctl.py setup-ospf-fast`" in out
+
+
+def test_a_check_prints_output_without_a_final_newline_and_empty_output_as_they_came(labctl):
+    assert labctl.echoed("R1", "show x", "line") == "R1# show x\nline\n"
+    assert labctl.echoed("R1", "show x", "line\n") == "R1# show x\nline\n"
+    assert labctl.echoed("R2", "show x", "") == "R2# show x\n\n"
 
 
 def test_reset_configures_only_the_router_that_needs_it(root, labctl, monkeypatch, capsys):
     dirty = _running(root, "lab-2026-11-20/bgp-holdtimer/post", "R1")
     clean = _running(root, "lab-2026-09-12/routes/pre", "R2")
     answers = {"R1": {"show running-config": dirty}, "R2": {"show running-config": clean}}
-    code, devices = _run(labctl, monkeypatch, ["reset"], answers)
+    code, log = _run(labctl, monkeypatch, ["reset"], answers)
     assert code == 0
-    assert devices["R1"].configured == [labctl.reset_lines(dirty)]
-    assert devices["R1"].configured[0][-1] == "no router bgp 65001"
-    assert devices["R2"].configured == []
+    lines = labctl.reset_lines(dirty)
+    assert lines[-1] == "no router bgp 65001"
+    assert log == _session("R1", ("execute", "show running-config"), ("configure", lines)) + _session(
+        "R2", ("execute", "show running-config")
+    )
     assert "R2: nothing to reset" in capsys.readouterr().out
 
 

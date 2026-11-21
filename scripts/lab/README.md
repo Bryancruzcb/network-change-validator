@@ -4,8 +4,9 @@ The operator side of the 2026-09-12, 2026-09-18, and 2026-11-20 lab runs, kept h
 evidence under `fixtures/lab-*` can be reproduced and its sanitization rerun. They are written
 for the Cisco DevNet "Cisco Modeling Labs" sandbox and its preloaded `default-lab` (R1 and
 R2 joined on Ethernet0/1), for an isolated lab you are authorized to use, and they are
-deliberately outside `ncv`: `ncv` never pushes configuration, and these scripts do, to make
-the one planned change the captures are meant to catch.
+deliberately outside `ncv`: `ncv` never pushes configuration, and these scripts do. They set
+each run up, make the one planned change the captures are meant to catch, and
+`labctl.py reset` removes what they added.
 
 | Script | What it does |
 |---|---|
@@ -174,7 +175,9 @@ Packet evidence: right before the change the script starts `cml_capture.py start
 `link_pcap.py`'s timeline of it. The prediction: hellos every second from both routers; after
 the ACL goes on, R2's hellos keep arriving on the wire and keep listing 1.1.1.1, while R1's
 hellos list no neighbor from about 4 s on; after the ACL comes off, database description, link
-state request, update, and acknowledgment packets as the adjacency forms again.
+state request, update, and acknowledgment packets as the adjacency forms again. The DR and BDR
+fields are not part of the prediction: with a 4 s wait timer the router configured first is
+likely DR before the change, and 2.2.2.2 wins after recovery; ncv does not compare them.
 
 What only the run can confirm:
 
@@ -279,7 +282,8 @@ NOTIFICATION follows. When the hold timer runs out, each router has no route to 
 the NOTIFICATION it logs cannot be sent. That is the opposite of the 2026-11-20 run, where R1
 still had the connected route to R2 and its `NOTIFICATION 4/0` was on the wire. After the ACL
 comes off: the OSPF exchange, then a new BGP connection (SYN, OPEN with hold time 9, UPDATE,
-KEEPALIVE), perhaps after resets answering segments of the old one.
+KEEPALIVE), perhaps after resets answering segments of the old one. As in the dead-timer run,
+the hellos' DR and BDR fields are not predicted, and ncv does not compare them.
 
 What only the run can confirm:
 
@@ -417,8 +421,13 @@ directory works.
 
 `NCV_TESTBED` picks another testbed file for `labctl.py` (a relative path is read from the
 repository root), and `labctl.py reset` returns a reused reservation to the shipped
-configuration: it removes only what these scripts add, and never touches the management path
-or the static routes.
+configuration: it removes only what these scripts add (the `NCV-` ACLs, `router bgp` 65001,
+65002, and 65010, `router ospf 1`, the link's shutdown and OSPF timers, Loopback0, Loopback1,
+Loopback100, Ethernet0/1.100, a reused Ethernet0/3, and vrf NCV), and never touches the
+management path or the
+static routes. The gate commands `check-hold-time`, `check-dead-time`, `check-ibgp-hold-time`,
+and `check-vrf-hold-time` print each router's show command and the raw output they parsed
+before their reading, so the run log keeps the real text: no capture holds it yet.
 
 Captures land in `captures/<run>/`, reports and the log in `output/lab/`. Both directories
 are gitignored, and the captures hold the lab's running configs.
