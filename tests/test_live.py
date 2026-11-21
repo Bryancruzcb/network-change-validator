@@ -137,6 +137,55 @@ def test_invalid_config_response_aborts_capture(tmp_path, fake_lab, response):
     assert not (tmp_path / "out").exists()
 
 
+class SubCommandFailure(Exception):
+    """Named like Unicon's, whose text quotes everything the device printed before it failed."""
+
+
+def test_a_failed_running_config_read_names_only_the_exception_type(tmp_path, fake_lab, capsys):
+    device, _ = fake_lab
+    device.execute.side_effect = SubCommandFailure(
+        "Command 'show running-config' failed, buffer: 'enable password 0 MARKER-PASSWORD'"
+    )
+    out = tmp_path / "out"
+    with pytest.raises(RuntimeError) as raised:
+        snapshot_live("lab.yaml", str(out), True)
+    assert str(raised.value) == (
+        "lab capture failed for r1 during show running-config: SubCommandFailure "
+        "(details withheld: the device's output can hold passwords)"
+    )
+    assert raised.value.__cause__ is device.execute.side_effect
+    device.disconnect.assert_called_once()
+    assert not out.exists()
+    # The CLI prints the message alone, so the device's output reaches no terminal or log.
+    assert main(["snapshot", "--testbed", "lab.yaml", "--output", str(out), "--i-am-in-a-lab"]) == 2
+    captured = capsys.readouterr()
+    assert "SubCommandFailure (details withheld" in captured.err
+    assert "MARKER-PASSWORD" not in captured.err + captured.out
+
+
+@pytest.mark.parametrize(
+    "operation, failure, message",
+    [
+        ("learn", RuntimeError("synthetic learn failure"), "during learn ospf: synthetic learn failure"),
+        ("connect", ConnectionError("no answer on port 23"), "during connect: no answer on port 23"),
+        (
+            "execute",
+            None,
+            "during show running-config: empty, non-text, or CLI error running-config response",
+        ),
+    ],
+)
+def test_every_other_failed_step_keeps_the_exception_text(tmp_path, fake_lab, operation, failure, message):
+    device, _ = fake_lab
+    if failure is None:
+        device.execute.return_value = ""  # ncv's own refusal of the response
+    else:
+        getattr(device, operation).side_effect = failure
+    with pytest.raises(RuntimeError) as raised:
+        snapshot_live("lab.yaml", str(tmp_path / "out"), True)
+    assert str(raised.value) == f"lab capture failed for r1 {message}"
+
+
 class _Statement:
     def __init__(self, pattern, action, loop_continue):
         self.pattern, self.action, self.loop_continue = pattern, action, loop_continue
@@ -172,6 +221,7 @@ def test_the_capture_connects_with_a_guard_against_a_first_boot_dialog(tmp_path,
     [
         "Abort Power On Auto Provisioning [yes - continue with normal setup, skip - bypass password "
         "and basic configuration, no - continue with Power On Auto Provisioning] (yes/skip/no)[no]:",
+        "Do you want to enforce secure password standard (yes/no) [y]:",
         'Enter the password for "admin":',
         "Would you like to enter the initial configuration dialog? [yes/no]:",
         "Would you like to enter the basic configuration dialog (yes/no):",

@@ -56,6 +56,14 @@ def test_bad_remote_as_inside_vrfs_has_file_and_field_context(tmp_path):
         load_snapshot(tmp_path)
 
 
+def test_a_legacy_flat_record_whose_vrf_is_not_text_is_refused(tmp_path):
+    flat = {"r1": {"neighbors": {"198.51.100.1": {"state": "Idle", "vrf": 5}}}}
+    (tmp_path / "bgp.json").write_text(json.dumps(flat))
+    field = re.escape("bgp.json.r1.neighbors.198.51.100.1.vrf: expected a string or null")
+    with pytest.raises(ValueError, match=field):
+        load_snapshot(tmp_path)
+
+
 @pytest.mark.parametrize("vrf_field", ["NCV", "default", None])
 def test_a_vrf_field_inside_a_by_vrf_record_is_refused(tmp_path, vrf_field):
     record = {"state": "Established", "vrf": vrf_field, "remote_as": 65010}

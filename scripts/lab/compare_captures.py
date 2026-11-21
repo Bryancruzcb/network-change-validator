@@ -26,8 +26,10 @@ USAGE = "usage: compare_captures.py <snapshot dir> <snapshot dir>"
 SECTIONS = ("ospf", "bgp", "routing", "interface", "config")
 MAX_LINES = 40
 WIDTH = 100
-# A config line naming one of these may carry a secret, so neither side of it is printed.
-SECRET = re.compile(r"password|secret|key|community", re.IGNORECASE)
+# A config line naming one of these may carry a secret, so neither side of it is printed. Some
+# carry it without saying so: `snmp-server host <ip> version 2c <community>` and HSRP's or VRRP's
+# `authentication <text>`.
+SECRET = re.compile(r"password|secret|key|community|authentication|snmp-server host|psk", re.IGNORECASE)
 MISSING = "<missing>"
 
 

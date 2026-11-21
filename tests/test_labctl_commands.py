@@ -546,6 +546,10 @@ def test_check_dead_time_passes_only_when_both_routers_run_the_fast_timers(labct
         assert _echoed("R2", OSPF_INTERFACE, r2, reading) in out
         assert "expected Hello 1 s and Dead 4 s" in out
         assert "`labctl.py reset` followed by `labctl.py setup-ospf-fast`" in out
+    # R1 stale and R2 right fails too: the result is both routers', not the last one read.
+    r1_stale = _interface(OSPF_INTERFACE_DEFAULT, OSPF_INTERFACE_FAST)
+    assert _run(labctl, monkeypatch, ["check-dead-time"], r1_stale)[0] == 1
+    assert "R1: Ethernet0/1 (hello, dead) = (10, 40)" in capsys.readouterr().out
 
 
 def test_a_check_prints_output_without_a_final_newline_and_empty_output_as_they_came(labctl):
@@ -568,6 +572,24 @@ def test_reset_configures_only_the_router_that_needs_it(root, labctl, monkeypatc
     assert "R2: nothing to reset" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("failing", ["R1", "R2"])
+def test_reset_prints_only_the_type_of_a_failed_running_config_read_and_exits_1(
+    root, labctl, monkeypatch, capsys, failing
+):
+    dirty = _running(root, "lab-2026-11-20/bgp-holdtimer/post", "R1")
+    answers = {name: {"show running-config": dirty} for name in ("R1", "R2")}
+    # Unicon's failure text quotes what the router printed so far: here, a password line.
+    answers[failing]["show running-config"] = SubCommandFailure("buffer: 'enable password 0 MARKER-PASSWORD'")
+    code, log = _run(labctl, monkeypatch, ["reset"], answers)
+    assert code == 1
+    configured = [entry for entry in log if entry[1] == "configure"]
+    assert configured == ([] if failing == "R1" else [("R1", "configure", labctl.reset_lines(dirty))])
+    assert log[-1] == (failing, "disconnect", None)  # it stops at the router that failed
+    out = capsys.readouterr().out
+    assert f"{failing}: show running-config failed (SubCommandFailure)\n" in out
+    assert "MARKER-PASSWORD" not in out
+
+
 @pytest.mark.parametrize(
     "argv, answers, fail_on",
     [
@@ -580,7 +602,6 @@ def test_reset_configures_only_the_router_that_needs_it(root, labctl, monkeypatc
         (["setup-ibgp"], {}, {"R2": "configure"}),
         (["wait-ibgp-up"], _answers(BGP_SUMMARY, IBGP_UP), {"R2": "execute"}),
         (["check-ibgp-hold-time"], _neighbors(NEIGHBOR_FAST_TIMERS, "", IBGP_PEERS), {"R2": "execute"}),
-        (["reset"], {"R1": {"show running-config": ""}}, {"R2": "execute"}),
         (["wait-vrf-gone"], _answers("show vrf", VRF_GONE), {"R2": "execute"}),
         (["setup-vrf"], {}, {"R2": "configure"}),
         (["wait-vrf-bgp-up"], _answers(VRF_SUMMARY, VRF_UP), {"R2": "execute"}),

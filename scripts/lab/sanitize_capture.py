@@ -1,6 +1,10 @@
 """Copy an ncv lab run for publishing: lab passwords and certificate bodies out, raw/ left behind.
 
-Usage: sanitize_capture.py <run dir holding pre/ post/ restored/> <new destination dir>
+Usage: sanitize_capture.py <run dir> <new destination dir>
+
+The stages are the run directory's subdirectories that hold a config.json: pre/ post/
+restored/ for a change run, console/ ssh/ for the SSH-path run. The source is checked before
+anything is created, so a run it refuses leaves no half-made destination behind.
 
 Only config.json is edited, and only these forms, which are what the DevNet sandbox routers
 carried: `enable password|secret`, `username ... password|secret`, the indented `password`
@@ -21,9 +25,12 @@ import shutil
 import sys
 from pathlib import Path
 
-USAGE = "usage: sanitize_capture.py <run dir holding pre/ post/ restored/> <new destination dir>"
+USAGE = (
+    "usage: sanitize_capture.py <run dir holding stage directories (pre/ post/ restored/, or console/ ssh/)>"
+    " <new destination dir>"
+)
+RUN_ORDER = ("pre", "post", "restored")
 SECTIONS = ("SOURCE.json", "bgp.json", "config.json", "interface.json", "ospf.json", "routing.json")
-STAGES = ("pre", "post", "restored")
 RULES = [
     (re.compile(r"^(enable (?:password|secret)(?: \d+)?) .*$"), r"\1 <removed>"),
     (re.compile(r"^(username \S+(?: privilege \d+)? (?:password|secret)(?: \d+)?) .*$"), r"\1 <removed>"),
@@ -58,23 +65,59 @@ def sanitize(text: str) -> tuple[str, int, int]:
     return "\n".join(out) + ("\n" if text.endswith("\n") else ""), secrets, cert_lines
 
 
+def stages(src: Path) -> list[str]:
+    """The run's stage directories: each direct subdirectory of `src` holding a config.json,
+    sorted by name, except that a change run's pre/ post/ restored/ keep their run order, as
+    the report lines always had them."""
+    if not src.is_dir():
+        return []
+    names = [child.name for child in src.iterdir() if (child / "config.json").is_file()]
+    return sorted(
+        names, key=lambda name: (RUN_ORDER.index(name) if name in RUN_ORDER else len(RUN_ORDER), name)
+    )
+
+
+def problems(src: Path, dst: Path, names: list[str]) -> list[str]:
+    """What stops the copy before anything is created: a section file a stage lacks, or a
+    destination stage that already exists."""
+    sources = [src / stage / name for stage in names for name in SECTIONS]
+    missing = [f"{path} is missing" for path in sources if not path.is_file()]
+    return missing + [f"{dst / stage} already exists" for stage in names if (dst / stage).exists()]
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 3:
         print(USAGE)
         return 2
     src, dst = Path(argv[1]), Path(argv[2])
-    for stage in STAGES:
+    names = stages(src)
+    if not names:
+        print(USAGE)
+        return 2
+    refused = problems(src, dst, names)
+    for line in refused:
+        print(f"sanitize_capture.py: {line}")
+    if refused:
+        return 2
+    # Every config is read and sanitized before the first directory is made.
+    configs, reports = {}, {}
+    for stage in names:
+        configs[stage] = json.loads((src / stage / "config.json").read_text(encoding="utf-8"))
+        reports[stage] = []
+        for device, record in configs[stage].items():
+            record["running"], secrets, cert_lines = sanitize(record["running"])
+            reports[stage].append(
+                f"{stage}/{device}: {secrets} password lines replaced, {cert_lines} certificate lines removed"
+            )
+    for stage in names:
         (dst / stage).mkdir(parents=True, exist_ok=False)
         for name in SECTIONS:
             shutil.copy2(src / stage / name, dst / stage / name)
-        config_path = dst / stage / "config.json"
-        config = json.loads(config_path.read_text(encoding="utf-8"))
-        for device, record in config.items():
-            record["running"], secrets, cert_lines = sanitize(record["running"])
-            print(
-                f"{stage}/{device}: {secrets} password lines replaced, {cert_lines} certificate lines removed"
-            )
-        config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+        for line in reports[stage]:
+            print(line)
+        (dst / stage / "config.json").write_text(
+            json.dumps(configs[stage], indent=2) + "\n", encoding="utf-8"
+        )
     return 0
 
 

@@ -100,6 +100,35 @@ def test_configs_that_differ_only_in_a_password_print_no_part_of_either(compare,
     assert "lab-enable" not in out and "other-secret" not in out
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        "snmp-server community {value} RO",
+        " key-string {value}",
+        " standby 1 authentication {value}",
+        " vrrp 1 authentication text {value}",
+        "snmp-server host 192.0.2.1 version 2c {value}",
+        " wpa-psk ascii 0 {value}",
+    ],
+)
+def test_a_secret_line_that_differs_prints_neither_value(compare, line):
+    def config(value):
+        return {"R1": {"running": f"hostname R1\n{line.format(value=value)}\n"}}
+
+    out = compare.config_differences(config("FIRST-VALUE"), config("SECOND-VALUE"))
+    assert out == ["config.R1.running line 2 differs: <removed>"]
+
+
+@pytest.mark.parametrize("line", ["snmp-server community ONE-SIDE RO", " key-string ONE-SIDE"])
+def test_a_secret_line_on_one_side_only_is_not_printed(compare, line):
+    without = {"R1": {"running": "hostname R1\n"}}
+    with_line = {"R1": {"running": f"hostname R1\n{line}\n"}}
+    for a, b in ((without, with_line), (with_line, without)):
+        out = compare.config_differences(a, b)
+        assert out == ["config.R1.running line 2 differs: <removed>"]
+        assert "ONE-SIDE" not in "".join(out)
+
+
 def test_other_config_lines_are_shown_cut_to_100_characters(compare):
     long = "description " + "x" * 200
     a = {"R1": {"running": "hostname R1\n" + long}}

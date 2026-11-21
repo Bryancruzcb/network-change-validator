@@ -233,10 +233,12 @@ def ospf_interface_timers(output: str):
 
 
 def vrf_listed(output: str, vrf: str) -> bool:
-    """From `show vrf`: whether `vrf` has a row, its name being the row's first field. A VRF with
-    several interfaces continues on lines holding one interface name each, which a row, with
-    at least its name and route distinguisher, cannot be mistaken for."""
-    return any(len(fields) > 1 and fields[0] == vrf for fields in map(str.split, output.splitlines()))
+    """From `show vrf`: whether `vrf` has a row, its name being the row's first field after an
+    optional `*`, the mark Genie's IOS XE parser documents for a VRF still being deleted. A VRF
+    with several interfaces continues on lines holding one interface name each, which a row,
+    with at least its name and route distinguisher, cannot be mistaken for."""
+    rows = (fields[1:] if fields[:1] == ["*"] else fields for fields in map(str.split, output.splitlines()))
+    return any(len(fields) > 1 and fields[0] == vrf for fields in rows)
 
 
 def ospf_setup_lines(name: str, hello=None) -> list[str]:
@@ -301,7 +303,10 @@ def vrf_setup_lines(name: str) -> list[str]:
     run's timers. The order is forced: the route distinguisher before BGP's VRF address family,
     the dot1Q tag before any address on the subinterface, and `vrf forwarding` before
     `ip address`, since it strips an address already there and the global table would refuse
-    the link's own subnet a second time."""
+    the link's own subnet a second time. `no shutdown` closes the subinterface block: IOS can
+    bring a deleted subinterface back with its old state, and a stopped run's reset deletes it
+    while it is shut down, so without that line the next setup could leave the VRF link down.
+    The line never shows in a running config."""
     cfg, peer = BGP[name], BGP[name]["peer"]
     link = ip_interface(f"{VRF_ADDRESSES[name]}/24")
     loopback = ip_interface(VRF_LOOPBACKS[name])
@@ -314,6 +319,7 @@ def vrf_setup_lines(name: str) -> list[str]:
         f"encapsulation dot1Q {VRF_VLAN}",
         f"vrf forwarding {VRF}",
         f"ip address {link.ip} {link.netmask}",
+        "no shutdown",
         f"interface {VRF_LOOPBACK}",
         f"vrf forwarding {VRF}",
         f"ip address {loopback.ip} {loopback.netmask}",
@@ -632,7 +638,14 @@ def reset(tb) -> int:
     for name in ROUTER_IDS:
         dev = connect(tb, name)
         try:
-            lines = reset_lines(dev.execute("show running-config"))
+            try:
+                running = dev.execute("show running-config")
+            except Exception as err:
+                # Unicon's timeout and failure messages quote the device's output so far, which
+                # here is a running config with its passwords, so only the type is printed.
+                print(f"{name}: show running-config failed ({type(err).__name__})")
+                return 1
+            lines = reset_lines(running)
             if lines:
                 dev.configure(lines)
                 print(f"{name}: " + "; ".join(lines))

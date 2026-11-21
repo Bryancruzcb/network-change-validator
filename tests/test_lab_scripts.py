@@ -3,7 +3,8 @@
 scripts/lab/sanitize_capture.py is what removed the passwords and certificate bodies from
 the captures under fixtures/lab-* before they were committed. The first tests pin its rules on
 a synthetic config and check that every published config.json is its own fixed point, so the
-evidence in the repository is exactly what those rules leave behind.
+evidence in the repository is exactly what those rules leave behind, then which stage
+directories of a run it copies and that it refuses a run before creating anything.
 
 scripts/lab/labctl.py reads router show output to know when a change has taken. The rest pin
 its parsers on sample output, and the findings the BGP run's planned change was predicted to
@@ -120,6 +121,71 @@ def test_sanitizer_replaces_the_nxos_admin_hash_and_the_snmp_keys_derived_from_i
     sanitized, secrets, cert_lines = _load_script(root, "sanitize_capture.py").sanitize(NXOS_SYNTHETIC)
     assert sanitized == NXOS_EXPECTED
     assert (secrets, cert_lines) == (3, 0)
+
+
+def _capture(run, stages):
+    """A run directory as a capture leaves it: each stage with the six section files, its
+    running configs holding SYNTHETIC, and a raw/ the sanitizer leaves behind."""
+    sections = ("SOURCE.json", "bgp.json", "interface.json", "ospf.json", "routing.json")
+    for stage in stages:
+        (run / stage / "raw").mkdir(parents=True)
+        (run / stage / "raw" / "R1_config.txt").write_text(SYNTHETIC, encoding="utf-8")
+        for name in sections:
+            (run / stage / name).write_text(json.dumps({"stage": stage}), encoding="utf-8")
+        config = {name: {"running": SYNTHETIC} for name in ("R1", "R2")}
+        (run / stage / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    return run
+
+
+@pytest.mark.parametrize(
+    "stages",
+    [("pre", "post", "restored"), ("console", "ssh")],
+    ids=["change run", "ssh-path run"],
+)
+def test_sanitizer_copies_each_stage_directory_the_run_holds(root, tmp_path, capsys, stages):
+    sanitizer = _load_script(root, "sanitize_capture.py")
+    run = _capture(tmp_path / "run", stages)
+    (run / "notes").mkdir()  # no config.json: not a stage
+    dst = tmp_path / "published"
+    assert sanitizer.main(["sanitize_capture.py", str(run), str(dst)]) == 0
+    assert sorted(child.name for child in dst.iterdir()) == sorted(stages)
+    for stage in stages:
+        assert sorted(child.name for child in (dst / stage).iterdir()) == sorted(sanitizer.SECTIONS)
+        config = json.loads((dst / stage / "config.json").read_text(encoding="utf-8"))
+        assert config == {name: {"running": EXPECTED} for name in ("R1", "R2")}
+        assert (dst / stage / "ospf.json").read_bytes() == (run / stage / "ospf.json").read_bytes()
+    # A change run reports in run order, as it always did.
+    assert capsys.readouterr().out.splitlines() == [
+        f"{stage}/{name}: 6 password lines replaced, 2 certificate lines removed"
+        for stage in stages
+        for name in ("R1", "R2")
+    ]
+
+
+def test_sanitizer_exits_2_with_the_usage_when_the_run_holds_no_stage(root, tmp_path, capsys):
+    sanitizer = _load_script(root, "sanitize_capture.py")
+    empty = tmp_path / "run"
+    (empty / "raw").mkdir(parents=True)
+    for source in (empty, tmp_path / "absent"):
+        assert sanitizer.main(["sanitize_capture.py", str(source), str(tmp_path / "published")]) == 2
+        assert capsys.readouterr().out == sanitizer.USAGE + "\n"
+    assert not (tmp_path / "published").exists()
+    assert "console/ ssh/" in sanitizer.USAGE
+
+
+def test_sanitizer_refuses_before_creating_anything(root, tmp_path, capsys):
+    sanitizer = _load_script(root, "sanitize_capture.py")
+    run = _capture(tmp_path / "run", ("pre", "post", "restored"))
+    (run / "restored" / "bgp.json").unlink()  # a later stage short of a file
+    dst = tmp_path / "published"
+    assert sanitizer.main(["sanitize_capture.py", str(run), str(dst)]) == 2
+    assert capsys.readouterr().out == f"sanitize_capture.py: {run / 'restored' / 'bgp.json'} is missing\n"
+    assert not dst.exists()
+    (run / "restored" / "bgp.json").write_text("{}", encoding="utf-8")
+    (dst / "post").mkdir(parents=True)  # a stage published before
+    assert sanitizer.main(["sanitize_capture.py", str(run), str(dst)]) == 2
+    assert capsys.readouterr().out == f"sanitize_capture.py: {dst / 'post'} already exists\n"
+    assert [child.name for child in dst.iterdir()] == ["post"]
 
 
 OSPF_NEIGHBORS = """\
@@ -769,6 +835,7 @@ def test_labctl_setup_vrf_lines_for_r1_in_the_order_ios_needs(root):
         "encapsulation dot1Q 100",
         "vrf forwarding NCV",
         "ip address 1.1.1.1 255.255.255.0",
+        "no shutdown",
         "interface Loopback100",
         "vrf forwarding NCV",
         "ip address 172.16.101.1 255.255.255.0",
@@ -783,12 +850,14 @@ def test_labctl_setup_vrf_lines_for_r1_in_the_order_ios_needs(root):
     ]
     # The order is the point: the tag before any address on the subinterface, `vrf forwarding`
     # before the address it would strip, and the route distinguisher before BGP's VRF family.
-    subinterface = r1[r1.index("interface Ethernet0/1.100") :]
+    # `no shutdown` last: a subinterface IOS brings back after a reset deleted it shut stays down.
+    subinterface = r1[r1.index("interface Ethernet0/1.100") : r1.index("interface Loopback100")]
     assert (
         subinterface.index("encapsulation dot1Q 100")
         < subinterface.index("vrf forwarding NCV")
         < subinterface.index("ip address 1.1.1.1 255.255.255.0")
     )
+    assert subinterface[-1] == "no shutdown"
     assert r1.index("rd 65001:100") < r1.index("router bgp 65001")
     # Each router's VRF address is its own global one, which the other router names as its peer.
     for name, other in (("R1", "R2"), ("R2", "R1")):
@@ -865,6 +934,11 @@ def test_labctl_reads_whether_show_vrf_still_lists_a_vrf(root):
     assert labctl.vrf_listed(without, "NCV") is False  # NCV-OTHER is another VRF
     assert labctl.vrf_listed(SHOW_VRF, "Lo100") is False  # a continuation line is not a VRF row
     assert labctl.vrf_listed("", "NCV") is False
+    # The two rows Genie's IOS XE parser documents for a VRF that IOS is still deleting.
+    assert labctl.vrf_listed("  * NCV                            65001:100             ipv4", "NCV") is True
+    assert labctl.vrf_listed("  NCV        <being deleted>       ipv4        Et0/1.100", "NCV") is True
+    assert labctl.vrf_listed("  * NCV-OTHER                      65001:200             ipv4", "NCV") is False
+    assert labctl.vrf_listed("  *", "NCV") is False
 
 
 BGP_VRF_INTENT = ("scripts", "lab", "intent-bgp-vrf.yaml")

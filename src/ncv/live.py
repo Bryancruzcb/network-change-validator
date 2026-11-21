@@ -11,13 +11,27 @@ from .schema import LEARNED_FEATURES
 from .snapshot import snapshot_destination, write_sections
 
 FEATURES = LEARNED_FEATURES
-# The prompts of a device that has no configuration yet: NX-OS's POAP and admin-password
-# questions, and the setup dialog and enable-secret question of IOS and IOS XE.
+# The prompts of a device that has no configuration yet: NX-OS's POAP, secure-password and
+# admin-password questions, and the setup dialog and enable-secret question of IOS and IOS XE.
 FIRST_BOOT_DIALOG = (
-    r"Abort( Power On)? Auto Provisioning|Enter the password for|"
-    r"(initial|basic) configuration dialog|Enter enable secret"
+    r"Abort( Power On)? Auto Provisioning|Do you want to enforce secure password standard|"
+    r"Enter the password for|(initial|basic) configuration dialog|Enter enable secret"
 )
 FIRST_BOOT_REFUSAL = "device is at a first-boot setup dialog; ncv will not answer it"
+RUNNING_CONFIG_STEP = "show running-config"
+RUNNING_CONFIG_REFUSAL = "empty, non-text, or CLI error running-config response"
+
+
+def failure_detail(operation: str, exc: Exception) -> str:
+    """What a failed capture step says about its exception. Unicon's timeout and failure
+    exceptions quote the device's output so far, and during the running-config read that output
+    is a running config with its passwords, so that step names only the exception's type. ncv's
+    own refusal of the response holds no device output and keeps its text."""
+    if operation != RUNNING_CONFIG_STEP or (
+        isinstance(exc, ValueError) and str(exc) == RUNNING_CONFIG_REFUSAL
+    ):
+        return str(exc)
+    return f"{type(exc).__name__} (details withheld: the device's output can hold passwords)"
 
 
 def _refuse_first_boot_dialog(spawn: Any) -> None:
@@ -100,14 +114,15 @@ def snapshot_live(
                     (raw_dir / f"{name}_{feature}.json").write_text(
                         json.dumps(dumped, indent=2, default=str) + "\n", encoding="utf-8"
                     )
-                operation = "show running-config"
-                running = device.execute("show running-config")
+                operation = RUNNING_CONFIG_STEP
+                running = device.execute(RUNNING_CONFIG_STEP)
                 if not isinstance(running, str) or not running.strip() or running.lstrip().startswith("%"):
-                    raise ValueError("empty, non-text, or CLI error running-config response")
+                    raise ValueError(RUNNING_CONFIG_REFUSAL)
                 sections["config"][name] = {"running": running}
                 (raw_dir / f"{name}_config.txt").write_text(running, encoding="utf-8")
             except Exception as exc:
-                raise RuntimeError(f"lab capture failed for {name} during {operation}: {exc}") from exc
+                detail = failure_detail(operation, exc)
+                raise RuntimeError(f"lab capture failed for {name} during {operation}: {detail}") from exc
             finally:
                 with suppress(Exception):  # Preserve the collection error, if any.
                     device.disconnect()

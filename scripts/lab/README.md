@@ -30,7 +30,7 @@ for the second-platform run, and `cml_lab.py remove-r3` takes them out again.
 | `compare_captures.py` | Whether two snapshots hold the same data: exit 0 when they do, 1 with a `<section>.<path>: <a> != <b>` line per difference (at most 40, then the count), 2 on bad usage or a section file it cannot read. It ignores `SOURCE.json` and `raw/`, compares running configs line by line, and never prints a config line that may hold a secret. |
 | `expect-ospf-deadtimer.txt`, `expect-ibgp.txt`, `expect-bgp-vrf.txt`, `expect-second-platform-<platform>.txt` | The predicted findings of each prepared run's change comparison (one file per R3 platform for the second-platform run), one `<policy> <device> <path>` per line, written before any capture exists. The run script checks its report against its file, and `tests/test_lab_scripts.py` reads the same file to pin the prediction. Each moves next to its evidence with the draft intent once a run is recorded. |
 | `labctl.py` | The lab actions the scripts above call: `setup-ospf`, `shut`, `noshut`, `wait-full`, `wait-gone`, `setup-bgp`, `bgp-shut`, `bgp-noshut`, `wait-bgp-up`, `wait-bgp-down`, `setup-bgp-fast`, `check-hold-time`, `bgp-block`, `bgp-unblock`, `setup-ospf-fast`, `check-dead-time`, `ospf-block`, `ospf-unblock`, `wait-ospf-lost`, `setup-ibgp`, `wait-ibgp-up`, `wait-ibgp-down`, `check-ibgp-hold-time`, `wait-vrf-gone`, `setup-vrf`, `wait-vrf-bgp-up`, `wait-vrf-bgp-down`, `check-vrf-hold-time`, `vrf-shut`, `vrf-noshut`, `setup-r3-link`, `wait-r3-up`, `wait-r3-down`, `r3-shut`, `r3-noshut`, `reset`, which removes what these scripts add from both routers, and `probe`, which only reads. The R3 commands touch R1 alone: R3 is configured only by the day-0 configuration cml_lab.py gives it when it adds the node. |
-| `sanitize_capture.py` | Copies a run's `pre/`, `post/`, `restored/` for publishing with passwords and certificate bodies replaced and `raw/` left out. It also knows NX-OS's documented `username ... password` and `snmp-server user ... auth` forms, which no capture has shown yet. |
+| `sanitize_capture.py` | Copies a run's stage directories (`pre/`, `post/`, `restored/`, or the SSH path run's `console/` and `ssh/`: each subdirectory holding a `config.json`) for publishing with passwords and certificate bodies replaced and `raw/` left out. It exits 2 with its usage when the run holds no stage, and checks the source before it creates anything, so a refused run leaves no half-made destination. It also knows NX-OS's documented `username ... password` and `snmp-server user ... auth` forms, which no capture has shown yet. |
 | `bgp_pcap.py` | Lists the BGP messages in a pcap of the lab link: TCP flags, retransmissions, and each message by name, with NOTIFICATION error codes spelled out. |
 | `link_pcap.py` | One timeline of the OSPF packets and BGP segments in a pcap of the lab link: each OSPF packet by type (a hello's timers, DR, BDR, and neighbor list; a database description's flags; an update's LSA count) and each BGP segment as `bgp_pcap.py` shows it, tagged with its VLAN when it has one. |
 | `cml_capture.py` | Starts and saves a packet capture of the R1-R2 link through the CML API (`start [--filter "<bpf expression>"]`, default `tcp port 179`, and `stop <file.pcap>`), with the CML login the run scripts already hold. |
@@ -335,6 +335,7 @@ the same BGP process (R1 shown; R2 mirrors it with 1.1.1.2, `rd 65002:100`, Loop
      encapsulation dot1Q 100
      vrf forwarding NCV
      ip address 1.1.1.1 255.255.255.0
+     no shutdown
     interface Loopback100
      vrf forwarding NCV
      ip address 172.16.101.1 255.255.255.0
@@ -354,6 +355,9 @@ Ethernet0/1, so `vrf forwarding` comes before `ip address`. And BGP refuses a VR
 family until the VRF has an `rd`. The subinterface deliberately reuses the global link's
 addresses, so 1.1.1.2 is a BGP neighbor twice on R1, once in each table, and 1.1.1.0/24 is
 connected twice. Nothing is imported or exported between the tables, so no route target is set.
+`no shutdown` ends the subinterface block because IOS can bring a deleted subinterface back with
+its old state, and a stopped run's `labctl.py reset` deletes it while it is shut down; without
+it the next setup could leave the VRF link down. The line never shows in a running config.
 
 `show bgp ipv4 unicast summary` lists only the global table, so the VRF commands read
 `show bgp vpnv4 unicast vrf NCV summary` and `show bgp vpnv4 unicast vrf NCV neighbors <peer>`
@@ -808,6 +812,9 @@ with stand-in run scripts; it has not driven a real session.
 ## Publishing a run
 
     .venv/bin/python scripts/lab/sanitize_capture.py captures/run-<stamp> fixtures/lab-<date>/<run>
+
+The SSH path run is published the same way from `captures/ssh-path-<stamp>`, whose stages are
+`console/` and `ssh/`.
 
 The sanitizer knows the forms the sandbox routers carried: `enable password|secret`,
 `username ... password|secret`, the indented `password` of a console or vty line, and the

@@ -190,15 +190,18 @@ feature fails to parse, and `ncv` does not guess which happened or record the
 feature as empty. Leave such a feature out of `--features`.
 Unicon's initialization command lists are set to empty, including overrides in
 connection arguments, to avoid default configuration initialization. A device
-sitting at a first-boot setup dialog (NX-OS POAP or its admin-password prompt, the
-IOS setup dialog, or `Enter enable secret`) fails the capture at connect, because
-Unicon would otherwise answer that dialog and so change the device. Device
-plugins and testbeds are trusted executable dependencies: this is not a security
-boundary against arbitrary custom plugins.
+sitting at a first-boot setup dialog (NX-OS POAP, its secure-password or
+admin-password prompt, the IOS setup dialog, or `Enter enable secret`) fails the
+capture at connect, because Unicon would otherwise answer that dialog and so change
+the device. Device plugins and testbeds are trusted executable dependencies: this is
+not a security boundary against arbitrary custom plugins.
 
 Connection, learning, unsupported normalization, and config-read errors abort the
-capture. Connections are disconnected on success or failure, and a failed capture
-does not publish a partial snapshot. Missing individual counters remain unknown
+capture. When the `show running-config` read itself fails, the error names only the
+exception's type: Unicon's timeout and failure messages quote the device's output so
+far, which there is a running config with its passwords. Connections are
+disconnected on success or failure, and a failed capture does not publish a partial
+snapshot. Missing individual counters remain unknown
 and produce `V_ERR` when requested by intent. NX-OS interface records that carry no
 status (ports only `show vrf all interface` lists, and switchport-only records) are
 kept as interfaces whose status is unknown; that was prepared from Genie's NX-OS test
