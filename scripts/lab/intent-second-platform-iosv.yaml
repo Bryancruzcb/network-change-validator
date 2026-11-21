@@ -1,0 +1,85 @@
+# Draft intent for the second-platform run (scripts/lab/run-second-platform.sh iosv), with
+# R3 an IOSv (IOS 15). It was written before any capture of this platform exists, and it moves
+# next to its evidence under fixtures/ once a run is recorded.
+#
+# docs/LIVE.md's rule is to write an intent from the pre capture. This one could not be: R3's
+# strings are taken from Genie's IOS parsers and the platform's documentation, not from a
+# device. Expect to correct them after the first pre capture; the no-change check is what will
+# say so, naming the rule whose string the capture does not hold. R3's connected route is
+# `connected`, as on R1, and its first data port is GigabitEthernet0/0.
+# intent-second-platform-nxosv9000.yaml explains the rules; this file differs from it only in
+# those two strings.
+intent_id: devnet-default-lab-second-platform
+version: 1
+
+devices:
+  - R1
+  - R3
+
+adjacencies:
+  - device: R1
+    protocol: ospf
+    neighbor: 3.3.3.3
+    interface: Ethernet0/3
+  - device: R3
+    protocol: ospf
+    neighbor: 1.1.1.1
+    interface: GigabitEthernet0/0
+  - device: R1
+    protocol: bgp
+    neighbor: 10.1.3.3
+    vrf: default
+    remote_as: 65003
+  - device: R3
+    protocol: bgp
+    neighbor: 10.1.3.1
+    vrf: default
+    remote_as: 65001
+
+routes:
+  - device: R1
+    vrf: default
+    prefix: 10.1.3.0/24
+    protocol: connected
+  - device: R1
+    vrf: default
+    prefix: 3.3.3.3/32
+    protocol: ospf
+  - device: R1
+    vrf: default
+    prefix: 172.16.3.0/24
+    protocol: bgp
+  - device: R3
+    vrf: default
+    prefix: 10.1.3.0/24
+    protocol: connected
+  - device: R3
+    vrf: default
+    prefix: 1.1.1.0/24
+    protocol: ospf
+  - device: R3
+    vrf: default
+    prefix: 10.10.10.0/24
+    protocol: bgp
+
+interfaces:
+  - device: R1
+    name: Ethernet0/3
+    max_in_errors: 0
+    max_crc: 0
+  - device: R3
+    name: GigabitEthernet0/0
+    max_in_errors: 0
+    max_crc: 0
+
+config:
+  must_include:
+    - device: R1
+      lines:
+        - "ip address 10.1.3.1 255.255.255.0"
+        - "network 10.1.3.0 0.0.0.255 area 0"
+        - "neighbor 10.1.3.3 remote-as 65003"
+        - "neighbor 10.1.3.3 timers 3 9"
+    - device: R3
+      lines:
+        - "router bgp 65003"

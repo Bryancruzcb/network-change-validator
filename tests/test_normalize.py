@@ -196,6 +196,63 @@ def test_interface_genie_shape_rejects_non_interface_records():
         normalize_learn("r1", "interface", data)
 
 
+# Shaped like Genie 26.8's NX-OS InterfaceOpsOutput_info (genie.libs.ops.interface.nxos.tests),
+# trimmed to one record of each kind; not a capture. NX-OS lists ports `show interface` does not
+# describe (only their own `vrf`), a switchport's record holds only switchport keys, Genie
+# capitalizes `mgmt0`, and Mgmt0 has counters without input errors.
+NXOS_INTERFACES = {
+    "Ethernet2/1": {
+        "oper_status": "up",
+        "enabled": True,
+        "type": "1000/10000 Ethernet",
+        "mtu": 1600,
+        "vrf": "VRF1",
+        "counters": {"in_errors": 0, "in_crc_errors": 0, "in_pkts": 2},
+    },
+    "Ethernet2/10": {"vrf": "default"},
+    "Ethernet2/3": {
+        "access_vlan": 1,
+        "native_vlan": 1,
+        "switchport_enable": True,
+        "switchport_mode": "access",
+        "trunk_vlans": "1-4094",
+    },
+    "Mgmt0": {"oper_status": "up", "enabled": True, "vrf": "management", "counters": {"in_pkts": 9}},
+    "Null0": {"vrf": "default"},
+}
+
+
+def test_interface_nxos_records_without_a_status_are_kept_as_unknown():
+    interfaces = normalize_learn("r3", "interface", NXOS_INTERFACES)["r3"]["interfaces"]
+    unknown = {"oper_status": None, "in_errors": None, "crc": None}
+    assert interfaces == {
+        "Ethernet2/1": {"oper_status": "up", "in_errors": 0, "crc": 0},
+        "Ethernet2/10": unknown,
+        "Ethernet2/3": unknown,
+        "Mgmt0": {"oper_status": "up", "in_errors": None, "crc": None},
+        "Null0": unknown,
+    }
+
+
+def test_interface_records_that_only_name_a_vrf_are_refused_when_no_record_has_a_status():
+    """IOS XE builds records from `show vrf` as well as `show interfaces`; if the latter fails to
+    parse, this is all the learn holds, and it must not pass as a capture of one interface."""
+    with pytest.raises(ValueError, match="unsupported interface data"):
+        normalize_learn("r1", "interface", {"Ethernet0/2": {"vrf": "Mgmt-intf"}})
+    switchports_only = {"Ethernet2/3": NXOS_INTERFACES["Ethernet2/3"], "Null0": {"vrf": "default"}}
+    with pytest.raises(ValueError, match="unsupported interface data"):
+        normalize_learn("r3", "interface", switchports_only)
+
+
+def test_a_records_own_vrf_string_is_not_the_top_level_vrf_summary():
+    data = {
+        "Ethernet0/1": {"oper_status": "up", "vrf": "NCV"},
+        "vrf": {"NCV": {"interfaces": ["Ethernet0/1"]}},
+    }
+    interfaces = normalize_learn("r1", "interface", data)["r1"]["interfaces"]
+    assert interfaces == {"Ethernet0/1": {"oper_status": "up", "in_errors": None, "crc": None}}
+
+
 @pytest.mark.parametrize("data", [{"unexpected": {}}, {}])
 @pytest.mark.parametrize("feature", ["ospf", "bgp", "routing", "interface", "unknown"])
 def test_unsupported_learn_shapes_rejected(feature, data):

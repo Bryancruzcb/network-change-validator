@@ -14,8 +14,11 @@ same way and have not run: their predictions are pinned here on synthetic snapsh
 through ncv's own adapter from Genie-shaped data, and the predicted change findings are read
 from the scripts/lab/expect-<run>.txt file each run script checks its report against. The last
 tests pin what `labctl.py reset` would send, on the published configs and on ones built here;
-tests/test_labctl_commands.py runs the commands on a fake lab. The very last ones pin the SSH
-testbed example, the read-only probe, and the order of the prepared SSH path run.
+tests/test_labctl_commands.py runs the commands on a fake lab. Then come the SSH testbed
+example, the read-only probe, and the order of the prepared SSH path run. The very last ones
+are the prepared second-platform run: R1's side of the R3 link, the three per-platform draft
+intents, the prediction on synthetic snapshots whose R3 records are shaped as each platform's
+Genie data writes them, the R3 testbed example, and the run script's order.
 """
 
 from __future__ import annotations
@@ -93,6 +96,28 @@ def test_published_lab_configs_are_the_sanitizers_fixed_point(root):
             sanitized, secrets, _ = sanitize(record["running"])
             assert sanitized == record["running"], f"{path}:{device} would change"
             assert secrets == 0, f"{path}:{device} still has a password line the rules replace"
+
+
+# NX-OS's documented forms of the two lines an R3 capture will carry that hold the admin
+# password or keys derived from it. Invented values; no NX-OS capture exists yet.
+NXOS_SYNTHETIC = """hostname R3
+username admin password 5 $5$KFLMEN$Lw3x7b3/2EHQ1qs8yaBLnT  role network-admin
+snmp-server user admin network-admin auth md5 0x3f0a5e7c1b2d4f60 priv 0x3f0a5e7c1b2d4f60 localizedkey
+snmp-server user ops auth sha 0x11aa22bb priv aes-128 0x33cc44dd localizedkey
+feature bgp
+"""
+NXOS_EXPECTED = """hostname R3
+username admin password 5 <removed>
+snmp-server user admin network-admin auth <removed>
+snmp-server user ops auth <removed>
+feature bgp
+"""
+
+
+def test_sanitizer_replaces_the_nxos_admin_hash_and_the_snmp_keys_derived_from_it(root):
+    sanitized, secrets, cert_lines = _load_script(root, "sanitize_capture.py").sanitize(NXOS_SYNTHETIC)
+    assert sanitized == NXOS_EXPECTED
+    assert (secrets, cert_lines) == (3, 0)
 
 
 OSPF_NEIGHBORS = """\
@@ -1251,6 +1276,54 @@ def test_reset_after_the_bgp_vrf_run_removes_bgp_then_the_subinterface_and_loopb
         ]
 
 
+def _r3_run_config(ethernet0_3_extra=()):
+    """R1's running config with the second-platform run's setup in place (setup-ospf, setup-bgp,
+    setup-r3-link), as IOS would list it: the R3 peer inside the one BGP process."""
+    return [
+        "hostname R1",
+        "interface Ethernet0/1",
+        " ip address 1.1.1.1 255.255.255.0",
+        "interface Ethernet0/3",
+        " ip address 10.1.3.1 255.255.255.0",
+        " ip ospf hello-interval 1",
+        *ethernet0_3_extra,
+        "router ospf 1",
+        " router-id 1.1.1.1",
+        " network 1.1.1.0 0.0.0.255 area 0",
+        " network 10.1.3.0 0.0.0.255 area 0",
+        "router bgp 65001",
+        " bgp router-id 1.1.1.1",
+        " bgp log-neighbor-changes",
+        " neighbor 1.1.1.2 remote-as 65002",
+        " neighbor 10.1.3.3 remote-as 65003",
+        " neighbor 10.1.3.3 timers 3 9",
+        " address-family ipv4",
+        "  network 10.10.10.0 mask 255.255.255.0",
+        "  neighbor 1.1.1.2 activate",
+        "  neighbor 1.1.1.2 soft-reconfiguration inbound",
+        "  neighbor 10.1.3.3 activate",
+        "  neighbor 10.1.3.3 soft-reconfiguration inbound",
+        " exit-address-family",
+        R1_CONFIG[-1],
+    ]
+
+
+def test_reset_after_the_second_platform_run_removes_bgp_ospf_and_returns_ethernet0_3_to_what_ships(root):
+    """With R3's link up, and with it shut by the run's change: one BGP process carries both peers
+    and goes whole, and Ethernet0/3, with its address and hello, is defaulted and shut again.
+    Nothing on R3 is reset: labctl.py never configures it, and cml_lab.py remove-r3 removes it."""
+    labctl = _load_script(root, "labctl.py")
+    undo = [
+        "no router bgp 65001",
+        "no router ospf 1",
+        "default interface Ethernet0/3",
+        "interface Ethernet0/3",
+        "shutdown",
+    ]
+    assert labctl.reset_lines("\n".join(_r3_run_config())) == undo
+    assert labctl.reset_lines("\n".join(_r3_run_config([" shutdown"]))) == undo
+
+
 @pytest.mark.parametrize(
     ("script", "expected"),
     [
@@ -1348,3 +1421,308 @@ def test_the_ssh_path_run_checks_the_port_before_it_resets_and_captures_both_pat
     assert "intent=fixtures/lab-2026-09-12/intent-routes.yaml\n" in text
     assert "features=routing,interface\n" in text
     assert re.findall(r"\bctl ", text) == []  # nothing but lab_reset touches the routers' configuration
+
+
+# The second-platform run, prepared and not run yet: R3, a router of another platform that
+# cml_lab.py adds and links to R1 Ethernet0/3, peering with R1 over OSPF and eBGP, and `shutdown`
+# on R1 Ethernet0/3 as the planned change.
+
+PLATFORMS = ("nxosv9000", "cat8000v", "iosv")
+
+
+def _second_platform_intent(root, platform):
+    return root / "scripts" / "lab" / f"intent-second-platform-{platform}.yaml"
+
+
+def test_labctl_r3_link_lines_for_r1(root):
+    labctl = _load_script(root, "labctl.py")
+    assert labctl.R3_LINK == {"interface": "Ethernet0/3", "R1": "10.1.3.1/24", "R3": "10.1.3.3"}
+    assert (labctl.R3_RID, labctl.R3_ASN) == ("3.3.3.3", 65003)
+    assert labctl.r3_link_lines() == [
+        "interface Ethernet0/3",
+        "ip address 10.1.3.1 255.255.255.0",
+        "ip ospf hello-interval 1",
+        "no shutdown",
+        "router ospf 1",
+        "network 10.1.3.0 0.0.0.255 area 0",
+        "router bgp 65001",
+        "neighbor 10.1.3.3 remote-as 65003",
+        "neighbor 10.1.3.3 timers 3 9",
+        "address-family ipv4",
+        "neighbor 10.1.3.3 activate",
+        "neighbor 10.1.3.3 soft-reconfiguration inbound",
+        "exit-address-family",
+    ]
+
+
+def test_second_platform_nxos_intent_names_both_ends_of_the_link_in_nxos_strings(root):
+    intent = load_intent(_second_platform_intent(root, "nxosv9000"))
+    assert intent.intent_id == "devnet-default-lab-second-platform"
+    assert intent.devices == ("R1", "R3")
+    adjacencies = [
+        (a.device, a.protocol, a.neighbor, a.interface, a.vrf, a.remote_as) for a in intent.adjacencies
+    ]
+    assert adjacencies == [
+        ("R1", "ospf", "3.3.3.3", "Ethernet0/3", "", None),
+        ("R3", "ospf", "1.1.1.1", "Ethernet1/1", "", None),
+        ("R1", "bgp", "10.1.3.3", "", "default", 65003),
+        ("R3", "bgp", "10.1.3.1", "", "default", 65001),
+    ]
+    assert [(r.device, r.vrf, r.prefix, r.protocol) for r in intent.routes] == [
+        ("R1", "default", "10.1.3.0/24", "connected"),
+        ("R1", "default", "3.3.3.3/32", "ospf"),
+        ("R1", "default", "172.16.3.0/24", "bgp"),
+        ("R3", "default", "10.1.3.0/24", "direct"),
+        ("R3", "default", "1.1.1.0/24", "ospf"),
+        ("R3", "default", "10.10.10.0/24", "bgp"),
+    ]
+    assert [(i.device, i.name) for i in intent.interfaces] == [("R1", "Ethernet0/3"), ("R3", "Ethernet1/1")]
+    required = {rule.device: rule.lines for rule in intent.must_include}
+    # IOS writes no `no shutdown` line, so the rules never require one.
+    assert required == {
+        "R1": (
+            "ip address 10.1.3.1 255.255.255.0",
+            "network 10.1.3.0 0.0.0.255 area 0",
+            "neighbor 10.1.3.3 remote-as 65003",
+            "neighbor 10.1.3.3 timers 3 9",
+        ),
+        "R3": ("router bgp 65003",),
+    }
+    assert intent.must_absent == ()
+    # R1's required lines are what setup-r3-link sends, as IOS lists them.
+    labctl = _load_script(root, "labctl.py")
+    assert set(required["R1"]) <= set(labctl.r3_link_lines())
+
+
+def test_the_three_draft_intents_differ_only_in_r3s_interface_and_its_connected_route_string(root):
+    """One draft per platform, R3's first data interface taken from cml_lab.py's platform table:
+    NX-OS writes a connected route as `direct`, IOS as `connected`."""
+    table = _load_script(root, "cml_lab.py").PLATFORM_TABLE
+    assert tuple(table) == PLATFORMS
+    nxos = yaml.safe_load(_second_platform_intent(root, "nxosv9000").read_text(encoding="utf-8"))
+    assert table["nxosv9000"].first_interface == "Ethernet1/1"
+    for platform in ("cat8000v", "iosv"):
+        other = yaml.safe_load(_second_platform_intent(root, platform).read_text(encoding="utf-8"))
+        interface = table[platform].first_interface
+        assert other != nxos
+        as_ios = (
+            json.dumps(nxos).replace('"Ethernet1/1"', f'"{interface}"').replace('"direct"', '"connected"')
+        )
+        assert json.loads(as_ios) == other
+        load_intent(_second_platform_intent(root, platform))  # and it is a valid intent
+
+
+# How each platform's capture writes R3's records, as the prediction below builds them through
+# ncv's adapter: NX-OS as Genie's NX-OS test data does (lowercase BGP states, `direct`, and
+# interface records that carry no status), IOS as the IOS XE captures do.
+R3_FORMS = {
+    "nxosv9000": {
+        "established": "established",
+        "down": "active",
+        "connected": "direct",
+        "more_interfaces": {
+            "Ethernet1/2": {"vrf": "default"},
+            "Ethernet1/3": {"switchport_enable": True, "switchport_mode": "access", "access_vlan": 1},
+            "Mgmt0": {"oper_status": "up", "enabled": True, "vrf": "management", "counters": {"in_pkts": 9}},
+            "Null0": {"vrf": "default"},
+        },
+    },
+    "cat8000v": {
+        "established": "Established",
+        "down": "Active",
+        "connected": "connected",
+        "more_interfaces": {},
+    },
+    "iosv": {"established": "Established", "down": "Active", "connected": "connected", "more_interfaces": {}},
+}
+
+
+def _genie_ospf_on(interfaces):
+    """`learn ospf` as Genie shapes it on IOS XE and NX-OS alike: {interface: {router id: state}}
+    in area 0 of instance 1."""
+    area = {
+        "interfaces": {
+            name: {"neighbors": {nbr: {"state": state} for nbr, state in neighbors.items()}}
+            for name, neighbors in interfaces.items()
+        }
+    }
+    return {
+        "vrf": {"default": {"address_family": {"ipv4": {"instance": {"1": {"areas": {"0.0.0.0": area}}}}}}}
+    }
+
+
+def _genie_bgp_peers(peers):
+    """`learn bgp` as Genie shapes it: {peer: (remote AS, session state)} in the default VRF."""
+    neighbors = {peer: {"remote_as": asn, "session_state": state} for peer, (asn, state) in peers.items()}
+    return {"instance": {"default": {"vrf": {"default": {"neighbor": neighbors}}}}}
+
+
+def _genie_routes(table):
+    """`learn routing` as Genie shapes it: {prefix: source protocol} in the default VRF."""
+    routes = {prefix: {"source_protocol": protocol} for prefix, protocol in table.items()}
+    return {"vrf": {"default": {"address_family": {"ipv4": {"routes": routes}}}}}
+
+
+def _port(status):
+    return {"oper_status": status, "enabled": True, "counters": {"in_errors": 0, "in_crc_errors": 0}}
+
+
+def _write_r3_snapshot(path, platform, interface, linked=True, r3_connected=None):
+    """The second-platform run's capture of R1 and R3 (R3's first data interface `interface`),
+    every section built through ncv's adapter from Genie's shapes. `linked` False is the post
+    state: R1 Ethernet0/3 shut, so R1 has dropped R3 and R3 has given up on R1, each losing what
+    it learned; R3's own interface stays up and keeps its connected route. `r3_connected`
+    overrides the protocol string R3 reports for that route."""
+    form = R3_FORMS[platform]
+    r1_ospf = {"Ethernet0/1": {"2.2.2.2": "full"}, "Ethernet0/3": {"3.3.3.3": "full"} if linked else {}}
+    r3_ospf = {interface: {"1.1.1.1": "full"} if linked else {}}
+    r1_bgp = {"1.1.1.2": (65002, "Established"), "10.1.3.3": (65003, "Established" if linked else "Idle")}
+    r3_bgp = {"10.1.3.1": (65001, form["established"] if linked else form["down"])}
+    r1_routes = {"1.1.1.0/24": "connected", "20.20.20.0/24": "static"}
+    r3_routes = {
+        "10.1.3.0/24": r3_connected or form["connected"],
+        "3.3.3.3/32": form["connected"],
+        "172.16.3.0/24": form["connected"],
+    }
+    if linked:
+        r1_routes.update({"10.1.3.0/24": "connected", "3.3.3.3/32": "ospf", "172.16.3.0/24": "bgp"})
+        r3_routes.update({"1.1.1.0/24": "ospf", "10.10.10.0/24": "bgp"})
+    r1_ports = {"Ethernet0/1": _port("up"), "Ethernet0/3": _port("up" if linked else "administratively down")}
+    r3_ports = {interface: _port("up"), **form["more_interfaces"]}
+    learned = {
+        "R1": {"ospf": r1_ospf, "bgp": r1_bgp, "routing": r1_routes, "interface": r1_ports},
+        "R3": {"ospf": r3_ospf, "bgp": r3_bgp, "routing": r3_routes, "interface": r3_ports},
+    }
+    shapes = {"ospf": _genie_ospf_on, "bgp": _genie_bgp_peers, "routing": _genie_routes, "interface": dict}
+    sections = {feature: {} for feature in shapes}
+    for device, features in learned.items():
+        for feature, data in features.items():
+            sections[feature].update(normalize_learn(device, feature, shapes[feature](data)))
+    r1_config = _r3_run_config([] if linked else [" shutdown"])
+    sections["config"] = {
+        "R1": {"running": "\n".join(r1_config) + "\n"},
+        "R3": {"running": "hostname R3\nfeature bgp\nrouter bgp 65003\n  router-id 3.3.3.3\n"},
+    }
+    path.mkdir()
+    for name, data in sections.items():
+        (path / f"{name}.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_second_platform_run_prediction_on_synthetic_snapshots(root, tmp_path, platform):
+    """One link shut from R1's end, seen from both: R1 drops OSPF and BGP with its interface and
+    loses the link's connected route with what it learned from R3; R3, whose interface stays up,
+    gives up on R1 on its own timers and loses what it learned from R1, but keeps its connected
+    route. The nine findings in expect-second-platform-<platform>.txt, the same for every
+    platform; the restored capture is compliant again."""
+    intent = _second_platform_intent(root, platform)
+    interface = _load_script(root, "cml_lab.py").PLATFORM_TABLE[platform].first_interface
+    pre, post, restored = tmp_path / "pre", tmp_path / "post", tmp_path / "restored"
+    _write_r3_snapshot(pre, platform, interface)
+    _write_r3_snapshot(post, platform, interface, linked=False)
+    _write_r3_snapshot(restored, platform, interface)
+    expected = _expected(root, f"expect-second-platform-{platform}.txt")
+    assert len(expected) == 9
+    assert _expected(root, "expect-second-platform-nxosv9000.txt") == expected
+    assert _bgp_diff(root, tmp_path, pre, pre, "baseline", intent) == (0, [])
+    assert _bgp_diff(root, tmp_path, pre, post, "change", intent) == (1, expected)
+    report = json.loads((tmp_path / "report-change" / "report.json").read_text(encoding="utf-8"))
+    after = {(f["device"], f["path"]): f["after"] for f in report["findings"]}
+    assert after[("R1", "ospf.neighbors.3.3.3.3")] is None
+    assert after[("R3", "bgp.vrfs.default.neighbors.10.1.3.1")] == {
+        "state": R3_FORMS[platform]["down"],
+        "remote_as": 65001,
+    }
+    assert _bgp_diff(root, tmp_path, pre, restored, "restored", intent) == (0, [])
+    if platform == "nxosv9000":  # the records with no status are kept, as unknown
+        captured = json.loads((pre / "interface.json").read_text(encoding="utf-8"))["R3"]["interfaces"]
+        assert captured["Ethernet1/2"] == {"oper_status": None, "in_errors": None, "crc": None}
+        assert captured["Ethernet1/1"] == {"oper_status": "up", "in_errors": 0, "crc": 0}
+
+
+def test_a_capture_whose_r3_says_connected_fails_the_nxos_intents_no_change_check(root, tmp_path):
+    """The platform's own strings are part of the intent: an R3 reporting its connected route as
+    IOS does gives one V_ROUTE against the NX-OS draft, which is how a wrong draft shows up."""
+    intent = _second_platform_intent(root, "nxosv9000")
+    pre = tmp_path / "pre"
+    _write_r3_snapshot(pre, "nxosv9000", "Ethernet1/1", r3_connected="connected")
+    code, findings = _bgp_diff(root, tmp_path, pre, pre, "baseline", intent)
+    assert (code, findings) == (1, [("V_ROUTE", "R3", "routing.vrfs.default.routes.10.1.3.0/24.protocol")])
+    report = json.loads((tmp_path / "report-baseline" / "report.json").read_text(encoding="utf-8"))
+    assert "protocol is connected, intent direct" in report["findings"][0]["why"]
+
+
+def _password_values(node):
+    """Every password value anywhere in a parsed testbed."""
+    if isinstance(node, dict):
+        found = [v for k, v in node.items() if k == "password"]
+        return found + [v for item in node.values() for v in _password_values(item)]
+    if isinstance(node, list):
+        return [v for item in node for v in _password_values(item)]
+    return []
+
+
+def test_the_r3_testbed_example_adds_r3_through_the_console_server_and_holds_no_password(root):
+    text = (root / "testbeds" / "cml-console-r3.yaml.example").read_text(encoding="utf-8")
+    testbed = yaml.safe_load(text)
+    console = yaml.safe_load((root / "testbeds" / "cml-console.yaml.example").read_text(encoding="utf-8"))
+    devices = testbed["devices"]
+    assert list(devices) == ["R1", "R2", "R3"]
+    assert {name: devices[name] for name in ("R1", "R2")} == console["devices"]
+    assert testbed["testbed"]["credentials"] == console["testbed"]["credentials"]
+    r3 = devices["R3"]
+    cli = r3["connections"]["cli"]
+    assert (r3["os"], r3["platform"]) == ("nxos", "n9k")
+    assert r3["os"] == _load_script(root, "cml_lab.py").PLATFORM_TABLE["nxosv9000"].os
+    assert cli["command"].endswith('10.10.20.161 "open /default-lab/R3/0"')
+    # Next to `command`, where Unicon reads it; under `arguments` it is silently ignored.
+    assert cli["login_creds"] == ["default", "nxos"]
+    assert cli["settings"] == {"SENDLINE_AFTER_CRED": "default"}
+    assert cli["arguments"] == {"learn_hostname": True, "prompt_recovery": True, "connection_timeout": 120}
+    assert r3["credentials"] == {"nxos": {"username": "admin", "password": "%ENV{NCV_LAB_PASS}"}}
+    passwords = _password_values(testbed)
+    assert len(passwords) == 3
+    assert all(re.fullmatch(r"%ENV\{NCV_\w+\}", value) for value in passwords)
+    assert "NCV_SSH_PASS" not in text
+
+
+def test_the_second_platform_run_checks_its_platform_first_and_adds_r3_after_the_reset(root):
+    text = (root / "scripts" / "lab" / "run-second-platform.sh").read_text(encoding="utf-8")
+    assert "Prepared, not run yet." in text.splitlines()[1]
+    steps = [
+        'platform-os "$platform"',
+        'export NCV_TESTBED="${NCV_TESTBED:-testbeds/lab-r3.yaml}"',
+        '[ "$testbed_os" != "$r3_os" ]',
+        '. "$here/_lib.sh"',
+        "lab_init second-platform",
+        "\nlab_reset\n",
+        'cml add-r3 "$platform"',
+        "ctl setup-ospf ",
+        "ctl setup-bgp ",
+        "ctl setup-r3-link ",
+        "ctl wait-r3-up 600 ",
+        "snap pre ",
+        'compare pre pre baseline; rc=$?\nexpect_exit baseline 0 "$rc"',
+        "ctl r3-shut ",
+        "ctl wait-r3-down 60 ",
+        "sleep 15\n",
+        "snap post ",
+        'compare pre post change; expect_exit change 1 "$?"',
+        'expect_findings change "$out-change" "scripts/lab/expect-second-platform-$platform.txt"',
+        "ctl r3-noshut ",
+        "ctl wait-r3-up 300 ",
+        "snap restored ",
+        'compare pre restored restored; expect_exit restored 0 "$?"',
+        "\nlab_finish\n",
+    ]
+    positions = [text.index(step) for step in steps]
+    assert positions == sorted(positions)
+    assert "features=ospf,bgp,routing,interface\n" in text
+    assert "intent=scripts/lab/intent-second-platform-$platform.yaml\n" in text
+    assert "correct $intent from $run/pre" in text
+    assert "cml_lab.py remove-r3" in text
+    assert 'remove-r3"' not in text and "cml remove-r3" not in text  # it leaves R3 in the lab
+    assert "cap_start" not in text  # cml_capture.py captures the R1-R2 link only
+    for platform in PLATFORMS:
+        assert _second_platform_intent(root, platform).is_file()
+        assert (root / "scripts" / "lab" / f"expect-second-platform-{platform}.txt").is_file()

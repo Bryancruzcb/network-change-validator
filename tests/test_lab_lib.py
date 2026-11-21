@@ -3,7 +3,9 @@
 Each test sources _lib.sh in a fresh bash and sets by hand the variables lab_init would set
 (py, here, run, out, log, unexpected, capturing), so no VPN, testbed, or lab is needed and
 lab_init itself is never called. Commands that would reach the lab (`ctl`, `cap`) are replaced
-by shell functions that log what they were asked. The module is skipped on Windows, which has
+by shell functions that log what they were asked. The last tests run run-second-platform.sh
+itself up to lab_init, with `ip` replaced so the VPN check fails, to pin the checks it makes
+before asking for any login. The module is skipped on Windows, which has
 no dependable bash on PATH; the Ubuntu CI jobs run it.
 """
 
@@ -278,3 +280,62 @@ def test_lab_not_reachable_logs_the_result_and_exits_4(root, tmp_path):
     assert result.returncode == 4
     assert "not-reached" not in result.stdout
     assert "the management addresses do not answer" in _log(tmp_path)
+
+
+def _second_platform(root, tmp_path, platform, testbed):
+    """run-second-platform.sh up to lab_init, with `ip` replaced by one that fails, so lab_init
+    stops at its VPN check (exit 2) before it asks for anything or writes a file."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    fake_ip = bin_dir / "ip"
+    fake_ip.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    fake_ip.chmod(0o755)
+    env = {key: value for key, value in os.environ.items() if key not in LOGINS}
+    env.update(
+        NCV_PYTHON=sys.executable, NCV_TESTBED=str(testbed), PATH=f"{bin_dir}{os.pathsep}{env['PATH']}"
+    )
+    script = root / "scripts" / "lab" / "run-second-platform.sh"
+    command = ["bash", str(script), *([platform] if platform else [])]
+    return subprocess.run(
+        command, capture_output=True, text=True, env=env, timeout=60, stdin=subprocess.DEVNULL
+    )
+
+
+def _r3_testbed(root, tmp_path, r3_os=None):
+    """The R3 testbed example, with R3's os changed when `r3_os` is given."""
+    text = (root / "testbeds" / "cml-console-r3.yaml.example").read_text(encoding="utf-8")
+    if r3_os:
+        text = text.replace("  R3:\n    os: nxos\n", f"  R3:\n    os: {r3_os}\n")
+    path = tmp_path / "lab-r3.yaml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize("platform", ["", "csr1000v"])
+def test_the_second_platform_run_refuses_an_unknown_platform_before_anything_else(root, tmp_path, platform):
+    result = _second_platform(root, tmp_path, platform, tmp_path / "absent.yaml")
+    assert result.returncode == 2
+    assert result.stderr == "usage: run-second-platform.sh nxosv9000|cat8000v|iosv\n"
+    assert "VPN" not in result.stdout
+
+
+def test_the_second_platform_run_refuses_a_missing_testbed_naming_the_example(root, tmp_path):
+    result = _second_platform(root, tmp_path, "iosv", tmp_path / "absent.yaml")
+    assert result.returncode == 2
+    assert "absent.yaml is missing: copy testbeds/cml-console-r3.yaml.example to it" in result.stderr
+
+
+@pytest.mark.parametrize(("platform", "r3_os"), [("iosv", None), ("nxosv9000", "iosxe"), ("cat8000v", "ios")])
+def test_the_second_platform_run_refuses_a_testbed_whose_r3_has_another_os(root, tmp_path, platform, r3_os):
+    result = _second_platform(root, tmp_path, platform, _r3_testbed(root, tmp_path, r3_os))
+    assert result.returncode == 2
+    assert f"gives R3 os {r3_os or 'nxos'}, but {platform} needs os " in result.stderr
+    assert "VPN" not in result.stdout
+
+
+@pytest.mark.parametrize(("platform", "r3_os"), [("nxosv9000", None), ("cat8000v", "iosxe"), ("iosv", "ios")])
+def test_the_second_platform_run_goes_on_to_lab_init_when_the_testbed_fits(root, tmp_path, platform, r3_os):
+    result = _second_platform(root, tmp_path, platform, _r3_testbed(root, tmp_path, r3_os))
+    assert result.returncode == 2
+    assert result.stderr == ""
+    assert result.stdout == "The sandbox VPN is not connected. Start openconnect first.\n"

@@ -121,7 +121,17 @@ def test_cli_unreadable_or_malformed_input_exits_2_naming_the_file(check, tmp_pa
     assert f"{expect}:5: expected" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("name", ["expect-ospf-deadtimer.txt", "expect-ibgp.txt", "expect-bgp-vrf.txt"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "expect-ospf-deadtimer.txt",
+        "expect-ibgp.txt",
+        "expect-bgp-vrf.txt",
+        "expect-second-platform-nxosv9000.txt",
+        "expect-second-platform-cat8000v.txt",
+        "expect-second-platform-iosv.txt",
+    ],
+)
 def test_each_expected_file_parses_and_says_it_is_a_prediction(check, root, name):
     path = root / "scripts" / "lab" / name
     text = path.read_text(encoding="utf-8")

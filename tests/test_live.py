@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import builtins
+import inspect
 import json
-from types import SimpleNamespace
+import re
+import sys
+from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
 from ncv.cli import main
-from ncv.live import snapshot_live
+from ncv.live import FIRST_BOOT_REFUSAL, first_boot_guard, snapshot_live
 from ncv.snapshot import load_snapshot
 
 
@@ -132,3 +135,76 @@ def test_invalid_config_response_aborts_capture(tmp_path, fake_lab, response):
         snapshot_live("lab.yaml", str(tmp_path / "out"), True)
     device.disconnect.assert_called_once()
     assert not (tmp_path / "out").exists()
+
+
+class _Statement:
+    def __init__(self, pattern, action, loop_continue):
+        self.pattern, self.action, self.loop_continue = pattern, action, loop_continue
+
+
+class _Dialog:
+    def __init__(self, statements):
+        self.statements = statements
+
+
+@pytest.fixture
+def fake_unicon(monkeypatch):
+    """unicon.eal.dialogs with the two classes the guard builds, recording what it was given."""
+    dialogs = ModuleType("unicon.eal.dialogs")
+    dialogs.Dialog, dialogs.Statement = _Dialog, _Statement
+    monkeypatch.setitem(sys.modules, "unicon", ModuleType("unicon"))
+    monkeypatch.setitem(sys.modules, "unicon.eal", ModuleType("unicon.eal"))
+    monkeypatch.setitem(sys.modules, "unicon.eal.dialogs", dialogs)
+    return dialogs
+
+
+def test_the_capture_connects_with_a_guard_against_a_first_boot_dialog(tmp_path, fake_lab, fake_unicon):
+    device, _ = fake_lab
+    snapshot_live("lab.yaml", str(tmp_path / "out"), True)
+    device.connect.assert_called_once()
+    kwargs = device.connect.call_args.kwargs
+    assert kwargs.pop("connect_reply").__class__ is _Dialog
+    assert kwargs == {"log_stdout": False, "init_exec_commands": [], "init_config_commands": []}
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "Abort Power On Auto Provisioning [yes - continue with normal setup, skip - bypass password "
+        "and basic configuration, no - continue with Power On Auto Provisioning] (yes/skip/no)[no]:",
+        'Enter the password for "admin":',
+        "Would you like to enter the initial configuration dialog? [yes/no]:",
+        "Would you like to enter the basic configuration dialog (yes/no):",
+        "Enter enable secret:",
+    ],
+)
+def test_the_guard_matches_each_first_boot_prompt_and_its_action_raises(fake_unicon, prompt):
+    (statement,) = first_boot_guard().statements
+    assert statement.loop_continue is False
+    assert re.search(statement.pattern, prompt)
+    with pytest.raises(RuntimeError) as raised:
+        statement.action(object())
+    assert str(raised.value) == "device is at a first-boot setup dialog; ncv will not answer it"
+    assert str(raised.value) == FIRST_BOOT_REFUSAL
+
+
+def test_the_guard_action_takes_spawn_the_way_unicon_requires(fake_unicon):
+    """Unicon 26.8 refuses to build a Statement whose action has `spawn` with a default value
+    (StatementValidationError, found with the real Unicon); the fake here does not check that."""
+    (statement,) = first_boot_guard().statements
+    spawn = inspect.signature(statement.action).parameters["spawn"]
+    assert spawn.default is inspect.Parameter.empty
+    assert spawn.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+
+
+@pytest.mark.parametrize("prompt", ["R3 login:", "Password:", "R1#", "R1>", "Escape character is '^]'."])
+def test_the_guard_leaves_an_ordinary_login_to_unicon(fake_unicon, prompt):
+    (statement,) = first_boot_guard().statements
+    assert not re.search(statement.pattern, prompt)
+
+
+def test_without_unicon_the_capture_still_connects_without_a_guard(tmp_path, fake_lab):
+    device, _ = fake_lab
+    assert first_boot_guard() is None
+    snapshot_live("lab.yaml", str(tmp_path / "out"), True)
+    device.connect.assert_called_once_with(log_stdout=False, init_exec_commands=[], init_config_commands=[])

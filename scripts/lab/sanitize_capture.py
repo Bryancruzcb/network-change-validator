@@ -5,9 +5,14 @@ Usage: sanitize_capture.py <run dir holding pre/ post/ restored/> <new destinati
 Only config.json is edited, and only these forms, which are what the DevNet sandbox routers
 carried: `enable password|secret`, `username ... password|secret`, the indented `password`
 of a console or vty line, and the body of a `certificate self-signed|ca` block up to its
-`quit`. Everything else is copied as captured, so read a copy before publishing it and
-record what was removed in the run's SOURCE.md. tests/test_lab_scripts.py pins these rules
-and checks that the published fixtures are this script's own output.
+`quit`. For an NX-OS router (R3 in the second-platform run) it also knows two forms written
+from NX-OS's documentation, not from a capture: `username <name> password <type> <hash> role
+...`, which the username rule already replaces after the type, and `snmp-server user <name>
+<group> auth <alg> <key> priv [<alg>] <key> localizedkey`, whose keys NX-OS derives from the
+admin password, replaced from `auth` to the end. Everything else is copied as captured, so
+read a copy before publishing it (line by line for a platform no capture has come from yet)
+and record what was removed in the run's SOURCE.md. tests/test_lab_scripts.py pins these
+rules and checks that the published fixtures are this script's own output.
 """
 
 import json
@@ -23,6 +28,7 @@ RULES = [
     (re.compile(r"^(enable (?:password|secret)(?: \d+)?) .*$"), r"\1 <removed>"),
     (re.compile(r"^(username \S+(?: privilege \d+)? (?:password|secret)(?: \d+)?) .*$"), r"\1 <removed>"),
     (re.compile(r"^(\s+password(?: \d+)?) .*$"), r"\1 <removed>"),
+    (re.compile(r"^(snmp-server user \S+(?: \S+)? auth) .*$"), r"\1 <removed>"),
 ]
 CERT_START = re.compile(r"^\s+certificate (?:self-signed|ca) \S+")
 

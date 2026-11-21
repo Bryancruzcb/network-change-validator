@@ -1,0 +1,31 @@
+# The predicted findings of the second-platform run's change comparison (pre vs post) with R3 on
+# nxosv9000, written before any capture exists. One finding per line: <policy> <device> <path>.
+# Blank lines and everything after a # are ignored. The three platforms' files predict the same
+# findings: only R3's strings in the draft intents differ, and no finding names them.
+#
+# run-second-platform.sh nxosv9000 checks its change report against this file with
+# check_findings.py, and tests/test_lab_scripts.py reads it to pin the prediction on synthetic
+# snapshots. It moves next to the evidence, with the draft intent, once a run is recorded.
+#
+# Nine findings, on the assumption that R3's interface stays up when R1 shuts its own end (CML
+# does not pass carrier across a link). If it goes down too, R3 also loses its connected
+# 10.1.3.0/24 and the run gives ten: add
+#   V_ROUTE R3 routing.vrfs.default.routes.10.1.3.0/24
+# only after a capture shows it.
+
+# OSPF: R1 drops R3 at once with its interface; R3 drops R1 on its 4 s dead interval.
+V_ADJ R1 ospf.neighbors.3.3.3.3
+V_ADJ R3 ospf.neighbors.1.1.1.1
+
+# eBGP: R1 resets the session with its interface; R3 gives up on its 9 s hold time.
+V_ADJ R1 bgp.vrfs.default.neighbors.10.1.3.3
+V_ADJ R3 bgp.vrfs.default.neighbors.10.1.3.1
+
+# R1 loses the link's connected route and what it learned from R3.
+V_ROUTE R1 routing.vrfs.default.routes.10.1.3.0/24
+V_ROUTE R1 routing.vrfs.default.routes.3.3.3.3/32
+V_ROUTE R1 routing.vrfs.default.routes.172.16.3.0/24
+
+# R3 loses what it learned from R1.
+V_ROUTE R3 routing.vrfs.default.routes.1.1.1.0/24
+V_ROUTE R3 routing.vrfs.default.routes.10.10.10.0/24

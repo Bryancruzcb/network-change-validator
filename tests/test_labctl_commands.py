@@ -185,6 +185,9 @@ CONFIGURE_COMMANDS = {
     "setup-vrf": _on_both(lambda m, name: m.vrf_setup_lines(name)),
     "vrf-shut": _on_r1(lambda m: ["interface Ethernet0/1.100", "shutdown"], VRF_SUMMARY),
     "vrf-noshut": _on_r1(lambda m: ["interface Ethernet0/1.100", "no shutdown"], VRF_SUMMARY),
+    "setup-r3-link": _on_r1(lambda m: m.r3_link_lines(), INTERFACE_BRIEF),
+    "r3-shut": _on_r1(lambda m: ["interface Ethernet0/3", "shutdown"], INTERFACE_BRIEF),
+    "r3-noshut": _on_r1(lambda m: ["interface Ethernet0/3", "no shutdown"], INTERFACE_BRIEF),
 }
 
 
@@ -348,6 +351,107 @@ def test_wait_vrf_bgp_up_waits_for_a_learned_prefix_in_the_vrf_table(labctl, mon
     assert code == 0 and log == _polls(BGP_SUMMARY, 1)
 
 
+# The second-platform run, as R1 sees R3 on Ethernet0/3 next to the R1-R2 setup: OSPF neighbor
+# 3.3.3.3 and BGP peer 10.1.3.3. R1's own formats; R3's show output is never read.
+R3_NEIGHBOR = "3.3.3.3           1   FULL/BDR        00:00:03    10.1.3.3        Ethernet0/3\n"
+R3_OSPF_FULL = OSPF_FULL["R1"] + R3_NEIGHBOR
+R3_PEER = "10.1.3.3     4 65003      20      20      5   0    0 00:01:02        {}\n"
+R3_BGP_UP = BGP_UP["R1"] + R3_PEER.format("       1")
+R3_BGP_NOTHING_LEARNED = BGP_UP["R1"] + R3_PEER.format("       0")
+R3_BGP_DOWN = BGP_UP["R1"] + R3_PEER.format("Idle")
+
+
+def _r3_answers(ospf, bgp):
+    return {"R1": {OSPF: ospf, BGP_SUMMARY: bgp}}
+
+
+R3_UP = _r3_answers(R3_OSPF_FULL, R3_BGP_UP)
+# After `shutdown` on R1 Ethernet0/3: R1 drops the neighbor and resets the session at once.
+R3_DOWN = _r3_answers(OSPF_FULL["R1"], R3_BGP_DOWN)
+R3_POLL = (("execute", OSPF), ("execute", BGP_SUMMARY))
+R3_DIAGNOSTICS = ("show interfaces Ethernet0/3 | include line protocol", "show cdp neighbors")
+
+
+def _r3_polls(polls):
+    """What an R3 wait logs: one connection to R1 alone, reading both tables `polls` times."""
+    return _session("R1", *(R3_POLL * polls))
+
+
+@pytest.mark.parametrize(("command", "satisfied"), [("wait-r3-up", R3_UP), ("wait-r3-down", R3_DOWN)])
+def test_an_r3_wait_reads_r1_only_and_returns_on_the_first_poll_when_satisfied(
+    labctl, monkeypatch, command, satisfied
+):
+    code, log = _run(labctl, monkeypatch, [command], satisfied)
+    assert code == 0
+    assert log == _r3_polls(1)
+    assert labctl.time.sleeps == []
+
+
+def test_wait_r3_down_that_never_comes_true_times_out_with_exit_1(labctl, monkeypatch, capsys):
+    code, log = _run(labctl, monkeypatch, ["wait-r3-down", "0"], R3_UP)
+    assert code == 1
+    assert log == _r3_polls(2)
+    out = capsys.readouterr().out
+    assert "{'R1': (True, 1)}" in out
+    assert "timed out waiting for R3 to be neither FULL nor Established, seen from R1" in out
+
+
+def test_wait_r3_up_timing_out_prints_r1s_view_of_the_link(labctl, monkeypatch, capsys):
+    """The line protocol tells a link that never came up from an R3 whose configuration is wrong,
+    and CDP names whatever is on the far side; both are read on R1 after the wait lets go."""
+    answers = _r3_answers(OSPF_FULL["R1"], BGP_UP["R1"])
+    answers["R1"].update(
+        {
+            R3_DIAGNOSTICS[0]: "Ethernet0/3 is up, line protocol is up \n",
+            R3_DIAGNOSTICS[1]: "Device ID    Local Intrfce   Holdtme   Capability  Platform  Port ID\n",
+        }
+    )
+    code, log = _run(labctl, monkeypatch, ["wait-r3-up", "0"], answers)
+    assert code == 1
+    assert log == (
+        _r3_polls(2)
+        + _session("R1", ("execute", R3_DIAGNOSTICS[0]))
+        + _session("R1", ("execute", R3_DIAGNOSTICS[1]))
+    )
+    out = capsys.readouterr().out
+    assert "{'R1': (None, None)}" in out
+    timed_out = out.index("timed out waiting for R3 FULL and Established with a prefix, seen from R1\n")
+    shown = out.index(f"R1# {R3_DIAGNOSTICS[0]}\nEthernet0/3 is up, line protocol")
+    assert timed_out < shown < out.index("R1# show cdp neighbors\nDevice ID")
+
+
+def test_wait_r3_up_succeeding_shows_nothing_more(labctl, monkeypatch, capsys):
+    code, log = _run(labctl, monkeypatch, ["wait-r3-up"], R3_UP)
+    assert code == 0 and log == _r3_polls(1)
+    assert "show cdp neighbors" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("ospf", "bgp", "up", "down"),
+    [
+        (R3_OSPF_FULL, R3_BGP_UP, True, False),
+        # a session that has just come up and learned nothing: not up yet, and not down
+        (R3_OSPF_FULL, R3_BGP_NOTHING_LEARNED, False, False),
+        # BGP learned its prefix, but OSPF is not FULL: not up, and not down either
+        (OSPF_FULL["R1"], R3_BGP_UP, False, False),
+        (R3_OSPF_FULL, R3_BGP_DOWN, False, False),
+        (OSPF_FULL["R1"], R3_BGP_DOWN, False, True),
+        # neither listed at all, as before setup-r3-link: down
+        (OSPF_FULL["R1"], BGP_UP["R1"], False, True),
+    ],
+)
+def test_r3_up_needs_full_and_a_learned_prefix_and_r3_down_needs_neither(labctl, ospf, bgp, up, down):
+    state = labctl.r3_check(FakeDevice("R1", {OSPF: ospf, BGP_SUMMARY: bgp}, []), "R1")
+    assert (labctl.r3_up(state), labctl.r3_down(state)) == (up, down)
+
+
+def test_the_r3_checks_ignore_the_r1_r2_peers(labctl):
+    """R1's own OSPF neighbor 2.2.2.2 and BGP peer 1.1.1.2 are FULL and Established throughout;
+    the R3 checks read 3.3.3.3 and 10.1.3.3 only."""
+    state = labctl.r3_check(FakeDevice("R1", {OSPF: OSPF_FULL["R1"], BGP_SUMMARY: BGP_UP["R1"]}, []), "R1")
+    assert state == (None, None)
+
+
 BGP_NEIGHBORS = "show bgp ipv4 unicast neighbors"
 
 
@@ -486,6 +590,9 @@ def test_reset_configures_only_the_router_that_needs_it(root, labctl, monkeypatc
             {"R2": "execute"},
         ),
         (["vrf-shut"], SHOWS, {"R1": "configure"}),
+        (["setup-r3-link"], SHOWS, {"R1": "configure"}),
+        (["wait-r3-up"], R3_UP, {"R1": "execute"}),
+        (["wait-r3-down"], R3_DOWN, {"R1": "execute"}),
     ],
 )
 def test_a_command_that_raises_still_disconnects_every_router_it_reached(
@@ -498,10 +605,12 @@ def test_a_command_that_raises_still_disconnects_every_router_it_reached(
 
 def test_every_command_in_the_table_is_exercised_here(labctl):
     checks = {"check-hold-time", "check-dead-time", "check-ibgp-hold-time", "check-vrf-hold-time", "reset"}
-    assert set(CONFIGURE_COMMANDS) | set(WAIT_COMMANDS) | checks | {"probe"} == set(labctl.COMMANDS)
+    r3_waits = {"wait-r3-up", "wait-r3-down"}
+    exercised = set(CONFIGURE_COMMANDS) | set(WAIT_COMMANDS) | checks | r3_waits | {"probe"}
+    assert exercised == set(labctl.COMMANDS)
 
 
-def test_usage_is_the_old_text_with_the_dead_timer_ibgp_and_vrf_commands_reset_and_probe_added(labctl):
+def test_usage_is_the_old_text_with_the_dead_timer_ibgp_vrf_and_r3_commands_reset_and_probe_added(labctl):
     assert labctl.USAGE == (
         "usage: labctl.py setup-ospf | shut | noshut | wait-full [seconds] | wait-gone [seconds]"
         " | setup-bgp | bgp-shut | bgp-noshut | wait-bgp-up [seconds] | wait-bgp-down [seconds]"
@@ -510,6 +619,7 @@ def test_usage_is_the_old_text_with_the_dead_timer_ibgp_and_vrf_commands_reset_a
         " | setup-ibgp | wait-ibgp-up [seconds] | wait-ibgp-down [seconds] | check-ibgp-hold-time"
         " | wait-vrf-gone [seconds] | setup-vrf | wait-vrf-bgp-up [seconds] | wait-vrf-bgp-down [seconds]"
         " | check-vrf-hold-time | vrf-shut | vrf-noshut"
+        " | setup-r3-link | wait-r3-up [seconds] | wait-r3-down [seconds] | r3-shut | r3-noshut"
         " | reset | probe"
     )
 

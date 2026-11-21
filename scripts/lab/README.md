@@ -6,7 +6,9 @@ for the Cisco DevNet "Cisco Modeling Labs" sandbox and its preloaded `default-la
 R2 joined on Ethernet0/1), for an isolated lab you are authorized to use, and they are
 deliberately outside `ncv`: `ncv` never pushes configuration, and these scripts do. They set
 each run up, make the one planned change the captures are meant to catch, and
-`labctl.py reset` removes what they added.
+`labctl.py reset` removes what they added. One more thing changes the lab itself rather than a
+router's configuration: `cml_lab.py add-r3` adds a third router and its link to `default-lab`
+for the second-platform run, and `cml_lab.py remove-r3` takes them out again.
 
 | Script | What it does |
 |---|---|
@@ -17,29 +19,30 @@ each run up, make the one planned change the captures are meant to catch, and
 | `run-ospf-deadtimer.sh` | The OSPF dead-timer run, prepared and not run: OSPF with a 1 s hello (so a 4 s dead interval), then the same sequence around an inbound ACL on R1 that drops OSPF from R2, with a packet capture of `ip proto 89`. It sources `_lib.sh` and exits 0 only when every comparison exits as predicted and the change comparison finds exactly the findings in its `expect-*.txt` file. |
 | `run-ibgp.sh` | The iBGP run, prepared and not run: iBGP between the routers' loopbacks, which reach each other only over OSPF, then the same sequence around the dead-timer run's OSPF ACL on R1, with a packet capture of `ip proto 89 or tcp port 179`. It sources `_lib.sh` and exits 0 only when every comparison exits as predicted and the change comparison finds exactly the findings in its `expect-*.txt` file. |
 | `run-bgp-vrf.sh` | The BGP VRF run, prepared and not run: the hold-timer run's eBGP session plus a second one to the same peer address in vrf NCV on the dot1Q subinterface Ethernet0/1.100, then the same sequence around `shutdown` on R1's subinterface, with a packet capture of `tcp port 179 or (vlan and tcp port 179)`. It sources `_lib.sh` and exits 0 only when every comparison exits as predicted and the change comparison finds exactly the findings in its `expect-*.txt` file. |
+| `run-second-platform.sh` | The second-platform run, prepared and not run: `run-second-platform.sh nxosv9000\|cat8000v\|iosv` adds R3, a router of that platform, with `cml_lab.py add-r3`, links it to R1 Ethernet0/3, sets up OSPF and eBGP between R1 and R3, then the same sequence around `shutdown` on R1 Ethernet0/3, captured on all three routers. It refuses an unknown platform, or a testbed whose R3 has another `os`, before asking for any login. It sources `_lib.sh`, exits 0 only when every comparison exits as predicted and the change comparison finds exactly the findings in its platform's `expect-*.txt` file, and leaves R3 in the lab. |
 | `run-ssh-path.sh` | The SSH path run, prepared and not run: captures the routers through the console server and then over SSH to their management addresses, and expects `compare_captures.py` and `ncv diff` against the shipped lab's intent to find no difference between the two. It exits 4, a result rather than a failure, when the management addresses do not accept TCP port 22. Its only change to the lab is `labctl.py reset`. |
 | `probe.sh` | The read-only probe: from this machine, the VPN route, a TCP test of ports 22 and 23, and a ping to both management addresses; then `cml_lab.py inspect`; then `labctl.py probe` on both routers; then three answers, each with the line it came from. It changes nothing on any device or in CML. |
 | `capture.sh` | One capture (`pre`, `post`, or `restored`) for a run driven by hand. |
-| `change.sh` | The planned change by hand: `apply` shuts R1 Ethernet0/1 and `undo` brings it back; `bgp-apply` shuts the R1 peer and `bgp-undo` brings it back; `holdtimer-apply` adds the BGP ACL and `holdtimer-undo` removes it; `deadtimer-apply` adds the OSPF ACL and `deadtimer-undo` removes it; `vrf-apply` shuts R1 Ethernet0/1.100 and `vrf-undo` brings it back. |
+| `change.sh` | The planned change by hand: `apply` shuts R1 Ethernet0/1 and `undo` brings it back; `bgp-apply` shuts the R1 peer and `bgp-undo` brings it back; `holdtimer-apply` adds the BGP ACL and `holdtimer-undo` removes it; `deadtimer-apply` adds the OSPF ACL and `deadtimer-undo` removes it; `vrf-apply` shuts R1 Ethernet0/1.100 and `vrf-undo` brings it back; `r3-apply` shuts R1 Ethernet0/3, the link to R3, and `r3-undo` brings it back. |
 | `_lib.sh` | Sourced, not run: what new run scripts share. `lab_init` checks the VPN and the testbed file, asks for each login that is not set (again until it is not empty, and without `bash -x` printing it; the routers' SSH login too when the testbed names `NCV_SSH_PASS`), sets the capture and report paths (`NCV_STAMP` fixes the stamp), and installs an exit trap that stops a packet capture an early exit left running. Then `step`, `ctl`, `cap`, `snap`, `compare`, `lab_reset` (stops the run when `labctl.py reset` fails), `cap_start` and `cap_stop`, `expect_exit` and `expect_findings`, `lab_tcp` (a 3 s TCP test that tells an open port from a refused one and from no answer), `lab_not_reachable` (exit 4: the devices do not answer on the path a run tests), and `lab_finish`, which ends a run with exit 0 when every comparison gave its predicted exit and the change comparison its predicted findings, 3 when one did not, and warns if a password value reached the log. The four published runs keep their own copy, since they reproduce recorded runs. |
 | `check_findings.py` | Compares a report's findings, as (policy, device, path), with an expected file: exit 0 when they are the same, 1 with a `missing:` or `unexpected:` line for each difference, 2 on bad usage or input it cannot read. `_lib.sh`'s `expect_findings` runs it. |
 | `compare_captures.py` | Whether two snapshots hold the same data: exit 0 when they do, 1 with a `<section>.<path>: <a> != <b>` line per difference (at most 40, then the count), 2 on bad usage or a section file it cannot read. It ignores `SOURCE.json` and `raw/`, compares running configs line by line, and never prints a config line that may hold a secret. |
-| `expect-ospf-deadtimer.txt`, `expect-ibgp.txt`, `expect-bgp-vrf.txt` | The predicted findings of each prepared run's change comparison, one `<policy> <device> <path>` per line, written before any capture exists. The run script checks its report against its file, and `tests/test_lab_scripts.py` reads the same file to pin the prediction. Each moves next to its evidence with the draft intent once a run is recorded. |
-| `labctl.py` | The lab actions the scripts above call: `setup-ospf`, `shut`, `noshut`, `wait-full`, `wait-gone`, `setup-bgp`, `bgp-shut`, `bgp-noshut`, `wait-bgp-up`, `wait-bgp-down`, `setup-bgp-fast`, `check-hold-time`, `bgp-block`, `bgp-unblock`, `setup-ospf-fast`, `check-dead-time`, `ospf-block`, `ospf-unblock`, `wait-ospf-lost`, `setup-ibgp`, `wait-ibgp-up`, `wait-ibgp-down`, `check-ibgp-hold-time`, `wait-vrf-gone`, `setup-vrf`, `wait-vrf-bgp-up`, `wait-vrf-bgp-down`, `check-vrf-hold-time`, `vrf-shut`, `vrf-noshut`, `reset`, which removes what these scripts add from both routers, and `probe`, which only reads. |
-| `sanitize_capture.py` | Copies a run's `pre/`, `post/`, `restored/` for publishing with passwords and certificate bodies replaced and `raw/` left out. |
+| `expect-ospf-deadtimer.txt`, `expect-ibgp.txt`, `expect-bgp-vrf.txt`, `expect-second-platform-<platform>.txt` | The predicted findings of each prepared run's change comparison (one file per R3 platform for the second-platform run), one `<policy> <device> <path>` per line, written before any capture exists. The run script checks its report against its file, and `tests/test_lab_scripts.py` reads the same file to pin the prediction. Each moves next to its evidence with the draft intent once a run is recorded. |
+| `labctl.py` | The lab actions the scripts above call: `setup-ospf`, `shut`, `noshut`, `wait-full`, `wait-gone`, `setup-bgp`, `bgp-shut`, `bgp-noshut`, `wait-bgp-up`, `wait-bgp-down`, `setup-bgp-fast`, `check-hold-time`, `bgp-block`, `bgp-unblock`, `setup-ospf-fast`, `check-dead-time`, `ospf-block`, `ospf-unblock`, `wait-ospf-lost`, `setup-ibgp`, `wait-ibgp-up`, `wait-ibgp-down`, `check-ibgp-hold-time`, `wait-vrf-gone`, `setup-vrf`, `wait-vrf-bgp-up`, `wait-vrf-bgp-down`, `check-vrf-hold-time`, `vrf-shut`, `vrf-noshut`, `setup-r3-link`, `wait-r3-up`, `wait-r3-down`, `r3-shut`, `r3-noshut`, `reset`, which removes what these scripts add from both routers, and `probe`, which only reads. The R3 commands touch R1 alone: R3 is configured only by the day-0 configuration cml_lab.py gives it when it adds the node. |
+| `sanitize_capture.py` | Copies a run's `pre/`, `post/`, `restored/` for publishing with passwords and certificate bodies replaced and `raw/` left out. It also knows NX-OS's documented `username ... password` and `snmp-server user ... auth` forms, which no capture has shown yet. |
 | `bgp_pcap.py` | Lists the BGP messages in a pcap of the lab link: TCP flags, retransmissions, and each message by name, with NOTIFICATION error codes spelled out. |
 | `link_pcap.py` | One timeline of the OSPF packets and BGP segments in a pcap of the lab link: each OSPF packet by type (a hello's timers, DR, BDR, and neighbor list; a database description's flags; an update's LSA count) and each BGP segment as `bgp_pcap.py` shows it, tagged with its VLAN when it has one. |
 | `cml_capture.py` | Starts and saves a packet capture of the R1-R2 link through the CML API (`start [--filter "<bpf expression>"]`, default `tcp port 179`, and `stop <file.pcap>`), with the CML login the run scripts already hold. |
-| `cml_lab.py` | A read-only inventory of the CML controller (`inspect [<output dir>]`): its version, node and image definitions, memory and CPU in use, and default-lab's nodes, interfaces, and links, ending with whether R1 Ethernet0/3 is free and which of `nxosv9000`, `cat8000v`, and `iosv` are available. Every call is a GET, and configurations, notes, and descriptions are dropped before anything is printed or saved. `check-login` exits 0 when CML accepts the login and 1 when it does not. |
+| `cml_lab.py` | The CML side of the lab. `inspect [<output dir>]` and `check-login` only read: the inventory gives the controller's version, node and image definitions, memory and CPU in use, and default-lab's nodes, interfaces, and links, ending with whether R1 Ethernet0/3 is free and which of `nxosv9000`, `cat8000v`, and `iosv` are available; every call is a GET, and configurations, notes, and descriptions are dropped before anything is printed or saved. `check-login` exits 0 when CML accepts the login and 1 when it does not. `add-r3 <platform>` and `remove-r3` change the lab's topology: they add R3 with its day-0 configuration, link it to R1 Ethernet0/3, and boot it, or stop, wipe, and delete it and its link. `platform-os <platform>` prints the pyATS `os` R3's testbed entry needs, with no login and no call. |
 
 The runs compare against the intents kept with their evidence
 (`fixtures/lab-2026-09-12/intent-routes.yaml` and `intent-ospf.yaml`,
 `fixtures/lab-2026-09-18/intent-bgp.yaml`, and
 `fixtures/lab-2026-11-20/intent-bgp-holdtimer.yaml`), so a rerun on the
 same sandbox is checked against the same rules. A prepared run's draft intent sits here in
-`scripts/lab` (`intent-ospf-deadtimer.yaml`, `intent-ibgp.yaml`, `intent-bgp-vrf.yaml`), with the
-predicted findings of its change comparison beside it (`expect-<run>.txt`), until a run is
-recorded.
+`scripts/lab` (`intent-ospf-deadtimer.yaml`, `intent-ibgp.yaml`, `intent-bgp-vrf.yaml`, and
+`intent-second-platform-<platform>.yaml`, one per R3 platform), with the predicted findings of
+its change comparison beside it (`expect-<run>.txt`), until a run is recorded.
 
 ## The BGP run
 
@@ -416,6 +419,198 @@ What only the run can confirm:
 - that R1's session resets at once and R2's on its hold timer;
 - that CML accepts the `vlan` capture filter.
 
+## The second-platform run (prepared, not run)
+
+Everything published so far comes from one image, IOS XE 17.15 on IOL. This run adds a third
+router, R3, on another platform, joined to R1, and breaks the link from R1's end: an adjacency
+lost and seen from both ends, one end on each platform. It is the first test of ncv's adapter
+on Genie data shaped by another platform, and more of it is unverified than of any other run:
+nobody has listed the sandbox's images, added a node through its API, or connected Unicon to an
+NX-OS console there. Each unknown is written to fail early with a message that says what to
+look at; the list at the end of this section names them.
+
+The topology change is `cml_lab.py add-r3 <platform>`, through the CML API, stopping with exit 1
+and a one-line reason at the first thing that is not as it needs:
+
+1. the platform's node definition exists and has an image;
+2. no node is labelled R3 (one that is already booted with the same node definition is exit 0,
+   one still starting is waited for, anything else is refused, naming `remove-r3`);
+3. R1 Ethernet0/3 exists in the topology and is not connected;
+4. free memory, from `/system_stats`, is not plainly short of the node definition's RAM (it
+   prints both numbers, and skips the check when either is missing);
+5. it creates the node with its day-0 configuration
+   (`POST /labs/{id}/nodes?populate_interfaces=true`), reads it back once, and checks that CML
+   kept the configuration (its `hostname R3` line, read as a boolean and never printed);
+6. it links R3's first data interface to R1 Ethernet0/3 (`POST /labs/{id}/links`);
+7. it starts R3 and polls its state every 15 s, printing each, for at most 20 minutes, giving up
+   after 3 minutes still `QUEUED` or `DEFINED_ON_CORE` (`CML has not started R3`);
+8. once R3 is `BOOTED`, it starts the link if it is not `STARTED` and stops if it still is not.
+
+Every failure after the node exists ends with `R3 was created; cml_lab.py remove-r3 removes it`.
+The day-0 configuration holds R3's admin password (`NCV_LAB_PASS`), so it is echoed with
+`<removed>` in its place, the node POST's response is never printed, and every message passes
+through one `redact` function. `cml_lab.py remove-r3` reads R3's state, stops it unless it is
+already stopped, waits up to 3 minutes for `STOPPED`, wipes its disks, deletes its link and then
+the node, and treats a missing R3, or a 404 on the way, as already gone. The run leaves R3 in
+the lab; `remove-r3` is a separate step.
+
+The platforms, from `cml_lab.py`'s table:
+
+| Platform | Node definition | pyATS `os` | R3's first data interface | Connected routes |
+|---|---|---|---|---|
+| NX-OS 9000v | `nxosv9000` | `nxos` | Ethernet1/1 | `direct` |
+| Catalyst 8000V | `cat8000v` | `iosxe` | GigabitEthernet1 | `connected` |
+| IOSv | `iosv` | `ios` | GigabitEthernet0/0 | `connected` |
+
+R3's day-0 configuration on NX-OS, as `add-r3` echoes it (the IOS form is the same router in IOS
+syntax: `network` statements for OSPF, `neighbor 10.1.3.1 timers 3 9`, no dead-interval line,
+since IOS derives 4 s from the 1 s hello, and no console login):
+
+    hostname R3
+    no password strength-check
+    username admin password <removed> role network-admin
+    feature ospf
+    feature bgp
+    interface loopback0
+      ip address 3.3.3.3/32
+      ip router ospf 1 area 0.0.0.0
+    interface loopback1
+      ip address 172.16.3.1/24
+    interface Ethernet1/1
+      no switchport
+      ip address 10.1.3.3/24
+      ip ospf hello-interval 1
+      ip ospf dead-interval 4
+      ip router ospf 1 area 0.0.0.0
+      no shutdown
+    router ospf 1
+      router-id 3.3.3.3
+    router bgp 65003
+      router-id 3.3.3.3
+      address-family ipv4 unicast
+        network 172.16.3.0/24
+      neighbor 10.1.3.1
+        remote-as 65001
+        timers 3 9
+        address-family ipv4 unicast
+
+R3 is never configured after that: `labctl.py` configures R1's side only, so no NX-OS
+configuration dialect enters it. `labctl.py setup-r3-link` adds to the processes `setup-ospf`
+and `setup-bgp` create:
+
+    interface Ethernet0/3
+     ip address 10.1.3.1 255.255.255.0
+     ip ospf hello-interval 1
+     no shutdown
+    router ospf 1
+     network 10.1.3.0 0.0.0.255 area 0
+    router bgp 65001
+     neighbor 10.1.3.3 remote-as 65003
+     neighbor 10.1.3.3 timers 3 9
+     address-family ipv4
+      neighbor 10.1.3.3 activate
+      neighbor 10.1.3.3 soft-reconfiguration inbound
+     exit-address-family
+
+Set up: `cp testbeds/cml-console-r3.yaml.example testbeds/lab-r3.yaml` (gitignored). It reaches
+R1 and R2 as `cml-console.yaml.example` does and R3 through the same console server
+(`open /default-lab/R3/0`). NX-OS asks for its own login after the CML one, so R3's connection
+lists `login_creds: [default, nxos]` next to `command:` (under `arguments:` Unicon ignores it),
+with the `nxos` credential the admin user `add-r3` created; the example's header shows the IOS
+form for the other two platforms, whose console has no login. ncv's capture refuses to answer a
+first-boot setup dialog (NX-OS POAP, its admin-password prompt, the IOS setup dialog): Unicon
+would otherwise answer it and so configure the device during a capture.
+
+`run-second-platform.sh <platform>` first checks the platform against `cml_lab.py`'s table and
+that `testbeds/lab-r3.yaml` (or `NCV_TESTBED`) gives R3 that platform's `os`, before it asks for
+any login. Then:
+
+1. `labctl.py reset` on R1 and R2, which also returns Ethernet0/3 to what ships;
+2. `cml_lab.py add-r3 <platform>`, stopping if it refuses;
+3. `setup-ospf`, `setup-bgp`, `setup-r3-link`;
+4. `wait-r3-up 600`, judged from R1 only: OSPF neighbor 3.3.3.3 FULL and BGP neighbor 10.1.3.3
+   Established with at least one prefix received. On a timeout it prints R1's
+   `show interfaces Ethernet0/3 | include line protocol` and `show cdp neighbors`, which tell a
+   link that never came up from an R3 whose configuration is wrong;
+5. pre capture of all three routers with `ospf,bgp,routing,interface`;
+6. the no-change check against `intent-second-platform-<platform>.yaml`, which must exit 0;
+7. the change: `labctl.py r3-shut`, `shutdown` on R1 Ethernet0/3;
+8. `wait-r3-down 60`, then a fixed 15 s for R3's own 4 s dead interval and 9 s hold time;
+9. post capture and compare, expecting exit 1 and the platform's expected findings;
+10. `r3-noshut` and `wait-r3-up 300`;
+11. restored capture and compare, expecting exit 0.
+
+There is one draft intent per platform, because the strings differ. Each names devices R1 and
+R3; the OSPF adjacencies (R1 neighbor 3.3.3.3 on Ethernet0/3, R3 neighbor 1.1.1.1 on its first
+data interface) and the BGP ones (R1 neighbor 10.1.3.3 remote AS 65003, R3 neighbor 10.1.3.1
+remote AS 65001, both in vrf default); R1's routes 10.1.3.0/24 connected, 3.3.3.3/32 ospf, and
+172.16.3.0/24 bgp, and R3's 10.1.3.0/24 (`direct` on NX-OS, `connected` on IOS), 1.1.1.0/24
+ospf, and 10.10.10.0/24 bgp; the counters of R1 Ethernet0/3 and R3's first data interface; R1's
+lines `ip address 10.1.3.1 255.255.255.0`, `network 10.1.3.0 0.0.0.255 area 0`,
+`neighbor 10.1.3.3 remote-as 65003`, and `neighbor 10.1.3.3 timers 3 9`, and for R3 only
+`router bgp 65003`, since no capture exists to copy its lines from. The three files differ only
+in R3's interface name and its connected-route string. ncv does not alias `direct` to
+`connected` or fold `Mgmt0` to `mgmt0`: an intent copies what the device's capture says. These
+strings come from Genie's parsers and test data, not from a device, so the first pre capture
+may correct them, and the no-change check is what will say so; the script then says to correct
+the intent from `captures/second-platform-<stamp>/pre` and rerun.
+
+Predicted findings, pinned on synthetic snapshots in `tests/test_lab_scripts.py`:
+
+| Comparison | Exit | Findings |
+|---|---|---|
+| pre vs pre | 0 | none |
+| pre vs post (`shutdown` on R1 Ethernet0/3) | 1 | nine: `V_ADJ` ospf and bgp on R1 (neighbors 3.3.3.3 and 10.1.3.3) and on R3 (neighbors 1.1.1.1 and 10.1.3.1); `V_ROUTE` R1 10.1.3.0/24, 3.3.3.3/32, and 172.16.3.0/24; `V_ROUTE` R3 1.1.1.0/24 and 10.10.10.0/24 |
+| pre vs restored | 0 | none |
+
+R3's own 10.1.3.0/24 stays: the nine assume R3's interface stays up when R1 shuts its end,
+because CML does not pass carrier across a link. If it does go down, R3 also loses that route
+and the run gives ten; the expected files say so in their comments. The findings are the same
+for all three platforms and live in `expect-second-platform-<platform>.txt`, which the test
+reads and the script checks its change report against. The synthetic snapshots are built
+through ncv's own adapter from Genie's shapes, R3's as each platform writes them (on NX-OS:
+lowercase BGP states, `direct`, and interface records that carry no status, which ncv keeps as
+unknown), and a further test shows that an R3 capture saying `connected` fails the NX-OS
+draft's no-change check with one `V_ROUTE`: the platform's strings are part of the intent. If a
+run stops with Ethernet0/3 shut, `change.sh r3-undo` brings it back, or the next run's
+`labctl.py reset` puts the port back as it ships.
+
+Assumptions the first session must check, each with how it fails:
+
+- **Try the platforms in the order `iosv`, `cat8000v`, `nxosv9000`.** IOSv is light, boots in a
+  few minutes, and needs neither a licence nor a boot line; NX-OS 9000v needs about 8 GB and up
+  to 15 minutes. `probe.sh` says which have a node definition and an image first.
+- **The image exists.** `add-r3` refuses before any change: `the controller has no node
+  definition <platform>` or `node definition <platform> has no image`.
+- **R1 Ethernet0/3 is in the topology and free.** `add-r3` refuses, naming the link that uses it.
+- **CML can add a link to R1 while it runs.** Unverified; R1 Ethernet0/3 already exists, so no
+  interface is hot-added. If not, the link POST fails: `could not link R1 Ethernet0/3 to R3:
+  ... (whether CML links a running R1 is unverified)`, and R3 is left for `remove-r3`.
+- **The form of `configuration` the API accepts.** `add-r3` sends one string; Cisco's client
+  also sends a list of named files. If CML drops it, `add-r3` stops with `CML did not keep the
+  day-0 configuration` before starting R3. If CML keeps it but R3 boots without applying it, R3
+  comes up unconfigured and `wait-r3-up` times out with R1's line protocol up and no OSPF.
+- **The image's `boot nxos bootflash:...` line.** A custom day-0 configuration may replace CML's
+  template, which carries that line and the management VRF. Symptom: R3's console sits at
+  `loader>` and the boot never completes; `add-r3`'s 20-minute wait times out.
+- **The interface labels.** `Ethernet1/1`, `GigabitEthernet1`, and `GigabitEthernet0/0` come
+  from CML's documentation, not from a node this controller created. If R3 has no interface by
+  that label, `add-r3` stops and lists the labels it has.
+- **Boot time and memory.** `add-r3` refuses up front when free memory is plainly short; CML may
+  still refuse the start (`CML has not started R3 (memory or licence; see cml_lab.py inspect)`
+  after 3 minutes), or a slow boot may outlast the 20-minute wait.
+- **The console path and login chain for R3.** `open /default-lab/R3/0`, then for NX-OS the
+  admin login, were checked only against Unicon's mock devices. If either is wrong, the pre
+  capture fails at connect for R3; a device left at a first-boot dialog fails it the same way.
+- **Genie's NX-OS shapes on a real 9000v.** Taken from Genie's test data. A shape the adapter
+  does not handle fails the pre capture at a named learn; a string that differs (`direct`, an
+  interface name, a state) is named by the no-change check.
+- **R3's interface stays up when R1 shuts its end.** If not, the change comparison has a tenth
+  finding, and `check_findings.py` names it as unexpected.
+- **An R3 capture must be read line by line before it is published.** `sanitize_capture.py`'s
+  NX-OS rules (`username ... password <type> <hash> role ...` and `snmp-server user ... auth
+  ... localizedkey`) were written from NX-OS's documented forms, not from a capture.
+
 ## The probe
 
 Two things decide what the next runs can do, and nothing here may guess them: whether the
@@ -530,6 +725,9 @@ directory works.
 `run-ssh-path.sh` also needs `testbeds/lab-ssh.yaml` and asks for the routers' SSH login, and
 its exit 4 means the management addresses do not answer in this sandbox, a result recorded
 before anything is reset or captured, not a run that stopped early.
+`run-second-platform.sh <platform>` needs `testbeds/lab-r3.yaml`, adds R3 to the lab, and
+leaves it there: `.venv/bin/python scripts/lab/cml_lab.py remove-r3`, with the CML login in
+`NCV_CML_USER` and `NCV_CML_PASS`, takes it out.
 
 `NCV_TESTBED` picks another testbed file for `labctl.py` (a relative path is read from the
 repository root), and `labctl.py reset` returns a reused reservation to the shipped
@@ -537,7 +735,7 @@ configuration: it removes only what these scripts add (the `NCV-` ACLs, `router 
 65002, and 65010, `router ospf 1`, the link's shutdown and OSPF timers, Loopback0, Loopback1,
 Loopback100, Ethernet0/1.100, a reused Ethernet0/3, and vrf NCV), and never touches the
 management path or the
-static routes. The gate commands `check-hold-time`, `check-dead-time`, `check-ibgp-hold-time`,
+static routes. It never touches R3 either; `cml_lab.py remove-r3` removes it. The gate commands `check-hold-time`, `check-dead-time`, `check-ibgp-hold-time`,
 and `check-vrf-hold-time` print each router's show command and the raw output they parsed
 before their reading, so the run log keeps the real text: no capture holds it yet.
 
@@ -550,7 +748,10 @@ are gitignored, and the captures hold the lab's running configs.
 
 The sanitizer knows the forms the sandbox routers carried: `enable password|secret`,
 `username ... password|secret`, the indented `password` of a console or vty line, and the
-body of a `certificate self-signed|ca` block. It changes nothing else, so read the copy
+body of a `certificate self-signed|ca` block. For an NX-OS R3 it also replaces the hash in
+`username <name> password <type> <hash> role ...` and everything from `auth` on in
+`snmp-server user ... localizedkey`, forms written from NX-OS's documentation rather than a
+capture, so read an R3 capture line by line. It changes nothing else, so read the copy
 before committing it, and write a `SOURCE.md` beside it recording the environment, the
 date, and exactly what was removed, as `fixtures/lab-2026-09-12/SOURCE.md` does.
 `tests/test_lab_scripts.py` pins the rules and checks that the published configs are the

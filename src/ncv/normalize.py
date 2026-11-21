@@ -165,17 +165,34 @@ def _counter(record: dict[str, Any], *names: str) -> int | None:
 
 
 # Genie's Interface ops key their info by interface name and add a "vrf" membership summary.
-_GENIE_INTERFACE_KEYS = frozenset({"oper_status", "enabled", "counters", "type", "mtu", "mac_address"})
+# A record carrying one of these was described by `show interfaces`: it reports a status.
+_GENIE_STATUS_KEYS = frozenset({"oper_status", "enabled", "counters", "type", "mtu", "mac_address"})
+# NX-OS also lists ports that `show interface` does not describe, from `show vrf all interface`
+# (a record holding only its own `vrf`, a string) and `show interface switchport` (only
+# switchport keys). Such a record is still an interface, one whose status was not reported.
+# Prepared from Genie 26.8's NX-OS test data; no NX-OS capture exists yet.
+_GENIE_INTERFACE_KEYS = _GENIE_STATUS_KEYS | {"vrf", "switchport_enable", "switchport_mode"}
 
 
 def _genie_interface_records(data: dict[str, Any]) -> dict[str, Any] | None:
+    """The interface records of Genie's Ops shape, or None when `data` is not that shape.
+
+    Every record must be a mapping that carries an interface key, and at least one must carry a
+    status key. The second rule keeps a parser failure from passing as an empty capture: IOS XE
+    builds records from `show vrf` as well as `show interfaces`, so when the latter fails to
+    parse the learn can hold nothing but `{"Ethernet0/2": {"vrf": "Mgmt-intf"}}`.
+    """
+    # A top-level "vrf" is the older membership summary, skipped by name; a record's own "vrf"
+    # is a string inside the record and is one of its interface keys.
     records = {name: rec for name, rec in data.items() if name != "vrf"}
-    looks_like_interfaces = all(
+    every_record_is_an_interface = all(
         isinstance(rec, dict) and _GENIE_INTERFACE_KEYS & rec.keys() for rec in records.values()
     )
-    if records and looks_like_interfaces:
-        return records
-    return None
+    if not (records and every_record_is_an_interface):
+        return None
+    if not any(_GENIE_STATUS_KEYS & rec.keys() for rec in records.values()):
+        return None
+    return records
 
 
 def _ifaces(data: dict[str, Any]) -> dict[str, Any]:

@@ -11,6 +11,38 @@ from .schema import LEARNED_FEATURES
 from .snapshot import snapshot_destination, write_sections
 
 FEATURES = LEARNED_FEATURES
+# The prompts of a device that has no configuration yet: NX-OS's POAP and admin-password
+# questions, and the setup dialog and enable-secret question of IOS and IOS XE.
+FIRST_BOOT_DIALOG = (
+    r"Abort( Power On)? Auto Provisioning|Enter the password for|"
+    r"(initial|basic) configuration dialog|Enter enable secret"
+)
+FIRST_BOOT_REFUSAL = "device is at a first-boot setup dialog; ncv will not answer it"
+
+
+def _refuse_first_boot_dialog(spawn: Any) -> None:
+    # Unicon calls an action with what its parameter names ask for, and refuses a `spawn` that is
+    # not a plain positional parameter, so this one has no default.
+    raise RuntimeError(FIRST_BOOT_REFUSAL)
+
+
+def first_boot_guard() -> Any | None:
+    """A Unicon dialog that fails the connection at a first-boot setup dialog, or None when
+    Unicon cannot be imported.
+
+    Left alone, Unicon's connect answers that dialog itself: on NX-OS it aborts POAP, declines
+    the secure-password standard, and types the admin password, and its generic plugin answers
+    the setup dialog and `Enter enable secret`. That is a configuration change made during a
+    capture, which ncv never makes. Passed as `connect_reply`, this dialog comes before
+    Unicon's own statements, so it sees the prompt first. Checked offline against Unicon 26.8's
+    mock devices only.
+    """
+    try:
+        from unicon.eal.dialogs import Dialog, Statement
+    except ImportError:
+        return None
+    statement = Statement(pattern=FIRST_BOOT_DIALOG, action=_refuse_first_boot_dialog, loop_continue=False)
+    return Dialog([statement])
 
 
 def snapshot_live(
@@ -55,7 +87,12 @@ def snapshot_live(
                     if isinstance(connection, dict):
                         arguments = connection.setdefault("arguments", {})
                         arguments.update(init_exec_commands=[], init_config_commands=[])
-                device.connect(log_stdout=False, init_exec_commands=[], init_config_commands=[])
+                # A fresh guard per device: a Unicon dialog is not documented as reusable.
+                guard = first_boot_guard()
+                refuse_first_boot = {} if guard is None else {"connect_reply": guard}
+                device.connect(
+                    log_stdout=False, init_exec_commands=[], init_config_commands=[], **refuse_first_boot
+                )
                 for feature in features:
                     operation = f"learn {feature}"
                     dumped = learned_to_mapping(device.learn(feature))

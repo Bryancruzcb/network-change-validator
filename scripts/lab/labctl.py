@@ -30,6 +30,10 @@ Usage, with the logins in the NCV_* environment (the run-*.sh scripts prompt for
   labctl.py wait-vrf-bgp-down [seconds]  poll until neither vrf NCV session is Established
   labctl.py check-vrf-hold-time       exit 1 unless both vrf NCV sessions negotiated the 9 s hold time
   labctl.py vrf-shut | vrf-noshut     shutdown / no shutdown on R1 Ethernet0/1.100
+  labctl.py setup-r3-link             R1's side of the link to R3 on Ethernet0/3: OSPF and eBGP to AS 65003
+  labctl.py wait-r3-up [seconds]      poll R1 until R3 is its OSPF neighbor FULL and BGP peer with a prefix
+  labctl.py wait-r3-down [seconds]    poll R1 until R3 is neither its OSPF neighbor FULL nor its BGP peer
+  labctl.py r3-shut | r3-noshut       shutdown / no shutdown on R1 Ethernet0/3, the link to R3
   labctl.py reset                     remove what these scripts add from R1 and R2, back to what ships
   labctl.py probe                     print what a fixed list of read-only commands shows on R1 and R2
 
@@ -37,7 +41,10 @@ The testbed is the file NCV_TESTBED names (a relative path is read from the repo
 or testbeds/lab.yaml under the repository root when NCV_TESTBED is unset or empty, wherever
 this is run from. `probe` changes nothing: it only reads, and it leaves out `show running-config`,
 which holds the passwords. The check-* commands print each show command and the raw text they parsed
-before their reading, so a run's log keeps that text. Genie is imported only when a command
+before their reading, so a run's log keeps that text. R3, the second platform's router, is
+configured only by the day-0 configuration cml_lab.py gives it when it adds the node; the r3
+commands here touch R1 alone, judge R3 from R1's side, and so never send NX-OS configuration.
+Genie is imported only when a command
 runs, so the show-output parsers, the planned configuration lines, and the command table here
 can be tested without the lab extra installed.
 """
@@ -116,6 +123,15 @@ VRF_BGP_NEIGHBORS = f"show bgp vpnv4 unicast vrf {VRF} neighbors"
 # What the sandbox ships in Ethernet0/3, the one spare port. reset puts it back when a run has
 # used it; the order IOS lists the two lines in does not matter.
 SHIPPED_ETHERNET0_3 = ("no ip address", "shutdown")
+# The second-platform run: R3, a router of another platform that cml_lab.py adds to the lab and
+# links to R1's spare port. R3 is configured only by its day-0 configuration (cml_lab.py builds
+# it from these too); R1 peers with it over OSPF and eBGP with the hold-timer run's timers.
+R3_LINK = {"interface": "Ethernet0/3", "R1": "10.1.3.1/24", "R3": "10.1.3.3"}
+R3_RID = "3.3.3.3"
+R3_ASN = 65003
+# What wait-r3-up prints from R1 when it times out, to tell "line protocol down" (the link, or
+# R3 not booted) from "up, but no OSPF" (R3's configuration).
+R3_DIAGNOSTICS = (f"show interfaces {R3_LINK['interface']} | include line protocol", "show cdp neighbors")
 # What `probe` runs on each router, in order. Every one only reads; `show running-config` is left
 # out because it holds the passwords. A fresh or reset lab runs neither OSPF nor BGP, so nothing
 # here asks about them: the check-* commands print that raw text during the runs.
@@ -322,6 +338,29 @@ def vrf_noshut_lines() -> list[str]:
     return [f"interface {VRF_INTERFACE}", "no shutdown"]
 
 
+def r3_link_lines() -> list[str]:
+    """R1's side of the link to R3: the address and a 1 s hello on Ethernet0/3, which ships
+    shut, the link's subnet in area 0, and the eBGP peer with the hold-timer run's timers.
+    It adds to the processes setup-ospf and setup-bgp create, so those run first."""
+    interface = ip_interface(R3_LINK["R1"])
+    peer = R3_LINK["R3"]
+    return [
+        f"interface {R3_LINK['interface']}",
+        f"ip address {interface.ip} {interface.netmask}",
+        f"ip ospf hello-interval {OSPF_FAST_HELLO}",
+        "no shutdown",
+        "router ospf 1",
+        f"network {interface.network.network_address} {interface.network.hostmask} area 0",
+        f"router bgp {BGP['R1']['asn']}",
+        f"neighbor {peer} remote-as {R3_ASN}",
+        f"neighbor {peer} timers {FAST_TIMERS[0]} {FAST_TIMERS[1]}",
+        "address-family ipv4",
+        f"neighbor {peer} activate",
+        f"neighbor {peer} soft-reconfiguration inbound",
+        "exit-address-family",
+    ]
+
+
 def _block_lines(acl: str, entries: list[str]) -> list[str]:
     """An ACL whose `entries` drop what a run blocks and whose last line passes everything else,
     then its inbound binding on the link. `exit` leaves ACL mode before the interface line."""
@@ -456,6 +495,29 @@ def vrf_check(dev, name):
     return vrf_listed(dev.execute("show vrf"), VRF)
 
 
+_R3_BGP = bgp_check({"R1": R3_LINK["R3"]}, bgp_prefixes_received)
+
+
+def r3_check(dev, name):
+    """R3 as R1 sees it: (whether OSPF neighbor 3.3.3.3 is FULL, the prefixes received from BGP
+    peer 10.1.3.3 when that session is Established, else None). Read on R1 only, so the R3
+    commands send nothing to R3 and need no NX-OS show formats."""
+    return ospf_neighbor_state(dev.execute("show ip ospf neighbor"), R3_RID), _R3_BGP(dev, name)
+
+
+def r3_up(state) -> bool:
+    """FULL, and the session has learned at least one prefix: a session that has just come up
+    shows 0, and the captures follow this wait closely."""
+    ospf, prefixes = state
+    return ospf is True and prefixes is not None and prefixes >= 1
+
+
+def r3_down(state) -> bool:
+    """Neither: the OSPF neighbor is not FULL (or gone) and the session is not Established."""
+    ospf, prefixes = state
+    return ospf is not True and prefixes is None
+
+
 def connect(tb, name):
     dev = tb.devices[name]
     dev.connect(log_stdout=False, init_exec_commands=[], init_config_commands=[])
@@ -552,6 +614,15 @@ def check_dead_time(tb) -> int:
             "`labctl.py reset` followed by `labctl.py setup-ospf-fast` gives a clean start"
         )
     return 0 if ok else 1
+
+
+def wait_r3_up(tb, seconds) -> int:
+    """wait-r3-up; on a timeout, R1's own view of the link, read after the wait has let go."""
+    code = wait(tb, ["R1"], r3_check, r3_up, seconds, "R3 FULL and Established with a prefix, seen from R1")
+    if code:
+        for command in R3_DIAGNOSTICS:
+            show_and_echo(tb, "R1", command)
+    return code
 
 
 def reset(tb) -> int:
@@ -731,6 +802,20 @@ COMMANDS: dict[str, tuple[str, Callable[[Any, int], int]]] = {
     ),
     "vrf-shut": ("vrf-shut", _send("R1", vrf_shut_lines(), VRF_BGP_SUMMARY)),
     "vrf-noshut": ("vrf-noshut", _send("R1", vrf_noshut_lines(), VRF_BGP_SUMMARY)),
+    "setup-r3-link": ("setup-r3-link", _send("R1", r3_link_lines(), "show ip interface brief")),
+    "wait-r3-up": ("wait-r3-up [seconds]", wait_r3_up),
+    "wait-r3-down": (
+        "wait-r3-down [seconds]",
+        _wait_for(["R1"], r3_check, r3_down, "R3 to be neither FULL nor Established, seen from R1"),
+    ),
+    "r3-shut": (
+        "r3-shut",
+        _send("R1", [f"interface {R3_LINK['interface']}", "shutdown"], "show ip interface brief"),
+    ),
+    "r3-noshut": (
+        "r3-noshut",
+        _send("R1", [f"interface {R3_LINK['interface']}", "no shutdown"], "show ip interface brief"),
+    ),
     "reset": ("reset", lambda tb, seconds: reset(tb)),
     "probe": ("probe", lambda tb, seconds: probe(tb)),
 }

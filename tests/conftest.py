@@ -62,4 +62,7 @@ def fake_lab(monkeypatch):
     module.load = Mock(return_value=SimpleNamespace(devices={"r1": device}))
     monkeypatch.setitem(sys.modules, "genie", ModuleType("genie"))
     monkeypatch.setitem(sys.modules, "genie.testbed", module)
+    # Unicon is absent unless a test fakes it (tests/test_live.py does), so the capture connects
+    # with exactly the arguments these tests pin, whether or not the real Unicon is installed.
+    monkeypatch.setitem(sys.modules, "unicon", None)
     return device, module.load
