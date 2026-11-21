@@ -9,7 +9,8 @@ scripts/lab/labctl.py reads router show output to know when a change has taken. 
 its parsers on sample output, and the findings the BGP run's planned change was predicted to
 produce, on synthetic snapshots shaped like the 2026-09-12 captures. That prediction was
 written before the run; the 2026-09-18 run matched it, and tests/test_lab_evidence.py replays
-the real captures.
+the real captures. The last tests pin what `labctl.py reset` would send, on the published
+configs and on one built here; tests/test_labctl_commands.py runs the commands on a fake lab.
 """
 
 from __future__ import annotations
@@ -230,6 +231,14 @@ def test_labctl_setup_bgp_lines_are_unchanged_and_fast_adds_only_the_timers(root
     assert [line for line in fast if "timers" not in line] == labctl.bgp_setup_lines("R2")
 
 
+def test_labctl_setup_ospf_lines_are_unchanged(root):
+    labctl = _load_script(root, "labctl.py")
+    area0 = "network 1.1.1.0 0.0.0.255 area 0"
+    # what setup-ospf sent for the 2026-09-12 run
+    assert labctl.ospf_setup_lines("R1") == ["router ospf 1", "router-id 1.1.1.1", area0]
+    assert labctl.ospf_setup_lines("R2") == ["router ospf 1", "router-id 2.2.2.2", area0]
+
+
 def test_labctl_block_drops_bgp_from_r2_in_both_directions_and_nothing_else(root):
     labctl = _load_script(root, "labctl.py")
     assert labctl.bgp_block_lines() == [
@@ -294,3 +303,151 @@ def test_holdtimer_intent_refuses_a_session_without_the_fast_timers(root, tmp_pa
         ("V_DRIFT", "R1", "config.running.must_include"),
         ("V_DRIFT", "R2", "config.running.must_include"),
     ]
+
+
+# labctl.py reset: what it would send to undo the lab scripts' work, read from a running config.
+
+
+def _running(root, path, device):
+    configs = json.loads((root / "fixtures" / path / "config.json").read_text(encoding="utf-8"))
+    return configs[device]["running"]
+
+
+def test_reset_needs_nothing_on_the_shipped_configuration(root):
+    labctl = _load_script(root, "labctl.py")
+    for device in ("R1", "R2"):
+        assert labctl.reset_lines(_running(root, "lab-2026-09-12/routes/pre", device)) == []
+
+
+# Everything the planned runs may add, in the order IOS lists it, around what the sandbox ships.
+EVERYTHING_ON_R1 = """hostname R1
+!
+vrf definition Mgmt-intf
+ !
+ address-family ipv4
+ exit-address-family
+!
+vrf definition NCV
+ rd 65001:1
+ !
+ address-family ipv4
+ exit-address-family
+!
+interface Loopback0
+ ip address 1.1.1.11 255.255.255.255
+!
+interface Loopback100
+ ip address 100.100.100.1 255.255.255.255
+!
+interface Ethernet0/0
+ ip address 10.10.10.100 255.255.255.0
+!
+interface Ethernet0/1
+ ip address 1.1.1.1 255.255.255.0
+ ip access-group NCV-TEST in
+ ip ospf hello-interval 1
+!
+interface Ethernet0/1.100
+ encapsulation dot1Q 100
+ vrf forwarding NCV
+ ip address 100.1.1.1 255.255.255.0
+!
+interface Ethernet0/2
+ description to port1.sandbox-backend
+ vrf forwarding Mgmt-intf
+ ip address 10.10.20.171 255.255.255.0
+!
+interface Ethernet0/3
+ ip address 3.3.3.1 255.255.255.0
+!
+router ospf 1
+ router-id 1.1.1.1
+ network 1.1.1.0 0.0.0.255 area 0
+!
+router bgp 65001
+ bgp router-id 1.1.1.1
+ neighbor 1.1.1.2 remote-as 65002
+!
+ip route 20.20.20.0 255.255.255.0 1.1.1.2
+ip route vrf Mgmt-intf 0.0.0.0 0.0.0.0 10.10.20.254
+!
+ip access-list extended NCV-TEST
+ 10 permit ip any any
+!
+line vty 0 4
+ login local
+end
+"""
+
+
+def test_reset_undoes_everything_the_scripts_add_unbinding_before_deleting(root):
+    labctl = _load_script(root, "labctl.py")
+    assert labctl.reset_lines(EVERYTHING_ON_R1) == [
+        "interface Ethernet0/1",
+        "no ip access-group NCV-TEST in",
+        "no ip access-list extended NCV-TEST",
+        "no router bgp 65001",
+        "no router ospf 1",
+        "interface Ethernet0/1",
+        "no ip ospf hello-interval",
+        "no interface Loopback0",
+        "no interface Loopback100",
+        "no interface Ethernet0/1.100",
+        "default interface Ethernet0/3",
+        "interface Ethernet0/3",
+        "shutdown",
+        "no vrf definition NCV",
+    ]
+
+
+def test_reset_after_the_holdtimer_run_removes_the_acl_and_bgp_only(root):
+    labctl = _load_script(root, "labctl.py")
+    post = "lab-2026-11-20/bgp-holdtimer/post"
+    assert labctl.reset_lines(_running(root, post, "R1")) == [
+        "interface Ethernet0/1",
+        "no ip access-group NCV-BLOCK-BGP in",
+        "no ip access-list extended NCV-BLOCK-BGP",
+        "no router bgp 65001",
+    ]
+    assert labctl.reset_lines(_running(root, post, "R2")) == ["no router bgp 65002"]
+
+
+def test_reset_brings_a_shut_link_back(root):
+    labctl = _load_script(root, "labctl.py")
+    r1 = _running(root, "lab-2026-09-12/routes/post", "R1")
+    assert labctl.reset_lines(r1) == ["interface Ethernet0/1", "no shutdown"]
+
+
+def test_reset_never_touches_the_management_path_or_the_static_routes(root):
+    labctl = _load_script(root, "labctl.py")
+    configs = [EVERYTHING_ON_R1]
+    for path in sorted((root / "fixtures").glob("lab-*/**/config.json")):
+        configs += [record["running"] for record in json.loads(path.read_text(encoding="utf-8")).values()]
+    assert len(configs) == 25
+    for config in configs:
+        for line in labctl.reset_lines(config):
+            assert "Mgmt-intf" not in line
+            assert "Ethernet0/0" not in line
+            assert "Ethernet0/2" not in line
+            assert "ip route" not in line
+
+
+def test_reset_leaves_what_the_scripts_did_not_add(root):
+    """Only NCV- ACLs, OSPF process 1, and the named interfaces are the scripts' own, and the
+    spare port in either order is still what ships."""
+    labctl = _load_script(root, "labctl.py")
+    config = "\n".join(
+        [
+            "interface Ethernet0/1",
+            " ip address 1.1.1.1 255.255.255.0",
+            " ip access-group OPERATOR in",
+            "interface Ethernet0/3",
+            " shutdown",
+            " no ip address",
+            "router ospf 2",
+            "ip access-list extended OPERATOR",
+            " permit ip any any",
+            "vrf definition NCV-OTHER",
+        ]
+    )
+    assert labctl.reset_lines(config) == []

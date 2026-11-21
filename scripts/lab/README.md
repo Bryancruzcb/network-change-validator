@@ -15,7 +15,8 @@ the one planned change the captures are meant to catch.
 | `run-bgp-holdtimer.sh` | The hold-timer run: eBGP with a 9 s hold time, then the same sequence around an inbound ACL on R1 that drops BGP from R2. |
 | `capture.sh` | One capture (`pre`, `post`, or `restored`) for a run driven by hand. |
 | `change.sh` | The planned change by hand: `apply` shuts R1 Ethernet0/1 and `undo` brings it back; `bgp-apply` shuts the R1 peer and `bgp-undo` brings it back; `holdtimer-apply` adds the ACL and `holdtimer-undo` removes it. |
-| `labctl.py` | The lab actions the scripts above call: `setup-ospf`, `shut`, `noshut`, `wait-full`, `wait-gone`, `setup-bgp`, `bgp-shut`, `bgp-noshut`, `wait-bgp-up`, `wait-bgp-down`, `setup-bgp-fast`, `check-hold-time`, `bgp-block`, `bgp-unblock`. |
+| `_lib.sh` | Sourced, not run: what new run scripts share (the VPN check, the login prompts, the capture and report paths, `step`, `ctl`, `cap`, `snap`, `compare`), plus `expect_exit` and `lab_finish`, which end a run with exit 0 when every comparison exited as predicted and 3 when one did not. The four runs above keep their own copy, since they reproduce published runs. |
+| `labctl.py` | The lab actions the scripts above call: `setup-ospf`, `shut`, `noshut`, `wait-full`, `wait-gone`, `setup-bgp`, `bgp-shut`, `bgp-noshut`, `wait-bgp-up`, `wait-bgp-down`, `setup-bgp-fast`, `check-hold-time`, `bgp-block`, `bgp-unblock`, and `reset`, which removes what these scripts add from both routers. |
 | `sanitize_capture.py` | Copies a run's `pre/`, `post/`, `restored/` for publishing with passwords and certificate bodies replaced and `raw/` left out. |
 | `bgp_pcap.py` | Lists the BGP messages in a pcap of the lab link: TCP flags, retransmissions, and each message by name, with NOTIFICATION error codes spelled out. |
 | `cml_capture.py` | Starts and saves a packet capture of the R1-R2 link through the CML API (`start`, `stop <file.pcap>`), with the CML login the run scripts already hold. |
@@ -131,6 +132,11 @@ directory works.
    username and password and the routers' enable password, keeps them in that terminal's
    environment (`NCV_CML_USER`, `NCV_CML_PASS`, `NCV_LAB_PASS`), and stops before touching
    the lab if the no-change check is not clean.
+
+`NCV_TESTBED` picks another testbed file for `labctl.py` (a relative path is read from the
+repository root), and `labctl.py reset` returns a reused reservation to the shipped
+configuration: it removes only what these scripts add, and never touches the management path
+or the static routes.
 
 Captures land in `captures/<run>/`, reports and the log in `output/lab/`. Both directories
 are gitignored, and the captures hold the lab's running configs.
