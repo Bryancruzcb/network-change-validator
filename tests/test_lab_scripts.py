@@ -9,8 +9,9 @@ scripts/lab/labctl.py reads router show output to know when a change has taken. 
 its parsers on sample output, and the findings the BGP run's planned change was predicted to
 produce, on synthetic snapshots shaped like the 2026-09-12 captures. That prediction was
 written before the run; the 2026-09-18 run matched it, and tests/test_lab_evidence.py replays
-the real captures. The OSPF dead-timer run is prepared the same way and has not run: its
-prediction is pinned here on synthetic snapshots. The last tests pin what `labctl.py reset`
+the real captures. The OSPF dead-timer run and the iBGP run are prepared the same way and have
+not run: their predictions are pinned here on synthetic snapshots, the iBGP one built through
+ncv's own adapter from Genie-shaped data. The last tests pin what `labctl.py reset`
 would send, on the published configs and on ones built here; tests/test_labctl_commands.py runs
 the commands on a fake lab.
 """
@@ -19,9 +20,11 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 
 from ncv.cli import main
 from ncv.intent import load_intent
+from ncv.normalize import normalize_learn
 
 
 def _load_script(root, name):
@@ -135,14 +138,18 @@ R2_CONFIG = [
 ]
 
 
-def _write_lab_snapshot(path, ospf, bgp, configs):
+LAB_ROUTES = {
+    "R1": {"20.20.20.0/24": {"protocol": "static"}, "1.1.1.0/24": {"protocol": "connected"}},
+    "R2": {"10.10.10.0/24": {"protocol": "static"}, "1.1.1.0/24": {"protocol": "connected"}},
+}
+
+
+def _write_lab_snapshot(path, ospf, bgp, configs, routes=None):
     """A snapshot shaped like the recorded captures: the OSPF and BGP sections and the config
-    lines given, around the routes and link counters every lab run keeps unchanged."""
+    lines given, around the link counters every lab run keeps unchanged and the routes given,
+    by default the static and connected ones every earlier run kept unchanged."""
     path.mkdir()
-    routes = {
-        "R1": {"20.20.20.0/24": {"protocol": "static"}, "1.1.1.0/24": {"protocol": "connected"}},
-        "R2": {"10.10.10.0/24": {"protocol": "static"}, "1.1.1.0/24": {"protocol": "connected"}},
-    }
+    routes = LAB_ROUTES if routes is None else routes
     sections = {
         "ospf.json": ospf,
         "bgp.json": bgp,
@@ -454,6 +461,233 @@ def test_deadtimer_intent_refuses_a_capture_without_the_fast_hello(root, tmp_pat
     )
 
 
+# The iBGP run, prepared and not run yet: iBGP in AS 65010 between the routers' loopbacks, which
+# reach each other only over OSPF, and the dead-timer run's ACL on R1 as the planned change.
+
+IBGP_SUMMARY = """\
+BGP router identifier 1.1.1.1, local AS number 65010
+Neighbor        V           AS MsgRcvd MsgSent   TblVer  InQ OutQ Up/Down  State/PfxRcd
+10.255.255.2    4        65010      49      50        3    0    0 00:02:19        1
+10.255.255.3    4        65010      12      12        1    0    0 00:00:30        0
+10.255.255.4    4        65010       0       0        1    0    0 00:00:05 Idle
+10.255.255.5    4        65010       0       0        1    0    0 00:00:02 Active
+"""
+
+
+def test_labctl_reads_the_prefix_count_only_from_an_established_session(root):
+    labctl = _load_script(root, "labctl.py")
+    assert labctl.bgp_prefixes_received(IBGP_SUMMARY, "10.255.255.2") == 1
+    assert labctl.bgp_prefixes_received(IBGP_SUMMARY, "10.255.255.3") == 0
+    assert labctl.bgp_prefixes_received(IBGP_SUMMARY, "10.255.255.4") is None
+    assert labctl.bgp_prefixes_received(IBGP_SUMMARY, "10.255.255.5") is None
+    assert labctl.bgp_prefixes_received(IBGP_SUMMARY, "10.255.255.6") is None
+    assert labctl.bgp_prefixes_received(BGP_SUMMARY, "1.1.1.3") is None  # Idle (Admin)
+    assert labctl.bgp_prefixes_received("", "10.255.255.2") is None
+    # Why the count is needed: a session that has learned nothing yet already reads as up.
+    assert labctl.bgp_session_state(IBGP_SUMMARY, "10.255.255.3") is True
+
+
+def test_labctl_setup_ibgp_lines_for_r1(root):
+    labctl = _load_script(root, "labctl.py")
+    r1 = labctl.ibgp_setup_lines("R1")
+    assert r1 == [
+        "interface Loopback0",
+        "ip address 10.255.255.1 255.255.255.255",
+        "interface Loopback1",
+        "ip address 172.16.1.1 255.255.255.0",
+        "interface Ethernet0/1",
+        "ip ospf hello-interval 1",
+        "router ospf 1",
+        "router-id 1.1.1.1",
+        "network 1.1.1.0 0.0.0.255 area 0",
+        "network 10.255.255.1 0.0.0.0 area 0",
+        "router bgp 65010",
+        "bgp router-id 1.1.1.1",
+        "bgp log-neighbor-changes",
+        "neighbor 10.255.255.2 remote-as 65010",
+        "neighbor 10.255.255.2 update-source Loopback0",
+        "neighbor 10.255.255.2 timers 3 9",
+        "address-family ipv4",
+        "network 172.16.1.0 mask 255.255.255.0",
+        "neighbor 10.255.255.2 activate",
+        "neighbor 10.255.255.2 soft-reconfiguration inbound",
+        "exit-address-family",
+    ]
+    # setup-ospf-fast's lines, reused, with Loopback0 added to area 0; Loopback1 is not in OSPF.
+    assert r1[4:9] == labctl.ospf_setup_lines("R1", labctl.OSPF_FAST_HELLO)
+    assert [line for line in r1 if line.endswith(" area 0")] == r1[8:10]
+
+
+# R1's values and R2's, both ways round: Loopback0, Loopback1, and the router id.
+_MIRROR = {
+    "10.255.255.1": "10.255.255.2",
+    "10.255.255.2": "10.255.255.1",
+    "172.16.1.": "172.16.2.",
+    "1.1.1.1": "2.2.2.2",
+}
+
+
+def _mirrored(line):
+    return re.sub("|".join(map(re.escape, _MIRROR)), lambda m: _MIRROR[m.group(0)], line)
+
+
+def test_labctl_setup_ibgp_lines_for_r2_differ_only_in_the_mirrored_values(root):
+    labctl = _load_script(root, "labctl.py")
+    r1, r2 = labctl.ibgp_setup_lines("R1"), labctl.ibgp_setup_lines("R2")
+    assert [_mirrored(line) for line in r1] == r2
+    assert sum(a != b for a, b in zip(r1, r2, strict=True)) == 11
+
+
+IBGP_INTENT = ("scripts", "lab", "intent-ibgp.yaml")
+
+
+def test_ibgp_intent_names_four_adjacencies_the_learned_routes_and_the_required_lines(root):
+    intent = load_intent(root.joinpath(*IBGP_INTENT))
+    assert intent.intent_id == "devnet-default-lab-ibgp"
+    adjacencies = [
+        (a.device, a.protocol, a.neighbor, a.interface, a.vrf, a.remote_as) for a in intent.adjacencies
+    ]
+    assert adjacencies == [
+        ("R1", "ospf", "2.2.2.2", "Ethernet0/1", "", None),
+        ("R2", "ospf", "1.1.1.1", "Ethernet0/1", "", None),
+        ("R1", "bgp", "10.255.255.2", "", "default", 65010),
+        ("R2", "bgp", "10.255.255.1", "", "default", 65010),
+    ]
+    learned = {(r.device, r.prefix, r.protocol) for r in intent.routes if r.protocol in ("ospf", "bgp")}
+    assert learned == {
+        ("R1", "10.255.255.2/32", "ospf"),
+        ("R1", "172.16.2.0/24", "bgp"),
+        ("R2", "10.255.255.1/32", "ospf"),
+        ("R2", "172.16.1.0/24", "bgp"),
+    }
+    assert {r.vrf for r in intent.routes} == {"default"}
+    required = {rule.device: rule.lines for rule in intent.must_include}
+    for device, peer, static in (
+        ("R1", "10.255.255.2", "ip route 20.20.20.0 255.255.255.0 1.1.1.2"),
+        ("R2", "10.255.255.1", "ip route 10.10.10.0 255.255.255.0 1.1.1.1"),
+    ):
+        assert set(required[device]) == {
+            "router ospf 1",
+            "ip ospf hello-interval 1",
+            "router bgp 65010",
+            f"neighbor {peer} remote-as 65010",
+            f"neighbor {peer} update-source Loopback0",
+            f"neighbor {peer} timers 3 9",
+            static,
+        }
+    assert not any("NCV-BLOCK" in line for lines in required.values() for line in lines)
+    assert intent.must_absent == ()
+
+
+# Each router's iBGP peer (the other's Loopback0) and the prefix it learns from it, its own
+# router id, and its static route.
+IBGP_PEER = {"R1": ("10.255.255.2", "172.16.2.0/24"), "R2": ("10.255.255.1", "172.16.1.0/24")}
+OWN_ID = {"R1": "1.1.1.1", "R2": "2.2.2.2"}
+STATIC = {"R1": R1_CONFIG[-1], "R2": R2_CONFIG[-1]}
+
+
+def _genie_ospf(neighbors):
+    """`learn ospf` as Genie shapes it: neighbors {router id: state} on Ethernet0/1 of area 0."""
+    interface = {"neighbors": {nbr: {"state": state} for nbr, state in neighbors.items()}}
+    area = {"interfaces": {"Ethernet0/1": interface}}
+    return {
+        "vrf": {"default": {"address_family": {"ipv4": {"instance": {"1": {"areas": {"0.0.0.0": area}}}}}}}
+    }
+
+
+def _genie_bgp(peer, state):
+    """`learn bgp` as Genie shapes it: one peer in the default VRF of the default instance."""
+    record = {"session_state": state, "remote_as": 65010}
+    return {"instance": {"default": {"vrf": {"default": {"neighbor": {peer: record}}}}}}
+
+
+def _ibgp_config(device, extra=()):
+    peer, _ = IBGP_PEER[device]
+    return [
+        f"hostname {device}",
+        "interface Ethernet0/1",
+        " ip ospf hello-interval 1",
+        "router ospf 1",
+        f" router-id {OWN_ID[device]}",
+        "router bgp 65010",
+        f" neighbor {peer} remote-as 65010",
+        f" neighbor {peer} update-source Loopback0",
+        f" neighbor {peer} timers 3 9",
+        STATIC[device],
+        *extra,
+    ]
+
+
+def _write_ibgp_snapshot(path, ospf, bgp, missing=(), r1_extra=()):
+    """The iBGP run's capture. `ospf` maps each router to {router id: state} and `bgp` to its
+    session state; both go through ncv's adapter from Genie's shapes, so a neighbor filed under
+    the wrong key fails the prediction. The routes are the lab's plus each router's two learned
+    ones, less the (router, prefix) pairs in `missing`."""
+    ospf_section, bgp_section, routes = {}, {}, {}
+    for device, (peer, prefix) in IBGP_PEER.items():
+        ospf_section.update(normalize_learn(device, "ospf", _genie_ospf(ospf[device])))
+        bgp_section.update(normalize_learn(device, "bgp", _genie_bgp(peer, bgp[device])))
+        learned = {f"{peer}/32": {"protocol": "ospf"}, prefix: {"protocol": "bgp"}}
+        table = {**learned, **LAB_ROUTES[device]}
+        routes[device] = {p: rec for p, rec in table.items() if (device, p) not in missing}
+    configs = {"R1": _ibgp_config("R1", r1_extra), "R2": _ibgp_config("R2")}
+    _write_lab_snapshot(path, ospf_section, bgp_section, configs, routes)
+
+
+IBGP_UP = {"R1": {"2.2.2.2": "full"}, "R2": {"1.1.1.1": "full"}}
+ESTABLISHED = {"R1": "Established", "R2": "Established"}
+
+
+def test_ibgp_run_prediction_on_synthetic_snapshots(root, tmp_path):
+    """One cause, three layers: the ACL ends OSPF, so each router loses the route to its peer's
+    loopback, the iBGP session over it, and the prefix learned through that session. Both
+    routers, eight findings, and still no V_DRIFT: no rule names the ACL."""
+    intent = root.joinpath(*IBGP_INTENT)
+    pre, post = tmp_path / "pre", tmp_path / "post"
+    _write_ibgp_snapshot(pre, IBGP_UP, ESTABLISHED)
+    lost = [
+        (device, route) for device, (peer, prefix) in IBGP_PEER.items() for route in (f"{peer}/32", prefix)
+    ]
+    ospf_after = {"R1": {}, "R2": {"1.1.1.1": "init"}}
+    _write_ibgp_snapshot(post, ospf_after, {"R1": "Idle", "R2": "Idle"}, lost, OSPF_ACL_ON_R1)
+    assert _bgp_diff(root, tmp_path, pre, pre, "baseline", intent) == (0, [])
+    assert _bgp_diff(root, tmp_path, pre, post, "change", intent) == (
+        1,
+        [
+            ("V_ADJ", "R1", "bgp.vrfs.default.neighbors.10.255.255.2"),
+            ("V_ADJ", "R1", "ospf.neighbors.2.2.2.2"),
+            ("V_ADJ", "R2", "bgp.vrfs.default.neighbors.10.255.255.1"),
+            ("V_ADJ", "R2", "ospf.neighbors.1.1.1.1"),
+            ("V_ROUTE", "R1", "routing.vrfs.default.routes.10.255.255.2/32"),
+            ("V_ROUTE", "R1", "routing.vrfs.default.routes.172.16.2.0/24"),
+            ("V_ROUTE", "R2", "routing.vrfs.default.routes.10.255.255.1/32"),
+            ("V_ROUTE", "R2", "routing.vrfs.default.routes.172.16.1.0/24"),
+        ],
+    )
+    report = json.loads((tmp_path / "report-change" / "report.json").read_text(encoding="utf-8"))
+    after = {(f["device"], f["path"]): f["after"] for f in report["findings"]}
+    assert after[("R1", "ospf.neighbors.2.2.2.2")] is None
+    assert after[("R2", "ospf.neighbors.1.1.1.1")]["state"] == "init"
+    assert after[("R1", "bgp.vrfs.default.neighbors.10.255.255.2")] == {"state": "Idle", "remote_as": 65010}
+    assert after[("R2", "routing.vrfs.default.routes.172.16.1.0/24")] is None
+
+
+def test_ibgp_intent_refuses_a_setup_that_never_learned_the_bgp_prefix(root, tmp_path):
+    """The no-change check is what proves the design: with a `network` statement forgotten, the
+    sessions are Established with nothing learned, and the missing prefix stops the run."""
+    intent = root.joinpath(*IBGP_INTENT)
+    pre = tmp_path / "pre"
+    missing = [(device, prefix) for device, (_, prefix) in IBGP_PEER.items()]
+    _write_ibgp_snapshot(pre, IBGP_UP, ESTABLISHED, missing)
+    assert _bgp_diff(root, tmp_path, pre, pre, "baseline", intent) == (
+        1,
+        [
+            ("V_ROUTE", "R1", "routing.vrfs.default.routes.172.16.2.0/24"),
+            ("V_ROUTE", "R2", "routing.vrfs.default.routes.172.16.1.0/24"),
+        ],
+    )
+
+
 # labctl.py reset: what it would send to undo the lab scripts' work, read from a running config.
 
 
@@ -626,3 +860,57 @@ def test_reset_after_the_deadtimer_run_removes_the_acl_ospf_and_the_hello(root):
         "interface Ethernet0/1",
         "no ip ospf hello-interval",
     ]
+
+
+def test_reset_after_the_ibgp_run_removes_bgp_ospf_the_hello_and_both_loopbacks(root):
+    """Both routers as IOS would list them with this run's whole setup in place, R1 also with its
+    change: two loopbacks, the hello line, OSPF with Loopback0 in area 0, and router bgp 65010."""
+    labctl = _load_script(root, "labctl.py")
+
+    def running(device, binding=(), acl=()):
+        peer, _ = IBGP_PEER[device]
+        n = 1 if device == "R1" else 2
+        return "\n".join(
+            [
+                f"hostname {device}",
+                "interface Loopback0",
+                f" ip address 10.255.255.{n} 255.255.255.255",
+                "interface Loopback1",
+                f" ip address 172.16.{n}.1 255.255.255.0",
+                "interface Ethernet0/1",
+                f" ip address 1.1.1.{n} 255.255.255.0",
+                *binding,
+                " ip ospf hello-interval 1",
+                "router ospf 1",
+                f" router-id {OWN_ID[device]}",
+                " network 1.1.1.0 0.0.0.255 area 0",
+                f" network 10.255.255.{n} 0.0.0.0 area 0",
+                "router bgp 65010",
+                f" bgp router-id {OWN_ID[device]}",
+                f" neighbor {peer} remote-as 65010",
+                f" neighbor {peer} update-source Loopback0",
+                f" neighbor {peer} timers 3 9",
+                " address-family ipv4",
+                f"  network 172.16.{n}.0 mask 255.255.255.0",
+                " exit-address-family",
+                STATIC[device],
+                *acl,
+            ]
+        )
+
+    setup_undo = [
+        "no router bgp 65010",
+        "no router ospf 1",
+        "interface Ethernet0/1",
+        "no ip ospf hello-interval",
+        "no interface Loopback0",
+        "no interface Loopback1",
+    ]
+    r1 = running("R1", [" ip access-group NCV-BLOCK-OSPF in"], OSPF_ACL_ON_R1[:3])
+    assert labctl.reset_lines(r1) == [
+        "interface Ethernet0/1",
+        "no ip access-group NCV-BLOCK-OSPF in",
+        "no ip access-list extended NCV-BLOCK-OSPF",
+        *setup_undo,
+    ]
+    assert labctl.reset_lines(running("R2")) == setup_undo

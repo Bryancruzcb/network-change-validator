@@ -139,6 +139,7 @@ CONFIGURE_COMMANDS = {
     ),
     "ospf-block": (lambda m: {"R1": [m.ospf_block_lines()], "R2": []}, OSPF),
     "ospf-unblock": (lambda m: {"R1": [m.ospf_unblock_lines()], "R2": []}, OSPF),
+    "setup-ibgp": (lambda m: {"R1": [m.ibgp_setup_lines("R1")], "R2": [m.ibgp_setup_lines("R2")]}, None),
 }
 
 
@@ -174,6 +175,20 @@ BGP_DOWN = {
     "R2": BGP_HEADER + "1.1.1.1      4 65001       0       0      1   0    0 00:00:03 Active\n",
 }
 
+# The iBGP run's sessions, between the loopbacks: up with the peer's prefix learned, up with
+# nothing learned yet, and down (Idle while there is no route to the peer, Active once there is).
+IBGP_UP = {
+    "R1": BGP_HEADER + "10.255.255.2 4 65010      12      12      3   0    0 00:00:30        1\n",
+    "R2": BGP_HEADER + "10.255.255.1 4 65010      12      12      3   0    0 00:00:30        1\n",
+}
+IBGP_NOTHING_LEARNED = {
+    name: output.replace("        1\n", "        0\n") for name, output in IBGP_UP.items()
+}
+IBGP_DOWN = {
+    "R1": BGP_HEADER + "10.255.255.2 4 65010       0       0      1   0    0 00:00:05 Idle\n",
+    "R2": BGP_HEADER + "10.255.255.1 4 65010       0       0      1   0    0 00:00:02 Active\n",
+}
+
 # command -> (the show it polls, output that satisfies it, output that never does)
 WAIT_COMMANDS = {
     "wait-full": (OSPF, OSPF_FULL, OSPF_GONE),
@@ -181,6 +196,8 @@ WAIT_COMMANDS = {
     "wait-bgp-up": (BGP_SUMMARY, BGP_UP, BGP_DOWN),
     "wait-bgp-down": (BGP_SUMMARY, BGP_DOWN, BGP_UP),
     "wait-ospf-lost": (OSPF, OSPF_LOST, OSPF_FULL),
+    "wait-ibgp-up": (BGP_SUMMARY, IBGP_UP, IBGP_DOWN),
+    "wait-ibgp-down": (BGP_SUMMARY, IBGP_DOWN, IBGP_UP),
 }
 
 
@@ -215,10 +232,31 @@ def test_after_the_dead_timer_change_only_wait_ospf_lost_finishes(labctl, monkey
     assert _run(labctl, monkeypatch, ["wait-ospf-lost", "0"], lost)[0] == 0
 
 
-def _neighbors(r1_output, r2_output):
+def test_wait_ibgp_up_waits_for_a_learned_prefix_not_just_established(labctl, monkeypatch, capsys):
+    """A session that has just come up shows a prefix count of 0, which bgp_session_state reads
+    as Established; the iBGP captures need the learned route, so wait-ibgp-up keeps waiting."""
+    nothing_learned = _answers(BGP_SUMMARY, IBGP_NOTHING_LEARNED)
+    assert _run(labctl, monkeypatch, ["wait-ibgp-up", "0"], nothing_learned)[0] == 1
+    assert "{'R1': 0, 'R2': 0}" in capsys.readouterr().out
+    assert _run(labctl, monkeypatch, ["wait-ibgp-down", "0"], nothing_learned)[0] == 1
+
+
+def test_the_ebgp_wait_still_counts_an_established_session_with_nothing_learned_as_up(labctl, monkeypatch):
+    nothing_learned = {name: output.replace("        1\n", "        0\n") for name, output in BGP_UP.items()}
+    assert _run(labctl, monkeypatch, ["wait-bgp-up", "0"], _answers(BGP_SUMMARY, nothing_learned))[0] == 0
+
+
+def test_the_ibgp_waits_ignore_the_ebgp_peers(labctl, monkeypatch):
+    """Each wait reads only its own peers: the eBGP sessions being up says nothing about iBGP."""
+    assert _run(labctl, monkeypatch, ["wait-ibgp-up", "0"], _answers(BGP_SUMMARY, BGP_UP))[0] == 1
+    assert _run(labctl, monkeypatch, ["wait-bgp-up", "0"], _answers(BGP_SUMMARY, IBGP_UP))[0] == 1
+
+
+def _neighbors(r1_output, r2_output, peers=None):
+    peers = peers or {"R1": "1.1.1.2", "R2": "1.1.1.1"}
     return {
-        "R1": {"show bgp ipv4 unicast neighbors 1.1.1.2": r1_output},
-        "R2": {"show bgp ipv4 unicast neighbors 1.1.1.1": r2_output},
+        "R1": {f"show bgp ipv4 unicast neighbors {peers['R1']}": r1_output},
+        "R2": {f"show bgp ipv4 unicast neighbors {peers['R2']}": r2_output},
     }
 
 
@@ -227,6 +265,21 @@ def test_check_hold_time_passes_only_when_both_sessions_run_the_fast_timers(labc
     assert _run(labctl, monkeypatch, ["check-hold-time"], fast)[0] == 0
     stale = _neighbors(NEIGHBOR_FAST_TIMERS, NEIGHBOR_STALE_TIMERS)
     assert _run(labctl, monkeypatch, ["check-hold-time"], stale)[0] == 1
+
+
+IBGP_PEERS = {"R1": "10.255.255.2", "R2": "10.255.255.1"}
+
+
+def test_check_ibgp_hold_time_reads_the_loopback_peers(labctl, monkeypatch, capsys):
+    fast = _neighbors(NEIGHBOR_FAST_TIMERS, NEIGHBOR_FAST_TIMERS, IBGP_PEERS)
+    code, devices = _run(labctl, monkeypatch, ["check-ibgp-hold-time"], fast)
+    assert code == 0
+    assert devices["R1"].executed == ["show bgp ipv4 unicast neighbors 10.255.255.2"]
+    assert devices["R2"].executed == ["show bgp ipv4 unicast neighbors 10.255.255.1"]
+    assert "R2: negotiated (hold, keepalive) = (9, 3)" in capsys.readouterr().out
+    stale = _neighbors(NEIGHBOR_STALE_TIMERS, NEIGHBOR_FAST_TIMERS, IBGP_PEERS)
+    assert _run(labctl, monkeypatch, ["check-ibgp-hold-time"], stale)[0] == 1
+    assert "`clear ip bgp 10.255.255.2` on R1" in capsys.readouterr().out
 
 
 OSPF_INTERFACE = "show ip ospf interface Ethernet0/1"
@@ -270,6 +323,9 @@ def test_reset_configures_only_the_router_that_needs_it(root, labctl, monkeypatc
         (["check-hold-time"], _neighbors(NEIGHBOR_FAST_TIMERS, ""), {"R2": "execute"}),
         (["check-dead-time"], _interface(OSPF_INTERFACE_FAST, ""), {"R2": "execute"}),
         (["ospf-block"], SHOWS, {"R1": "configure"}),
+        (["setup-ibgp"], {}, {"R2": "configure"}),
+        (["wait-ibgp-up"], _answers(BGP_SUMMARY, IBGP_UP), {"R2": "execute"}),
+        (["check-ibgp-hold-time"], _neighbors(NEIGHBOR_FAST_TIMERS, "", IBGP_PEERS), {"R2": "execute"}),
         (["reset"], {"R1": {"show running-config": ""}}, {"R2": "execute"}),
     ],
 )
@@ -282,16 +338,17 @@ def test_a_command_that_raises_still_disconnects_every_router_it_reached(
 
 
 def test_every_command_in_the_table_is_exercised_here(labctl):
-    covered = set(CONFIGURE_COMMANDS) | set(WAIT_COMMANDS) | {"check-hold-time", "check-dead-time", "reset"}
-    assert covered == set(labctl.COMMANDS)
+    checks = {"check-hold-time", "check-dead-time", "check-ibgp-hold-time", "reset"}
+    assert set(CONFIGURE_COMMANDS) | set(WAIT_COMMANDS) | checks == set(labctl.COMMANDS)
 
 
-def test_usage_is_the_old_text_with_the_dead_timer_commands_and_reset_added(labctl):
+def test_usage_is_the_old_text_with_the_dead_timer_and_ibgp_commands_and_reset_added(labctl):
     assert labctl.USAGE == (
         "usage: labctl.py setup-ospf | shut | noshut | wait-full [seconds] | wait-gone [seconds]"
         " | setup-bgp | bgp-shut | bgp-noshut | wait-bgp-up [seconds] | wait-bgp-down [seconds]"
         " | setup-bgp-fast | check-hold-time | bgp-block | bgp-unblock"
         " | setup-ospf-fast | check-dead-time | ospf-block | ospf-unblock | wait-ospf-lost [seconds]"
+        " | setup-ibgp | wait-ibgp-up [seconds] | wait-ibgp-down [seconds] | check-ibgp-hold-time"
         " | reset"
     )
 

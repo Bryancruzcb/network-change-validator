@@ -1,0 +1,103 @@
+# Draft intent for the iBGP run (scripts/lab/run-ibgp.sh). It was written before any capture of
+# that run exists, and it moves next to its evidence under fixtures/ once a run is recorded, as
+# intent-bgp-holdtimer.yaml did.
+#
+# iBGP in AS 65010 runs between the routers' Loopback0 addresses, which reach each other only
+# through OSPF, so the rules cover three layers: the OSPF adjacencies and the peer's Loopback0
+# route learned through OSPF, the iBGP sessions, and the peer's Loopback1 prefix learned through
+# BGP. No static route covers that prefix, so it is expected in the routing table, and listing
+# it is what makes the no-change check refuse a setup that never learned it. The required lines
+# prove the 1 s hello, the loopback session (`update-source`), and the 9 s hold time are
+# configured before the change. The change (an inbound ACL on R1 that drops OSPF from R2) is
+# deliberately not named here: no rule anticipates it, and the run shows how far it reaches.
+intent_id: devnet-default-lab-ibgp
+version: 1
+
+devices:
+  - R1
+  - R2
+
+adjacencies:
+  - device: R1
+    protocol: ospf
+    neighbor: 2.2.2.2
+    interface: Ethernet0/1
+  - device: R2
+    protocol: ospf
+    neighbor: 1.1.1.1
+    interface: Ethernet0/1
+  - device: R1
+    protocol: bgp
+    neighbor: 10.255.255.2
+    vrf: default
+    remote_as: 65010
+  - device: R2
+    protocol: bgp
+    neighbor: 10.255.255.1
+    vrf: default
+    remote_as: 65010
+
+routes:
+  - device: R1
+    vrf: default
+    prefix: 10.255.255.2/32
+    protocol: ospf
+  - device: R1
+    vrf: default
+    prefix: 172.16.2.0/24
+    protocol: bgp
+  - device: R1
+    vrf: default
+    prefix: 20.20.20.0/24
+    protocol: static
+  - device: R1
+    vrf: default
+    prefix: 1.1.1.0/24
+    protocol: connected
+  - device: R2
+    vrf: default
+    prefix: 10.255.255.1/32
+    protocol: ospf
+  - device: R2
+    vrf: default
+    prefix: 172.16.1.0/24
+    protocol: bgp
+  - device: R2
+    vrf: default
+    prefix: 10.10.10.0/24
+    protocol: static
+  - device: R2
+    vrf: default
+    prefix: 1.1.1.0/24
+    protocol: connected
+
+interfaces:
+  - device: R1
+    name: Ethernet0/1
+    max_in_errors: 0
+    max_crc: 0
+  - device: R2
+    name: Ethernet0/1
+    max_in_errors: 0
+    max_crc: 0
+
+config:
+  must_include:
+    - device: R1
+      lines:
+        - "router ospf 1"
+        - "ip ospf hello-interval 1"
+        - "router bgp 65010"
+        - "neighbor 10.255.255.2 remote-as 65010"
+        - "neighbor 10.255.255.2 update-source Loopback0"
+        - "neighbor 10.255.255.2 timers 3 9"
+        - "ip route 20.20.20.0 255.255.255.0 1.1.1.2"
+    - device: R2
+      lines:
+        - "router ospf 1"
+        - "ip ospf hello-interval 1"
+        - "router bgp 65010"
+        - "neighbor 10.255.255.1 remote-as 65010"
+        - "neighbor 10.255.255.1 update-source Loopback0"
+        - "neighbor 10.255.255.1 timers 3 9"
+        - "ip route 10.10.10.0 255.255.255.0 1.1.1.1"

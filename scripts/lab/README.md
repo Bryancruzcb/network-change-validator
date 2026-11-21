@@ -14,10 +14,11 @@ the one planned change the captures are meant to catch.
 | `run-bgp.sh` | The BGP run: sets up eBGP between R1 and R2, waits for Established, then the same sequence around `neighbor 1.1.1.2 shutdown` on R1. |
 | `run-bgp-holdtimer.sh` | The hold-timer run: eBGP with a 9 s hold time, then the same sequence around an inbound ACL on R1 that drops BGP from R2. |
 | `run-ospf-deadtimer.sh` | The OSPF dead-timer run, prepared and not run: OSPF with a 1 s hello (so a 4 s dead interval), then the same sequence around an inbound ACL on R1 that drops OSPF from R2, with a packet capture of `ip proto 89`. It sources `_lib.sh` and exits 0 only when every comparison exits as predicted. |
+| `run-ibgp.sh` | The iBGP run, prepared and not run: iBGP between the routers' loopbacks, which reach each other only over OSPF, then the same sequence around the dead-timer run's OSPF ACL on R1, with a packet capture of `ip proto 89 or tcp port 179`. It sources `_lib.sh` and exits 0 only when every comparison exits as predicted. |
 | `capture.sh` | One capture (`pre`, `post`, or `restored`) for a run driven by hand. |
 | `change.sh` | The planned change by hand: `apply` shuts R1 Ethernet0/1 and `undo` brings it back; `bgp-apply` shuts the R1 peer and `bgp-undo` brings it back; `holdtimer-apply` adds the BGP ACL and `holdtimer-undo` removes it; `deadtimer-apply` adds the OSPF ACL and `deadtimer-undo` removes it. |
 | `_lib.sh` | Sourced, not run: what new run scripts share (the VPN check, the login prompts, the capture and report paths, `step`, `ctl`, `cap`, `snap`, `compare`), plus `expect_exit` and `lab_finish`, which end a run with exit 0 when every comparison exited as predicted and 3 when one did not. The four published runs keep their own copy, since they reproduce recorded runs. |
-| `labctl.py` | The lab actions the scripts above call: `setup-ospf`, `shut`, `noshut`, `wait-full`, `wait-gone`, `setup-bgp`, `bgp-shut`, `bgp-noshut`, `wait-bgp-up`, `wait-bgp-down`, `setup-bgp-fast`, `check-hold-time`, `bgp-block`, `bgp-unblock`, `setup-ospf-fast`, `check-dead-time`, `ospf-block`, `ospf-unblock`, `wait-ospf-lost`, and `reset`, which removes what these scripts add from both routers. |
+| `labctl.py` | The lab actions the scripts above call: `setup-ospf`, `shut`, `noshut`, `wait-full`, `wait-gone`, `setup-bgp`, `bgp-shut`, `bgp-noshut`, `wait-bgp-up`, `wait-bgp-down`, `setup-bgp-fast`, `check-hold-time`, `bgp-block`, `bgp-unblock`, `setup-ospf-fast`, `check-dead-time`, `ospf-block`, `ospf-unblock`, `wait-ospf-lost`, `setup-ibgp`, `wait-ibgp-up`, `wait-ibgp-down`, `check-ibgp-hold-time`, and `reset`, which removes what these scripts add from both routers. |
 | `sanitize_capture.py` | Copies a run's `pre/`, `post/`, `restored/` for publishing with passwords and certificate bodies replaced and `raw/` left out. |
 | `bgp_pcap.py` | Lists the BGP messages in a pcap of the lab link: TCP flags, retransmissions, and each message by name, with NOTIFICATION error codes spelled out. |
 | `link_pcap.py` | One timeline of the OSPF packets and BGP segments in a pcap of the lab link: each OSPF packet by type (a hello's timers, DR, BDR, and neighbor list; a database description's flags; an update's LSA count) and each BGP segment as `bgp_pcap.py` shows it, tagged with its VLAN when it has one. |
@@ -28,7 +29,7 @@ The runs compare against the intents kept with their evidence
 `fixtures/lab-2026-09-18/intent-bgp.yaml`, and
 `fixtures/lab-2026-11-20/intent-bgp-holdtimer.yaml`), so a rerun on the
 same sandbox is checked against the same rules. A prepared run's draft intent sits here in
-`scripts/lab` (`intent-ospf-deadtimer.yaml`) until a run is recorded.
+`scripts/lab` (`intent-ospf-deadtimer.yaml`, `intent-ibgp.yaml`) until a run is recorded.
 
 ## The BGP run
 
@@ -182,6 +183,112 @@ What only the run can confirm:
   `Neighbor priority is N, State is X, N state changes` line);
 - that CML accepts `ip proto 89` as a capture filter.
 
+## The iBGP run (prepared, not run)
+
+Every BGP run so far was eBGP between directly connected addresses. This one is iBGP the way it
+is usually built: the session runs between the routers' loopbacks, and the loopbacks are
+reachable only through OSPF. So BGP depends on OSPF, and one cause should produce findings in
+three layers: the OSPF adjacencies, the routes OSPF carried, and the BGP sessions with the
+routes they carried.
+
+| | R1 | R2 |
+|---|---|---|
+| Loopback0, in OSPF, the iBGP endpoint | 10.255.255.1/32 | 10.255.255.2/32 |
+| Loopback1, originated into BGP only | 172.16.1.1/24 | 172.16.2.1/24 |
+
+None of these overlaps the lab's own subnets. A router runs one BGP process, so this setup
+cannot sit on top of the eBGP one (AS 65001 and 65002): `run-ibgp.sh` starts with
+`labctl.py reset`, and stops if the reset fails. Then `labctl.py setup-ibgp` sends each router
+(R1 shown; R2 mirrors it):
+
+    interface Loopback0
+     ip address 10.255.255.1 255.255.255.255
+    interface Loopback1
+     ip address 172.16.1.1 255.255.255.0
+    interface Ethernet0/1
+     ip ospf hello-interval 1
+    router ospf 1
+     router-id 1.1.1.1
+     network 1.1.1.0 0.0.0.255 area 0
+     network 10.255.255.1 0.0.0.0 area 0
+    router bgp 65010
+     bgp router-id 1.1.1.1
+     bgp log-neighbor-changes
+     neighbor 10.255.255.2 remote-as 65010
+     neighbor 10.255.255.2 update-source Loopback0
+     neighbor 10.255.255.2 timers 3 9
+     address-family ipv4
+      network 172.16.1.0 mask 255.255.255.0
+      neighbor 10.255.255.2 activate
+      neighbor 10.255.255.2 soft-reconfiguration inbound
+     exit-address-family
+
+The OSPF part is `setup-ospf-fast`'s lines with Loopback0 added to area 0, and the timers are
+the hold-timer run's. `update-source Loopback0` makes each router open the session from its
+own loopback, the address the other router names as its neighbor. Loopback1 exists to give BGP
+a prefix to originate and is not part of the underlay, so it is not in OSPF. The lab's static
+routes do not cover 172.16.0.0/16, so unlike the earlier BGP runs the learned prefix is
+installed, and its loss is visible.
+
+The script waits for FULL and runs `check-dead-time`, then waits with `wait-ibgp-up` and runs
+`check-ibgp-hold-time` against the loopback peers. `wait-ibgp-up` waits for each session to
+have learned at least one prefix, not only for Established: a session that has just come up can
+show a prefix count of 0, and the pre capture follows the wait closely. The no-change check then
+runs against the draft `scripts/lab/intent-ibgp.yaml`. It names both OSPF adjacencies, both
+iBGP sessions (`vrf: default`, `remote_as: 65010`), and each router's two learned routes (the
+peer's Loopback0 through OSPF, its Loopback1 prefix through BGP), and requires the hello,
+`router bgp 65010`, `remote-as`, `update-source`, and timers lines. A setup that never learned
+the BGP prefix, say because a `network` statement was forgotten, fails that check and stops
+the run.
+
+The planned change is `labctl.py ospf-block` on R1, the dead-timer run's ACL. Nothing about BGP
+is touched. The prediction: R1 loses its OSPF neighbor within about 4 s and with it the route
+to 10.255.255.2, and R2 drops to INIT and loses the route to 10.255.255.1. The iBGP sessions do
+not reset at once: fast external fallover covers only directly connected eBGP, and
+`neighbor ... fall-over` is not configured. Each router's 9 s hold timer runs out about 10 to
+14 s after the ACL, and the BGP-learned prefix goes then, or a few seconds earlier when
+next-hop tracking finds its next hop unreachable. The script waits with `wait-ospf-lost`, then
+`wait-ibgp-down`.
+
+Predicted findings, pinned on synthetic snapshots in `tests/test_lab_scripts.py` (the BGP
+paths are in the by-VRF form new captures use):
+
+| Comparison | Exit | Findings |
+|---|---|---|
+| pre vs pre | 0 | none |
+| pre vs post (the ACL on R1) | 1 | eight: `V_ADJ` ospf R1 neighbor 2.2.2.2 and R2 neighbor 1.1.1.1; `V_ROUTE` R1 10.255.255.2/32 and R2 10.255.255.1/32 (the peer loopbacks, ospf); `V_ADJ` bgp R1 neighbor 10.255.255.2 and R2 neighbor 10.255.255.1; `V_ROUTE` R1 172.16.2.0/24 and R2 172.16.1.0/24 (bgp) |
+| pre vs restored | 0 | none |
+
+No rule names the ACL, so there is no `V_DRIFT`, and the static and connected routes and the
+link counters should not move. The synthetic snapshots are built by passing Genie-shaped
+data through ncv's own adapter, so the test also fails if the adapter files a neighbor under
+the wrong key. The script checks each comparison's exit against this table and exits 0 only
+when all three match, 3 when it ran to the end but one did not, and 1 when it stopped early. If
+a run stops with the ACL in place, `change.sh deadtimer-undo` removes it, or the next run's
+`labctl.py reset` does.
+
+Packet evidence: right before the change the script starts `cml_capture.py start --filter
+"ip proto 89 or tcp port 179"`, and at the end it saves `captures/ibgp-<stamp>/link.pcap` and
+prints `link_pcap.py`'s timeline of it. The prediction: OSPF hellos every second from both
+routers, and BGP keepalives every 3 s between the loopbacks, carried over the link. After the
+ACL goes on, R2's hellos keep arriving on the wire while R1's stop listing 2.2.2.2; the
+keepalives stop once each router has lost its route to the other's loopback, and no
+NOTIFICATION follows. When the hold timer runs out, each router has no route to its peer, so
+the NOTIFICATION it logs cannot be sent. That is the opposite of the 2026-11-20 run, where R1
+still had the connected route to R2 and its `NOTIFICATION 4/0` was on the wire. After the ACL
+comes off: the OSPF exchange, then a new BGP connection (SYN, OPEN with hold time 9, UPDATE,
+KEEPALIVE), perhaps after resets answering segments of the old one.
+
+What only the run can confirm:
+
+- the timings and their order: the OSPF loss at about 4 s, then the BGP loss when the 9 s hold
+  timer runs out;
+- whether Genie labels the learned route `bgp` and the loopback route `ospf`;
+- which state Genie captures for the downed sessions (`Idle` or `Active`);
+- whether IOS writes each required line as the intent has it;
+- whether one console session can still reach both routers while the control plane is down (it
+  should: the console does not use the link).
+
 ## Running a session
 
 Run from WSL or Linux: pyATS does not install on native Windows, and the VPN check uses
@@ -194,7 +301,7 @@ directory works.
    the lab differs.
 3. `.venv/bin/python -m pip install -e '.[dev,lab]'` once. The scripts use
    `.venv/bin/python`; set `NCV_PYTHON` to use another interpreter.
-4. `bash scripts/lab/run-lab.sh`, `run-ospf.sh`, `run-bgp.sh`, `run-bgp-holdtimer.sh`, or the prepared `run-ospf-deadtimer.sh`. Each asks for the CML
+4. `bash scripts/lab/run-lab.sh`, `run-ospf.sh`, `run-bgp.sh`, `run-bgp-holdtimer.sh`, or the prepared `run-ospf-deadtimer.sh` or `run-ibgp.sh`. Each asks for the CML
    username and password and the routers' enable password, keeps them in that terminal's
    environment (`NCV_CML_USER`, `NCV_CML_PASS`, `NCV_LAB_PASS`), and stops before touching
    the lab if the no-change check is not clean.

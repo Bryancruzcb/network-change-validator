@@ -19,6 +19,10 @@ Usage, with the logins in the NCV_* environment (the run-*.sh scripts prompt for
   labctl.py check-dead-time           exit 1 unless both routers report Hello 1, Dead 4 on Ethernet0/1
   labctl.py ospf-block | ospf-unblock  add / remove an inbound ACL on R1 Ethernet0/1 that drops OSPF from R2
   labctl.py wait-ospf-lost [seconds]  poll until neither router has its OSPF neighbor FULL
+  labctl.py setup-ibgp                iBGP in AS 65010 between the loopbacks, which reach each other over OSPF
+  labctl.py wait-ibgp-up [seconds]    poll until both iBGP sessions are Established and have learned a prefix
+  labctl.py wait-ibgp-down [seconds]  poll until neither iBGP session is Established
+  labctl.py check-ibgp-hold-time      exit 1 unless both iBGP sessions negotiated the 9 s hold time
   labctl.py reset                     remove what these scripts add from R1 and R2, back to what ships
 
 The testbed is testbeds/lab.yaml under the repository root, wherever this is run from, or the
@@ -32,6 +36,7 @@ import re
 import sys
 import time
 from collections.abc import Callable
+from ipaddress import ip_interface, ip_network
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +49,7 @@ BGP = {
     "R1": {"asn": 65001, "peer": "1.1.1.2", "peer_asn": 65002, "network": "10.10.10.0"},
     "R2": {"asn": 65002, "peer": "1.1.1.1", "peer_asn": 65001, "network": "20.20.20.0"},
 }
+EBGP_PEERS = {name: cfg["peer"] for name, cfg in BGP.items()}
 # The hold-timer run: keepalive and hold time in seconds. 9 s instead of IOS's default 180 s, so
 # the session drops seconds after BGP stops arriving rather than three minutes later.
 FAST_TIMERS = (3, 9)
@@ -61,6 +67,23 @@ OSPF_FAST_HELLO = 1
 # The dead-timer run's change: an inbound ACL on R1's side of the link that drops every OSPF
 # packet from R2 (hellos to 224.0.0.5 and the unicast exchange alike) and passes everything else.
 OSPF_BLOCK_ACL = "NCV-BLOCK-OSPF"
+# The iBGP run: both routers in one AS, the session between their Loopback0 addresses. Loopback0
+# goes into OSPF, the only way either router reaches the other's, so the session depends on
+# OSPF. Loopback1 exists to give BGP a prefix to originate; it is not part of the underlay and
+# stays out of OSPF. None of these overlaps the lab's own subnets.
+IBGP_ASN = 65010
+LOOPBACKS = {
+    "R1": {"Loopback0": "10.255.255.1/32", "Loopback1": "172.16.1.1/24"},
+    "R2": {"Loopback0": "10.255.255.2/32", "Loopback1": "172.16.2.1/24"},
+}
+# What each router originates into BGP: its Loopback1 subnet. No static route the lab ships with
+# covers 172.16.0.0/16, so unlike the eBGP runs the peer should install the prefix, and its loss
+# should show in the routing table.
+IBGP_PREFIXES = {name: ip_interface(loopbacks["Loopback1"]).network for name, loopbacks in LOOPBACKS.items()}
+# Each router's iBGP peer: the other router's Loopback0.
+IBGP_PEERS = {
+    name: str(ip_interface(LOOPBACKS[other]["Loopback0"]).ip) for name, other in (("R1", "R2"), ("R2", "R1"))
+}
 # What the sandbox ships in Ethernet0/3, the one spare port. reset puts it back when a run has
 # used it; the order IOS lists the two lines in does not matter.
 SHIPPED_ETHERNET0_3 = ("no ip address", "shutdown")
@@ -95,6 +118,17 @@ def bgp_session_state(output: str, peer: str):
         fields = line.split()
         if fields and fields[0] == peer:
             return fields[-1].isdigit()
+    return None
+
+
+def bgp_prefixes_received(output: str, peer: str) -> int | None:
+    """From `show bgp ipv4 unicast summary`: how many prefixes the session has received when
+    it is Established, else None (listed in another state, or not listed). An Established
+    session that has learned nothing yet shows 0, which bgp_session_state counts as up."""
+    for line in output.splitlines():
+        fields = line.split()
+        if fields and fields[0] == peer:
+            return int(fields[-1]) if fields[-1].isdigit() else None
     return None
 
 
@@ -137,27 +171,52 @@ def ospf_setup_lines(name: str, hello=None) -> list[str]:
     return timers + ["router ospf 1", f"router-id {ROUTER_IDS[name]}", "network 1.1.1.0 0.0.0.255 area 0"]
 
 
-def bgp_setup_lines(name: str, timers=None) -> list[str]:
-    """The configuration setup-bgp sends to one router; with `timers` (keepalive, hold time),
-    also the per-neighbor timers line setup-bgp-fast adds."""
-    cfg = BGP[name]
-    peer = cfg["peer"]
+def _bgp_lines(name: str, asn: int, peer: str, peer_asn: int, prefix, timers=None, source=None) -> list[str]:
+    """One router's BGP process with one peer, originating `prefix` (an IPv4 network). With
+    `source`, the session runs from that interface's address; with `timers` (keepalive, hold
+    time), the per-neighbor timers line."""
     lines = [
-        f"router bgp {cfg['asn']}",
+        f"router bgp {asn}",
         f"bgp router-id {ROUTER_IDS[name]}",
         "bgp log-neighbor-changes",
-        f"neighbor {peer} remote-as {cfg['peer_asn']}",
+        f"neighbor {peer} remote-as {peer_asn}",
     ]
+    if source:
+        lines.append(f"neighbor {peer} update-source {source}")
     if timers:
         lines.append(f"neighbor {peer} timers {timers[0]} {timers[1]}")
     return lines + [
         "address-family ipv4",
-        f"network {cfg['network']} mask 255.255.255.0",
+        f"network {prefix.network_address} mask {prefix.netmask}",
         f"neighbor {peer} activate",
         # lets Genie's learn read received-routes instead of an error line
         f"neighbor {peer} soft-reconfiguration inbound",
         "exit-address-family",
     ]
+
+
+def bgp_setup_lines(name: str, timers=None) -> list[str]:
+    """The configuration setup-bgp sends to one router; with `timers` (keepalive, hold time),
+    also the per-neighbor timers line setup-bgp-fast adds."""
+    cfg = BGP[name]
+    lan = ip_network(f"{cfg['network']}/24")
+    return _bgp_lines(name, cfg["asn"], cfg["peer"], cfg["peer_asn"], lan, timers)
+
+
+def ibgp_setup_lines(name: str) -> list[str]:
+    """The configuration setup-ibgp sends to one router: its two loopbacks, setup-ospf-fast's
+    lines with Loopback0 added to area 0, and iBGP to the peer's Loopback0, sourced from this
+    router's own, with the hold-timer run's timers. The session forms only once OSPF has
+    carried each Loopback0 to the other router."""
+    addresses = []
+    for interface, cidr in LOOPBACKS[name].items():
+        address = ip_interface(cidr)
+        addresses += [f"interface {interface}", f"ip address {address.ip} {address.netmask}"]
+    source = ip_interface(LOOPBACKS[name]["Loopback0"]).ip
+    ospf = ospf_setup_lines(name, OSPF_FAST_HELLO) + [f"network {source} 0.0.0.0 area 0"]
+    peer = IBGP_PEERS[name]
+    bgp = _bgp_lines(name, IBGP_ASN, peer, IBGP_ASN, IBGP_PREFIXES[name], FAST_TIMERS, "Loopback0")
+    return addresses + ospf + bgp
 
 
 def _block_lines(acl: str, entries: list[str]) -> list[str]:
@@ -269,8 +328,14 @@ def ospf_check(dev, name):
     return ospf_neighbor_state(dev.execute("show ip ospf neighbor"), OSPF_PEERS[name])
 
 
-def bgp_check(dev, name):
-    return bgp_session_state(dev.execute("show bgp ipv4 unicast summary"), BGP[name]["peer"])
+def bgp_check(peers, read=bgp_session_state):
+    """A wait check on the global BGP table: `read` applied to each router's summary for its
+    peer in `peers`. By default it reads whether the session is Established."""
+
+    def check(dev, name):
+        return read(dev.execute("show bgp ipv4 unicast summary"), peers[name])
+
+    return check
 
 
 def connect(tb, name):
@@ -320,19 +385,20 @@ def show_on(tb, name, command) -> str:
         dev.disconnect()
 
 
-def check_hold_time(tb) -> int:
-    """Exit 0 only if both sessions run FAST_TIMERS. Timers change at the next session start,
-    so a session that was already up when setup-bgp-fast ran keeps the 180 s default."""
+def check_hold_time(tb, peers) -> int:
+    """Exit 0 only if each router's session to its peer in `peers` runs FAST_TIMERS. Timers
+    change at the next session start, so a session that was already up when the timers were
+    configured keeps the 180 s default."""
     keepalive, hold = FAST_TIMERS
     ok = True
-    for name, cfg in BGP.items():
-        got = bgp_negotiated_timers(show_on(tb, name, f"show bgp ipv4 unicast neighbors {cfg['peer']}"))
+    for name, peer in peers.items():
+        got = bgp_negotiated_timers(show_on(tb, name, f"show bgp ipv4 unicast neighbors {peer}"))
         print(f"{name}: negotiated (hold, keepalive) = {got}")
         ok = ok and got == (hold, keepalive)
     if not ok:
         print(
             f"expected hold {hold} s and keepalive {keepalive} s on both peers; reset the session with "
-            f"`clear ip bgp {BGP['R1']['peer']}` on R1 or use a fresh reservation"
+            f"`clear ip bgp {peers['R1']}` on R1 or use a fresh reservation"
         )
     return 0 if ok else 1
 
@@ -425,14 +491,16 @@ COMMANDS: dict[str, tuple[str, Callable[[Any, int], int]]] = {
     "bgp-noshut": ("bgp-noshut", _send("R1", [_R1_BGP, f"no {_R1_PEER}"], _BGP_SUMMARY)),
     "wait-bgp-up": (
         "wait-bgp-up [seconds]",
-        _wait_for(BGP, bgp_check, lambda s: s is True, "both BGP sessions Established"),
+        _wait_for(BGP, bgp_check(EBGP_PEERS), lambda s: s is True, "both BGP sessions Established"),
     ),
     "wait-bgp-down": (
         "wait-bgp-down [seconds]",
-        _wait_for(BGP, bgp_check, lambda s: s is not True, "both BGP sessions to leave Established"),
+        _wait_for(
+            BGP, bgp_check(EBGP_PEERS), lambda s: s is not True, "both BGP sessions to leave Established"
+        ),
     ),
     "setup-bgp-fast": ("setup-bgp-fast", _setup_on_both(lambda name: bgp_setup_lines(name, FAST_TIMERS))),
-    "check-hold-time": ("check-hold-time", lambda tb, seconds: check_hold_time(tb)),
+    "check-hold-time": ("check-hold-time", lambda tb, seconds: check_hold_time(tb, EBGP_PEERS)),
     "bgp-block": ("bgp-block", _send("R1", bgp_block_lines(), _BGP_SUMMARY)),
     "bgp-unblock": ("bgp-unblock", _send("R1", bgp_unblock_lines(), _BGP_SUMMARY)),
     "setup-ospf-fast": (
@@ -448,6 +516,29 @@ COMMANDS: dict[str, tuple[str, Callable[[Any, int], int]]] = {
         "wait-ospf-lost [seconds]",
         _wait_for(OSPF_PEERS, ospf_check, lambda s: s is not True, "both OSPF neighbors to leave FULL"),
     ),
+    "setup-ibgp": ("setup-ibgp", _setup_on_both(ibgp_setup_lines)),
+    # Established is not enough here: a session that has just come up may have learned nothing
+    # yet (a prefix count of 0), and the captures follow this wait closely, so it waits for at
+    # least one learned prefix on both routers.
+    "wait-ibgp-up": (
+        "wait-ibgp-up [seconds]",
+        _wait_for(
+            IBGP_PEERS,
+            bgp_check(IBGP_PEERS, bgp_prefixes_received),
+            lambda count: count is not None and count >= 1,
+            "both iBGP sessions Established with a prefix learned",
+        ),
+    ),
+    "wait-ibgp-down": (
+        "wait-ibgp-down [seconds]",
+        _wait_for(
+            IBGP_PEERS,
+            bgp_check(IBGP_PEERS),
+            lambda s: s is not True,
+            "both iBGP sessions to leave Established",
+        ),
+    ),
+    "check-ibgp-hold-time": ("check-ibgp-hold-time", lambda tb, seconds: check_hold_time(tb, IBGP_PEERS)),
     "reset": ("reset", lambda tb, seconds: reset(tb)),
 }
 USAGE = "usage: labctl.py " + " | ".join(usage for usage, _ in COMMANDS.values())
