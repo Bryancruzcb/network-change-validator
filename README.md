@@ -202,7 +202,9 @@ invalid counter limits are rejected with field context.
 
 Snapshots use up to five JSON files: `ospf.json`, `bgp.json`, `routing.json`,
 `interface.json`, and `config.json`. Each maps device names to normalized evidence.
-Malformed data is an input error.
+Malformed data is an input error. New captures store BGP neighbors under
+`vrfs.<vrf>.neighbors`, so one peer address can sit in two VRFs; older snapshots with
+the flat `neighbors` shape, the demo fixtures among them, still load.
 
 Copy a validated snapshot without connecting to devices:
 
@@ -218,6 +220,8 @@ Policy details:
   Interface names match exactly; omit `interface` to check state alone.
 - BGP checks require an Established session, matched case-insensitively. `vrf` and
   `remote_as` are optional discriminators, checked only when the intent declares them.
+  An adjacency that names no `vrf` must match the address in exactly one VRF; an address
+  found in several is a finding that asks for the `vrf` in the intent.
 - An adjacency carries the fields of its own protocol: `interface` belongs to `ospf`,
   `vrf` and `remote_as` to `bgp`. The wrong pairing is rejected by name.
 - Route checks cover presence and optional protocol, not reachability or next-hop correctness.

@@ -71,11 +71,11 @@ def test_bgp_session_state_vrf_and_remote_as_are_normalized():
             }
         }
     }
-    rec = normalize_learn("r1", "bgp", data)["r1"]["neighbors"]["203.0.113.1"]
-    assert rec == {"state": "Established", "vrf": "default", "remote_as": 65100}
+    rec = normalize_learn("r1", "bgp", data)["r1"]["vrfs"]["default"]["neighbors"]["203.0.113.1"]
+    assert rec == {"state": "Established", "remote_as": 65100}
 
 
-def test_bgp_duplicate_neighbor_across_vrfs_is_rejected():
+def test_bgp_same_address_in_two_vrfs_is_two_records():
     data = {
         "instance": {
             "default": {
@@ -86,13 +86,58 @@ def test_bgp_duplicate_neighbor_across_vrfs_is_rejected():
             }
         }
     }
-    with pytest.raises(ValueError, match="ambiguous BGP"):
+    vrfs = normalize_learn("r1", "bgp", data)["r1"]["vrfs"]
+    assert vrfs == {
+        name: {"neighbors": {"203.0.113.1": {"state": "established", "remote_as": None}}}
+        for name in ("default", "mgmt")
+    }
+
+
+def test_bgp_same_address_twice_in_one_vrf_across_instances_is_rejected():
+    data = {
+        "instance": {
+            name: {"vrf": {"default": {"neighbor": {"203.0.113.1": {"session_state": "Established"}}}}}
+            for name in ("default", "second")
+        }
+    }
+    with pytest.raises(
+        ValueError, match="ambiguous BGP neighbor 203.0.113.1 in vrf default: multiple instances"
+    ):
         normalize_learn("r1", "bgp", data)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"neighbor": {"203.0.113.1": {"session_state": "Established"}}},
+        {"instance": {"default": {"neighbors": {"203.0.113.1": {"session_state": "Established"}}}}},
+    ],
+)
+def test_bgp_neighbor_outside_any_vrf_is_rejected_not_guessed(data):
+    with pytest.raises(ValueError, match="BGP neighbor 203.0.113.1 is not under a vrf"):
+        normalize_learn("r1", "bgp", data)
+
+
+def test_bgp_two_vrf_input_shaped_like_genie_test_data_normalizes_to_two_vrfs():
+    # Shaped like Genie 26.8's IOS XE BGP Ops test data (`bgp_info`): the same peers in `default`
+    # and `VRF1`, remote AS 65000, one IPv4 and one IPv6 peer each. Built here, not a capture.
+    peers = {
+        "2.2.2.2": {"remote_as": 65000, "session_state": "Established", "bgp_version": 4, "shutdown": False},
+        "2001:2:2:2::2": {"remote_as": 65000, "session_state": "Established", "shutdown": False},
+    }
+    data = {
+        "instance": {
+            "default": {"bgp_id": 65000, "vrf": {"default": {"neighbor": peers}, "VRF1": {"neighbor": peers}}}
+        }
+    }
+    vrfs = normalize_learn("R1", "bgp", data)["R1"]["vrfs"]
+    expected = {address: {"state": "Established", "remote_as": 65000} for address in peers}
+    assert vrfs == {"default": {"neighbors": expected}, "VRF1": {"neighbors": expected}}
 
 
 def test_bgp_shape_without_neighbors_normalizes_to_none():
     data = {"instance": {"default": {"bgp_id": 65001, "vrf": {"default": {}}}}}
-    assert normalize_learn("r1", "bgp", data) == {"r1": {"neighbors": {}}}
+    assert normalize_learn("r1", "bgp", data) == {"r1": {"vrfs": {}}}
 
 
 def test_a_learn_that_returned_no_info_is_a_failed_capture():

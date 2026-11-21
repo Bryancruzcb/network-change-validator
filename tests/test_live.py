@@ -58,7 +58,7 @@ def test_mock_capture_is_complete_and_disables_initialization(tmp_path, fake_lab
     device.disconnect.assert_called_once()
     snapshot = load_snapshot(out)
     assert snapshot["interface"]["r1"]["interfaces"]["Gi1"]["crc"] == 0
-    assert snapshot["bgp"]["r1"]["neighbors"]["203.0.113.1"]["state"] == "established"
+    assert snapshot["bgp"]["r1"]["vrfs"]["default"]["neighbors"]["203.0.113.1"]["state"] == "established"
     assert json.loads((out / "SOURCE.json").read_text())["devices"] == ["r1"]
     assert len(list((out / "raw").iterdir())) == 5
 

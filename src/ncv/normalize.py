@@ -14,7 +14,7 @@ def normalize_learn(device: str, feature: str, blob: Any) -> dict[str, Any]:
     if feature == "ospf":
         payload = {"neighbors": _ospf_neighbors(data)}
     elif feature == "bgp":
-        payload = {"neighbors": _bgp_neighbors(data)}
+        payload = _bgp_neighbors(data)
     elif feature == "routing":
         payload = {"vrfs": _vrfs(data)}
     elif feature == "interface":
@@ -74,9 +74,15 @@ def _ospf_neighbors(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _bgp_neighbors(data: dict[str, Any]) -> dict[str, Any]:
+    """Key BGP peers by the VRF they sit in, as Genie's Ops model does.
+
+    Genie 26.8 puts every peer at `instance.<instance>.vrf.<vrf>.neighbor.<address>` on iosxe,
+    ios, and nxos, and its own IOS XE test data holds one address in two VRFs. This shape was
+    prepared from that model and test data; no lab capture of a non-default-VRF peer exists yet.
+    """
     if not any(key in data for key in ("instance", "vrf", "neighbor", "neighbors")):
         raise ValueError("unsupported BGP data: expected instance, vrf, or neighbor")
-    found: dict[str, Any] = {}
+    vrfs: dict[str, dict[str, Any]] = {}
 
     def walk(node: Any, vrf: str | None = None) -> None:
         if not isinstance(node, dict):
@@ -88,13 +94,15 @@ def _bgp_neighbors(data: dict[str, Any]) -> dict[str, Any]:
                 for neighbor, rec in value.items():
                     if not isinstance(rec, dict):
                         raise ValueError(f"invalid BGP neighbor {neighbor}")
+                    # Genie always nests peers under a VRF; guessing one would hide a shape change.
+                    if vrf is None:
+                        raise ValueError(f"BGP neighbor {neighbor} is not under a vrf")
+                    found = vrfs.setdefault(vrf, {})
                     if str(neighbor) in found:
-                        raise ValueError(f"ambiguous BGP neighbor {neighbor}: multiple VRFs or instances")
-                    found[str(neighbor)] = {
-                        "state": rec.get("session_state", rec.get("state", rec.get("neighbor_state"))),
-                        "vrf": vrf,
-                        "remote_as": _counter(rec, "remote_as"),
-                    }
+                        raise ValueError(
+                            f"ambiguous BGP neighbor {neighbor} in vrf {vrf}: multiple instances"
+                        )
+                    found[str(neighbor)] = _bgp_record(rec)
             elif key == "vrf" and isinstance(value, dict):
                 for name, record in value.items():
                     walk(record, str(name))
@@ -102,7 +110,14 @@ def _bgp_neighbors(data: dict[str, Any]) -> dict[str, Any]:
                 walk(value, vrf)
 
     walk(data)
-    return found
+    return {"vrfs": {vrf: {"neighbors": found} for vrf, found in vrfs.items()}}
+
+
+def _bgp_record(rec: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "state": rec.get("session_state", rec.get("state", rec.get("neighbor_state"))),
+        "remote_as": _counter(rec, "remote_as"),
+    }
 
 
 def _vrfs(data: dict[str, Any]) -> dict[str, Any]:

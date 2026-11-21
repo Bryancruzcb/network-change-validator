@@ -116,7 +116,7 @@ proves that on every commit; only the `lab` extra is the problem.
 | `lab capture failed ... during learn <feature>: learn returned no info` | The device does not run that feature, or its show commands did not parse; Genie reports both the same way. If the lab does not run it, leave it out of `--features`. |
 | `unsupported <feature> data` | Genie learned a shape the adapter does not know. Keep the raw capture and extend the adapter with a test, the way PR #5 did for interfaces. |
 | `--features needs at least one of ...` | The value was empty. Name at least one feature, or drop the flag to learn all four. |
-| `ambiguous OSPF neighbor` / `ambiguous BGP neighbor` | The same peer appears on two interfaces, VRFs, or instances. The adapter refuses to guess; narrow the topology or extend the adapter with evidence. |
+| `ambiguous OSPF neighbor` / `ambiguous BGP neighbor` | The same OSPF neighbor appears on two interfaces or VRFs, or the same BGP peer address appears twice in one VRF (two instances). The same BGP address in two different VRFs is kept apart, not refused. The adapter refuses to guess; narrow the topology or extend the adapter with evidence. |
 | `unsupported lab device name` | Testbed device names allow letters, digits, `_`, and `-` only. |
 | Connect timeouts | VPN down, wrong port, or a console that needs a terminal-server port. Prove `ssh` works by hand first. |
 | `snapshot output must be a new or empty directory` | Captures are never overwritten. Use `captures/pre-2`, and keep the first one. |
@@ -201,8 +201,11 @@ normalized JSON and `SOURCE.json` only after successful collection.
 
 The adapter handles a limited set of Genie shapes. It does not resolve the same
 OSPF neighbor occurring on multiple interfaces or in multiple VRFs; those captures
-are rejected rather than silently selecting one. A real router image may require
-adapter adjustments backed by sanitized evidence and offline regression tests.
+are rejected rather than silently selecting one. BGP neighbors are keyed by VRF
+(`vrfs.<vrf>.neighbors.<address>`); that shape was prepared from Genie 26.8's Ops
+model and its shipped test data, and has not yet been seen in a lab capture. A real
+router image may require adapter adjustments backed by sanitized evidence and offline
+regression tests.
 Live-capture tests use mocks; `tests/test_lab_evidence.py` replays sanitized
 captures from real CML sessions.
 
