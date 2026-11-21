@@ -34,7 +34,7 @@ for the second-platform run, and `cml_lab.py remove-r3` takes them out again.
 | `bgp_pcap.py` | Lists the BGP messages in a pcap of the lab link: TCP flags, retransmissions, and each message by name, with NOTIFICATION error codes spelled out. |
 | `link_pcap.py` | One timeline of the OSPF packets and BGP segments in a pcap of the lab link: each OSPF packet by type (a hello's timers, DR, BDR, and neighbor list; a database description's flags; an update's LSA count) and each BGP segment as `bgp_pcap.py` shows it, tagged with its VLAN when it has one. |
 | `cml_capture.py` | Starts and saves a packet capture of the R1-R2 link through the CML API (`start [--filter "<bpf expression>"]`, default `tcp port 179`, and `stop <file.pcap>`), with the CML login the run scripts already hold. |
-| `cml_lab.py` | The CML side of the lab. `inspect [<output dir>]` and `check-login` only read: the inventory gives the controller's version, node and image definitions, memory and CPU in use, and default-lab's nodes, interfaces, and links, ending with whether R1 Ethernet0/3 is free and which of `nxosv9000`, `cat8000v`, and `iosv` are available; every call is a GET, and configurations, notes, and descriptions are dropped before anything is printed or saved. `check-login` exits 0 when CML accepts the login and 1 when it does not. `add-r3 <platform>` and `remove-r3` change the lab's topology: they add R3 with its day-0 configuration, link it to R1 Ethernet0/3, and boot it, or stop, wipe, and delete it and its link. `platform-os <platform>` prints the pyATS `os` R3's testbed entry needs, with no login and no call. |
+| `cml_lab.py` | The CML side of the lab. `inspect [<output dir>]` and `check-login` only read: the inventory gives the controller's version, node and image definitions, memory and CPU in use, and default-lab's nodes, interfaces, and links, ending with whether R1 Ethernet0/3 is free and which of `nxosv9000`, `cat8000v`, and `iosv` are available; after the login (a POST to `/authenticate`), every call is a GET, and configurations, notes, descriptions, canvas annotations, and VNC keys are dropped before anything is printed or saved. `check-login` exits 0 when CML accepts the login and 1 when it does not. `add-r3 <platform>` and `remove-r3` change the lab's topology: they add R3 with its day-0 configuration, link it to R1 Ethernet0/3, and boot it, or stop, wipe, and delete it and its link. `platform-os <platform>` prints the pyATS `os` R3's testbed entry needs, with no login and no call. |
 
 The runs compare against the intents kept with their evidence
 (`fixtures/lab-2026-09-12/intent-routes.yaml` and `intent-ospf.yaml`,
@@ -444,19 +444,23 @@ and a one-line reason at the first thing that is not as it needs:
 4. free memory, from `/system_stats`, is not plainly short of the node definition's RAM (it
    prints both numbers, and skips the check when either is missing);
 5. it creates the node with its day-0 configuration
-   (`POST /labs/{id}/nodes?populate_interfaces=true`), reads it back once, and checks that CML
-   kept the configuration (its `hostname R3` line, read as a boolean and never printed);
+   (`POST /labs/{id}/nodes?populate_interfaces=true`), reads it back once with its configuration
+   (`GET /labs/{id}/nodes/{id}?exclude_configurations=false`, the query Cisco's virl2_client
+   2.7.1 sends), and checks that CML kept the configuration (its `hostname R3` line, read as a
+   boolean and never printed);
 6. it links R3's first data interface to R1 Ethernet0/3 (`POST /labs/{id}/links`);
 7. it starts R3 and polls its state every 15 s, printing each, for at most 20 minutes, giving up
-   after 3 minutes still `QUEUED` or `DEFINED_ON_CORE` (`CML has not started R3`);
+   after 3 minutes still `QUEUED` or `DEFINED_ON_CORE` (`CML has not started R3`) or `STOPPED`
+   (`R3 is still STOPPED ... after the start`), since CML does not boot a stopped node by itself;
 8. once R3 is `BOOTED`, it starts the link if it is not `STARTED` and stops if it still is not.
 
 Every failure after the node exists ends with `R3 was created; cml_lab.py remove-r3 removes it`.
 The day-0 configuration holds R3's admin password (`NCV_LAB_PASS`), so it is echoed with
 `<removed>` in its place, the node POST's response is never printed, and every message passes
 through one `redact` function. `cml_lab.py remove-r3` reads R3's state, stops it unless it is
-already stopped, waits up to 3 minutes for `STOPPED`, wipes its disks, deletes its link and then
-the node, and treats a missing R3, or a 404 on the way, as already gone. The run leaves R3 in
+already stopped, waits up to 3 minutes for `STOPPED` (or `DEFINED_ON_CORE`, the state a node
+that never started returns to), wipes its disks unless it never started, deletes its link and
+then the node, and treats a missing R3, or a 404 on the way, as already gone. The run leaves R3 in
 the lab; `remove-r3` is a separate step.
 
 The platforms, from `cml_lab.py`'s table:
@@ -622,8 +626,8 @@ Two things decide what the next runs can do, and nothing here may guess them: wh
 routers' management addresses (10.10.20.171 and .172, on Ethernet0/2 in vrf Mgmt-intf) answer
 over the sandbox VPN, and which node images the controller has. On 2026-09-12 the management
 addresses did not answer, and nobody recorded why. `probe.sh` asks, and changes nothing: it
-sends no configuration to any device, every CML call is a GET, and `show running-config` is
-not among the router commands.
+sends no configuration to any device, every CML call after the login (a POST to
+`/authenticate`) is a GET, and `show running-config` is not among the router commands.
 
 1. From this machine: `ip -brief addr show tun0`, `ip route get 10.10.20.171`, and for each
    management address a TCP test of ports 22 and 23 and `ping -c 2 -W 2`. The TCP test has
@@ -631,9 +635,9 @@ not among the router commands.
    (the host answered), and `no answer in 3 s` (filtered or not routed).
 2. `cml_lab.py inspect output/lab/probe-<stamp>-cml`: the CML version, the node and image
    definitions, memory and CPU in use, and default-lab's nodes, interfaces, and links. Each
-   response is saved there as JSON, without configurations, notes, or descriptions. Several
-   response shapes are unverified, so a missing field prints as unknown and a call that fails
-   is reported and skipped.
+   response is saved there as JSON, without configurations, notes, descriptions, canvas
+   annotations, or VNC keys. Several response shapes are unverified, so a missing field prints
+   as unknown and a call that fails is reported and skipped.
 3. `labctl.py probe`, through the console testbed: on R1 and then R2, the management path
    (`show ip interface brief`, `show vrf`, the Mgmt-intf route and ARP tables, `show ip ssh`,
    `show users`, and pings in vrf Mgmt-intf to the gateway 10.10.20.254 and the controller

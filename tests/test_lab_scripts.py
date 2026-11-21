@@ -888,8 +888,8 @@ def test_labctl_vrf_change_shuts_only_the_subinterface(root):
     assert labctl.vrf_noshut_lines() == ["interface Ethernet0/1.100", "no shutdown"]
 
 
-# Synthetic VRF output, in the format the global commands printed on 2026-11-20; the research
-# for this run expects IOS XE to print the VRF table the same way. No VRF output has been captured.
+# Synthetic VRF output, in the format the global commands printed on 2026-11-20; Genie's IOS XE
+# parser test data prints VRF neighbors the same way. No VRF output has been captured.
 VRF_SUMMARY = """\
 BGP router identifier 1.1.1.1, local AS number 65001
 BGP table version is 3, main routing table version 3

@@ -15,12 +15,13 @@ Usage, with the CML login in NCV_CML_USER and NCV_CML_PASS (probe.sh and the run
 
 The controller is NCV_CML_HOST (default 10.10.20.161) and the lab NCV_CML_LAB (default
 default-lab), read the way cml_capture.py reads them. `inspect` and `check-login` only read:
-every call is a GET. Node configurations hold the routers' passwords, so the inventory asks for
-the topology without them, never calls /labs/{id}/nodes/{id}, and drops `configuration`, notes,
-and descriptions from every response before anything is printed or saved; the /authenticate
-response is never saved. Several response shapes are documented nowhere this repository can
-check, so every field is read as optional and printed as unknown when it is absent. A call that
-fails is reported and skipped; the exit code is 1 only when the login or finding the lab fails.
+after the login (a POST to /authenticate), every call is a GET. Node configurations hold the
+routers' passwords, so the inventory asks for the topology without them, never calls
+/labs/{id}/nodes/{id}, and drops `configuration`, notes, descriptions, canvas annotations, and
+VNC keys from every response before anything is printed or saved; the /authenticate response is
+never saved. Several response shapes are documented nowhere this repository can check, so every
+field is read as optional and printed as unknown when it is absent. A call that fails is
+reported and skipped; the exit code is 1 only when the login or finding the lab fails.
 
 `add-r3` and `remove-r3` change the lab's topology, the only scripts here that do. add-r3 gives
 R3 a day-0 configuration with an admin login whose password is NCV_LAB_PASS; that value is
@@ -61,9 +62,12 @@ USAGE = (
     "usage: cml_lab.py inspect [<output dir>] | check-login | add-r3 <platform> | remove-r3"
     " | platform-os <platform>"
 )
-# A node's configuration holds the routers' passwords, and sample labs write access details into
-# notes and descriptions, so these keys are dropped at any depth.
-DROPPED = frozenset({"configuration", "notes", "description", "lab_notes", "lab_description"})
+# A node's configuration holds the routers' passwords, sample labs write access details into
+# notes and descriptions, a topology's text annotations are free text its author wrote on the
+# canvas, and a node's VNC key opens its console, so these keys are dropped at any depth.
+DROPPED = frozenset(
+    {"configuration", "notes", "description", "lab_notes", "lab_description", "annotations", "vnc_key"}
+)
 # The controller-wide calls, by the name each response is saved under.
 SYSTEM_CALLS = (
     ("system_information", "/system_information"),
@@ -374,8 +378,8 @@ def describe_inventory(data: dict) -> list[str]:
 
 
 # R3, the second platform: a router of another platform, added to the lab and linked to R1's
-# spare port. Its addresses, from research for the run: 3.3.3.3/32 on Loopback0 (in OSPF, and
-# the router id) and 172.16.3.1/24 on Loopback1 (originated into BGP); the link is labctl's.
+# spare port. Its addresses: 3.3.3.3/32 on Loopback0 (in OSPF, and the router id) and
+# 172.16.3.1/24 on Loopback1 (originated into BGP); the link is labctl's.
 R3 = "R3"
 R3_LOOPBACKS = {"Loopback0": f"{labctl.R3_RID}/32", "Loopback1": "172.16.3.1/24"}
 # Where R3 is drawn on the lab's canvas; cosmetic.
@@ -384,9 +388,12 @@ REMOVED = "<removed>"
 MIB = 1024 * 1024
 POLL_SECONDS = 15
 BOOT_SECONDS = 20 * 60  # an NX-OS 9000v is said to take 5 to 15 minutes; IOSv one to three
-NOT_STARTED_SECONDS = 3 * 60  # still QUEUED or DEFINED_ON_CORE this long: CML is not starting it
+# Still QUEUED, DEFINED_ON_CORE, or STOPPED this long after the start: R3 will not boot.
+NOT_STARTED_SECONDS = 3 * 60
 STOP_SECONDS = 3 * 60
 NOT_STARTED = ("QUEUED", "DEFINED_ON_CORE")
+# A node that never started goes back to DEFINED_ON_CORE when it is stopped, not to STOPPED.
+AT_REST = ("STOPPED", "DEFINED_ON_CORE")
 STARTING = ("STARTED", "QUEUED")
 CREATED = "R3 was created; cml_lab.py remove-r3 removes it"
 # What _ask gives instead of failing when a call it may accept that for answers 404 (gone).
@@ -486,8 +493,8 @@ class Platform(NamedTuple):
     day0: Callable[[str, str], list[str]]
 
 
-# In the order the inventory's answers list them. The interface labels are from CML's
-# documentation and the research for this run, not from a node this controller created.
+# In the order the inventory's answers list them. The node definition ids and interface labels
+# are from CML's documentation of its node definitions, not from a node this controller created.
 PLATFORM_TABLE = MappingProxyType(
     {
         "nxosv9000": Platform("nxosv9000", "nxos", "Ethernet1/1", nxos_day0),
@@ -671,8 +678,10 @@ def _create_node(call, lab_id: str, title: str, name: str, password: str) -> str
     try:
         reply = call("POST", path, node_body(name, password))  # never printed: it may echo the node
     except urllib.error.HTTPError as err:
-        if err.code == 403:
-            raise Refusal(f"this login may not change {title}") from None
+        if err.code == 403:  # CML gives 403 for either cause
+            raise Refusal(
+                f"this login may not change {title}, or the licence's node limit is reached"
+            ) from None
         raise Refusal(f"POST {path}: HTTP {err.code}") from None
     except (OSError, ValueError) as err:
         raise Refusal(f"POST {path}: {err}") from None
@@ -715,7 +724,9 @@ def _create_link(call, lab_id: str, spare: str, r3_interface: str) -> str:
 
 def _wait_booted(call, lab_id: str, node_id: str, say, sleep, now) -> None:
     """Poll R3's state every POLL_SECONDS until BOOTED, printing each, for at most BOOT_SECONDS.
-    Still QUEUED or DEFINED_ON_CORE after NOT_STARTED_SECONDS means CML is not starting it."""
+    Still QUEUED or DEFINED_ON_CORE after NOT_STARTED_SECONDS means CML is not starting it, and
+    STOPPED then means it stopped and will not boot without another start. A STOPPED seen earlier
+    than that is let pass: the start may not have reached the node yet."""
     path = f"{_node_path(lab_id, node_id)}/state"
     began = now()
     while True:
@@ -726,6 +737,11 @@ def _wait_booted(call, lab_id: str, node_id: str, say, sleep, now) -> None:
             return
         if state in NOT_STARTED and elapsed >= NOT_STARTED_SECONDS:
             raise Refusal(f"CML has not started {R3} (memory or licence; see cml_lab.py inspect)")
+        if state == "STOPPED" and elapsed >= NOT_STARTED_SECONDS:
+            raise Refusal(
+                f"{R3} is still STOPPED {elapsed:.0f} s after the start; "
+                "CML does not boot a stopped node by itself"
+            )
         if elapsed >= BOOT_SECONDS:
             raise Refusal(f"{R3} did not boot within {BOOT_SECONDS // 60} minutes (last state {state})")
         sleep(POLL_SECONDS)
@@ -807,7 +823,10 @@ def add_r3(call, title: str, name: str, password: str, say, sleep=time.sleep, no
         node_id = _create_node(call, lab_id, title, name, password)
         created = True
         say(f"created {R3} ({definition}) in {title}")
-        if not kept_day0(_ask(call, "GET", _node_path(lab_id, node_id))):
+        # Read back the way virl2_client 2.7.1 reads a node: its utils.py sets CONFIG_MODE, the
+        # query on that GET, to exclude_configurations=false, which asks for the configuration.
+        readback = f"{_node_path(lab_id, node_id)}?exclude_configurations=false"
+        if not kept_day0(_ask(call, "GET", readback)):
             raise Refusal("CML did not keep the day-0 configuration")
         say("CML kept the day-0 configuration")
         link_id = _create_link(call, lab_id, spare, _r3_interface(call, lab_id, node_id, platform))
@@ -823,15 +842,16 @@ def add_r3(call, title: str, name: str, password: str, say, sleep=time.sleep, no
         return 1
 
 
-def _wait_stopped(call, lab_id: str, node_id: str, say, sleep, now) -> None:
+def _wait_stopped(call, lab_id: str, node_id: str, say, sleep, now) -> str:
+    """Poll R3's state until it is STOPPED or DEFINED_ON_CORE, for at most STOP_SECONDS, and return it."""
     path = f"{_node_path(lab_id, node_id)}/state"
     began = now()
     while True:
         state = _state_of(_ask(call, "GET", path))
         elapsed = now() - began
         say(f"{R3} {state} after {elapsed:.0f} s")
-        if state == "STOPPED":
-            return
+        if state in AT_REST:
+            return state
         if elapsed >= STOP_SECONDS:
             raise Refusal(
                 f"{R3} did not stop within {STOP_SECONDS // 60} minutes (last state {state}); "
@@ -856,11 +876,11 @@ def remove_r3(call, title: str, say, sleep=time.sleep, now=time.monotonic) -> in
             say(f"{R3} is already gone")
             return 0
         state = _state_of(reply)
-        if state not in ("STOPPED", "DEFINED_ON_CORE"):
+        if state not in AT_REST:
             say(f"{R3} is {state}; stopping it")
             if _ask(call, "PUT", f"{node}/state/stop", gone_ok=True) is not GONE:
-                _wait_stopped(call, lab_id, node_id, say, sleep, now)
-        # A node that never started (DEFINED_ON_CORE) has no disks to wipe.
+                state = _wait_stopped(call, lab_id, node_id, say, sleep, now)
+        # A node that never started (DEFINED_ON_CORE, before or after the stop) has no disks to wipe.
         if state != "DEFINED_ON_CORE":
             _ask(call, "PUT", f"{node}/wipe_disks", gone_ok=True)
             say(f"wiped {R3}'s disks")

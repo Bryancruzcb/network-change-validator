@@ -9,8 +9,8 @@
 #   1. from this machine: the VPN address and the route to 10.10.20.171, then for both
 #      management addresses a TCP connect test to ports 22 and 23 (open, refused, or no answer
 #      in 3 s) and a ping;
-#   2. the CML controller: scripts/lab/cml_lab.py inspect, every call a GET, saving each response
-#      under output/lab/probe-<stamp>-cml/;
+#   2. the CML controller: scripts/lab/cml_lab.py inspect, every call after the login (a POST
+#      to /authenticate) a GET, saving each response under output/lab/probe-<stamp>-cml/;
 #   3. the routers, through the console testbed: labctl.py probe, a fixed list of read-only show
 #      and ping commands on R1 and R2;
 #   4. three answers, each with the line it came from: do the management addresses answer on

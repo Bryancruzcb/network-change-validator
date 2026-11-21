@@ -12,6 +12,7 @@ controller; the HTTP calls go through a fake `request` passed to main.
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import sys
 import urllib.error
@@ -49,6 +50,8 @@ INVENTORY = {
     ],
     TOPOLOGY: {
         "lab": {"title": "default-lab", "notes": f"console {SECRET}", "description": SECRET},
+        # a text annotation on the canvas, where a lab's author can write a login
+        "annotations": [{"type": "text", "text_content": f"login cisco/{SECRET}"}],
         "nodes": [
             {
                 "id": "n1",
@@ -56,6 +59,7 @@ INVENTORY = {
                 "node_definition": "iol-xe",
                 "image_definition": "iol-xe-17-12-01",
                 "configuration": f"enable password {SECRET}",
+                "vnc_key": SECRET,
                 "interfaces": [
                     {"id": "i1-1", "label": "Ethernet0/1", "slot": 1},
                     {"id": "i1-3", "label": "Ethernet0/3", "slot": 3},
@@ -240,6 +244,21 @@ def test_scrub_drops_configuration_notes_and_descriptions_at_any_depth(cml_lab):
     assert response["configuration"] == "enable password x"  # the argument is left as it was
 
 
+def test_scrub_drops_annotations_and_vnc_keys_at_any_depth(cml_lab):
+    response = {
+        "annotations": [{"type": "text", "text_content": "login cisco/x"}],
+        "vnc_key": "x",
+        "nodes": [
+            {"label": "R1", "vnc_key": "x", "inner": {"annotations": [{"text_content": "x"}], "keep": 1}}
+        ],
+        "lab": {"title": "t"},
+    }
+    assert cml_lab.scrub(response) == {
+        "nodes": [{"label": "R1", "inner": {"keep": 1}}],
+        "lab": {"title": "t"},
+    }
+
+
 def test_no_secret_reaches_the_output_or_the_saved_files(cml_lab, capsys, tmp_path):
     out_dir = tmp_path / "probe-cml"
     sent, request = _fake()
@@ -305,11 +324,14 @@ def test_a_lab_that_cannot_be_found_exits_1(cml_lab, monkeypatch, capsys):
 
 
 # add-r3 and remove-r3 against an invented controller that changes as it is told. Nothing here
-# was seen on the sandbox: the node definition ids and interface labels are the research's, and
-# a real controller may differ in every field read with .get().
+# was seen on the sandbox: the node definition ids and interface labels are from CML's
+# documentation, and a real controller may differ in every field read with .get().
 LAB_PASS = "r3-admin-value"
 NODES = f"/labs/{LAB}/nodes?populate_interfaces=true"
 R3_STATE = f"/labs/{LAB}/nodes/n3/state"
+R3_START = f"/labs/{LAB}/nodes/n3/state/start"
+# How add-r3 reads the new node back: with its configuration, the way virl2_client 2.7.1 reads one.
+READBACK = f"/labs/{LAB}/nodes/n3?exclude_configurations=false"
 
 
 def _r3_inventory():
@@ -326,12 +348,22 @@ class FakeCML:
     """A controller for add-r3 and remove-r3. It records every (method, path, body) it is sent,
     answers GETs from its table, and changes the table as the POSTs and DELETEs ask. R3's state
     answers come from `states` in turn (the last repeats), the link's from `link_states`.
-    `errors` maps (method, path) to the HTTP status to fail with, or to an exception."""
+    `errors` maps (method, path) to the HTTP status to fail with, or to an exception. With
+    `as_files`, the node keeps its configuration as a list of named files, the other form CML may
+    store it in."""
 
-    def __init__(self, inventory=None, states=("BOOTED",), link_states=("STARTED",), errors=None, keeps=True):
+    def __init__(
+        self,
+        inventory=None,
+        states=("BOOTED",),
+        link_states=("STARTED",),
+        errors=None,
+        keeps=True,
+        as_files=False,
+    ):
         self.table = inventory or _r3_inventory()
         self.states, self.link_states = list(states), list(link_states)
-        self.errors, self.keeps = errors or {}, keeps
+        self.errors, self.keeps, self.as_files = errors or {}, keeps, as_files
         self.sent = []
 
     @property
@@ -369,7 +401,9 @@ class FakeCML:
     def _answer(self, method, path, body):
         if (method, path) == ("POST", NODES):
             config = body["configuration"] if self.keeps else ""
-            self.table[f"/labs/{LAB}/nodes/n3"] = {"id": "n3", "label": "R3", "configuration": config}
+            if self.as_files:
+                config = [{"name": "Main", "content": config}]
+            self.table[READBACK] = {"id": "n3", "label": "R3", "configuration": config}
             self.add_r3_node(body["node_definition"], linked=False)
             return {"id": "n3", "label": "R3", "configuration": body["configuration"]}  # an echo
         if (method, path) == ("POST", f"/labs/{LAB}/links"):
@@ -435,12 +469,15 @@ def test_day0_config_holds_what_the_run_depends_on_and_its_echo_never_the_passwo
         for line in ("feature ospf", "feature bgp", "no switchport", "ip address 10.1.3.3/24", "no shutdown"):
             assert line in stripped
         assert "ip ospf dead-interval 4" in stripped
+        # R1 learns 3.3.3.3/32 over OSPF only, and every platform's prediction expects that route
+        assert stripped[stripped.index("ip address 3.3.3.3/32") + 1] == "ip router ospf 1 area 0.0.0.0"
         assert stripped[-4:-1] == ["neighbor 10.1.3.1", "remote-as 65001", "timers 3 9"]
         assert "network 172.16.3.0/24" in stripped
         assert f"username admin password {LAB_PASS} role network-admin" in config
     else:
         for line in ("ip address 10.1.3.3 255.255.255.0", "no shutdown", "network 10.1.3.0 0.0.0.255 area 0"):
             assert line in stripped
+        assert "network 3.3.3.3 0.0.0.0 area 0" in stripped  # the route every prediction expects
         assert "neighbor 10.1.3.1 remote-as 65001" in stripped
         assert "neighbor 10.1.3.1 timers 3 9" in stripped
         assert "network 172.16.3.0 mask 255.255.255.0" in stripped
@@ -496,7 +533,7 @@ def test_add_r3_issues_the_calls_in_order_with_the_right_bodies(r3_env, capsys):
         ("GET", TOPOLOGY),
         ("GET", "/system_stats"),
         ("POST", NODES),
-        ("GET", f"/labs/{LAB}/nodes/n3"),
+        ("GET", READBACK),
         ("GET", TOPOLOGY),
         ("POST", f"/labs/{LAB}/links"),
         ("PUT", f"/labs/{LAB}/nodes/n3/state/start"),
@@ -588,7 +625,9 @@ def test_a_login_that_may_not_change_the_lab_is_told_so(r3_env, capsys):
     fake = FakeCML(errors={("POST", NODES): 403})
     code, _ = _r3(r3_env, fake, "add-r3", "nxosv9000")
     assert code == 1
-    assert capsys.readouterr().out.splitlines()[-1] == "this login may not change default-lab"
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        "this login may not change default-lab, or the licence's node limit is reached"
+    )
     assert _writes(fake) == [("POST", NODES)]
 
 
@@ -600,6 +639,25 @@ def test_a_node_whose_day0_configuration_cml_dropped_is_not_started(r3_env, caps
     assert capsys.readouterr().out.splitlines()[-1] == (
         "CML did not keep the day-0 configuration; R3 was created; cml_lab.py remove-r3 removes it"
     )
+
+
+def test_a_node_kept_as_a_list_of_files_counts_as_kept(r3_env, capsys):
+    fake = FakeCML(as_files=True)
+    assert _r3(r3_env, fake, "add-r3", "nxosv9000")[0] == 0
+    assert "CML kept the day-0 configuration\n" in capsys.readouterr().out
+
+
+def test_kept_day0_reads_the_hostname_from_a_string_or_a_list_of_files(cml_lab):
+    day0 = cml_lab.day0_config("iosv", LAB_PASS)
+    assert cml_lab.kept_day0({"configuration": day0})
+    assert cml_lab.kept_day0({"configuration": [{"name": "Main", "content": day0}]})
+    assert cml_lab.kept_day0(
+        {"configuration": [{"name": "a", "content": "x"}, {"name": "b", "content": day0}]}
+    )
+    assert not cml_lab.kept_day0({"configuration": [{"name": "Main", "content": "hostname R1\n"}]})
+    assert not cml_lab.kept_day0({"configuration": None})
+    assert not cml_lab.kept_day0({})
+    assert not cml_lab.kept_day0(None)
 
 
 def test_a_node_that_never_boots_times_out_with_exit_1(r3_env, capsys):
@@ -622,6 +680,56 @@ def test_a_node_cml_never_starts_is_given_up_after_3_minutes(r3_env, capsys):
         "CML has not started R3 (memory or licence; see cml_lab.py inspect); "
         "R3 was created; cml_lab.py remove-r3 removes it"
     )
+
+
+def test_a_node_left_defined_on_core_after_the_start_is_given_up_after_3_minutes(r3_env, capsys):
+    fake = FakeCML(states=("DEFINED_ON_CORE",))
+    code, clock = _r3(r3_env, fake, "add-r3", "nxosv9000")
+    assert code == 1 and clock.now == 3 * 60
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        "CML has not started R3 (memory or licence; see cml_lab.py inspect); "
+        "R3 was created; cml_lab.py remove-r3 removes it"
+    )
+
+
+def test_a_node_that_stays_stopped_after_the_start_is_given_up_after_3_minutes(r3_env, capsys):
+    fake = FakeCML(states=("DEFINED_ON_CORE", "QUEUED", "STOPPED"))
+    code, clock = _r3(r3_env, fake, "add-r3", "nxosv9000")
+    assert code == 1 and clock.now == 3 * 60
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        "R3 is still STOPPED 180 s after the start; CML does not boot a stopped node by itself; "
+        "R3 was created; cml_lab.py remove-r3 removes it"
+    )
+
+
+def test_a_brief_stopped_state_at_the_start_does_not_end_the_wait(r3_env):
+    fake = FakeCML(states=("STOPPED", "STOPPED", "STARTED", "BOOTED"))
+    code, clock = _r3(r3_env, fake, "add-r3", "nxosv9000")
+    assert code == 0 and clock.sleeps == [15, 15, 15]
+
+
+def test_cml_refusing_the_start_exits_1_naming_remove_r3(r3_env, capsys):
+    fake = FakeCML(errors={("PUT", R3_START): 400})
+    assert _r3(r3_env, fake, "add-r3", "nxosv9000")[0] == 1
+    assert _writes(fake)[-1] == ("PUT", R3_START)
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        f"PUT {R3_START}: HTTP 400; R3 was created; cml_lab.py remove-r3 removes it"
+    )
+
+
+@pytest.mark.parametrize(
+    ("method", "path"), [("POST", NODES), ("POST", f"/labs/{LAB}/links"), ("PUT", R3_START)]
+)
+def test_an_http_error_whose_body_echoes_the_password_prints_neither(r3_env, capsys, method, path):
+    """CML's error body can quote the configuration it was sent; only the status is printed."""
+    body = f'{{"description": "rejected: username admin password {LAB_PASS}"}}'.encode()
+    error = urllib.error.HTTPError(f"https://cml/api/v0{path}", 422, "Unprocessable", None, io.BytesIO(body))
+    fake = FakeCML(errors={(method, path): error})
+    assert _r3(r3_env, fake, "add-r3", "nxosv9000")[0] == 1
+    out = capsys.readouterr().out
+    assert LAB_PASS not in out
+    assert "rejected" not in out and "Unprocessable" not in out
+    assert "HTTP 422" in out.splitlines()[-1]
 
 
 def test_a_link_that_is_not_started_is_started_once_and_refused_if_it_stays_down(r3_env, capsys):
@@ -662,6 +770,36 @@ def test_an_existing_r3_that_is_booted_is_done_and_one_still_starting_is_waited_
     assert "R3 (nxosv9000) is STARTED; waiting for it to boot\n" in capsys.readouterr().out
 
 
+def test_an_existing_booted_r3_whose_link_is_down_gets_the_link_started(r3_env, capsys):
+    fake = FakeCML(states=("BOOTED",), link_states=("STOPPED", "STARTED"))
+    fake.add_r3_node()
+    assert _r3(r3_env, fake, "add-r3", "nxosv9000")[0] == 0
+    assert _writes(fake) == [("PUT", f"/labs/{LAB}/links/l3/state/start")]
+    assert "the R1-R3 link is STOPPED; starting it\nthe R1-R3 link is STARTED\n" in capsys.readouterr().out
+
+
+def test_a_booted_r3_of_another_platform_is_refused_with_no_write(r3_env, capsys):
+    fake = FakeCML(states=("BOOTED",))
+    fake.add_r3_node("iosv", "GigabitEthernet0/0")
+    assert _r3(r3_env, fake, "add-r3", "nxosv9000")[0] == 1
+    assert _writes(fake) == []
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        "R3 exists with node definition iosv in state BOOTED; cml_lab.py remove-r3 removes it"
+    )
+
+
+@pytest.mark.parametrize("args", [["add-r3", "nxosv9000"], ["remove-r3"]])
+def test_two_nodes_labelled_r3_are_refused_with_no_write(r3_env, capsys, args):
+    fake = FakeCML()
+    fake.add_r3_node()
+    fake.topology["nodes"].append({"id": "n4", "label": "R3", "node_definition": "iosv", "interfaces": []})
+    assert _r3(r3_env, fake, *args)[0] == 1
+    assert _writes(fake) == []
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        "2 nodes are labelled R3; remove the extra ones in the CML UI first"
+    )
+
+
 def test_an_existing_r3_without_its_link_is_refused(r3_env, capsys):
     fake = FakeCML(states=("BOOTED",))
     fake.add_r3_node(linked=False)
@@ -693,6 +831,20 @@ def test_remove_r3_of_a_node_that_never_started_neither_stops_nor_wipes_it(r3_en
     fake.add_r3_node()
     assert _r3(r3_env, fake, "remove-r3")[0] == 0
     assert _writes(fake) == [("DELETE", f"/labs/{LAB}/links/l3"), ("DELETE", f"/labs/{LAB}/nodes/n3")]
+
+
+def test_remove_r3_of_a_queued_node_that_stops_into_defined_on_core_removes_it_in_one_run(r3_env, capsys):
+    fake = FakeCML(states=("QUEUED", "DEFINED_ON_CORE"))
+    fake.add_r3_node()
+    code, clock = _r3(r3_env, fake, "remove-r3")
+    assert code == 0 and clock.sleeps == []
+    node = f"/labs/{LAB}/nodes/n3"
+    assert _writes(fake) == [  # no wipe: a node that never started has no disks
+        ("PUT", f"{node}/state/stop"),
+        ("DELETE", f"/labs/{LAB}/links/l3"),
+        ("DELETE", node),
+    ]
+    assert capsys.readouterr().out.endswith("deleted R3 from default-lab\n")
 
 
 def test_remove_r3_with_no_r3_does_nothing(r3_env, capsys):
