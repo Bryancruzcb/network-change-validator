@@ -1,4 +1,4 @@
-"""scripts/lab/_lib.sh, the helpers the prepared run scripts share, run under bash.
+"""scripts/lab/_lib.sh, the helpers the newer run scripts share, run under bash.
 
 Each test sources _lib.sh in a fresh bash and sets by hand the variables lab_init would set
 (py, here, run, out, log, unexpected, capturing), so no VPN, testbed, or lab is needed and

@@ -1,6 +1,6 @@
-# Draft intent for the BGP VRF run (scripts/lab/run-bgp-vrf.sh). It was written before any
-# capture of that run exists, and it moves next to its evidence under fixtures/ once a run is
-# recorded, as intent-bgp-holdtimer.yaml did.
+# Intent used for the BGP VRF run in fixtures/lab-2026-11-21/bgp-vrf (see SOURCE.md). It was
+# written and merged (PR #16) before the run, and moved here with its rules unchanged once the run
+# was recorded, as intent-bgp-holdtimer.yaml was.
 #
 # The hold-timer run's rules for the global table, plus the same peer address again in vrf NCV:
 # each router has two BGP adjacencies to one neighbor address, told apart only by `vrf`. In vrf

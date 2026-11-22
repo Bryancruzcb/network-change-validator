@@ -1,9 +1,12 @@
 """Check a lab comparison's findings against the prediction written before the run.
 
 A comparison that exits 1 has found something, but not necessarily what the run predicted:
-one V_ADJ in place of two, or an extra V_DRIFT, exits 1 all the same. So each prepared run
-keeps the predicted findings of its change comparison in scripts/lab/expect-<run>.txt, one per
-line as `<policy> <device> <path>`, with `#` starting a comment and blank lines ignored. The
+one V_ADJ in place of two, or an extra V_DRIFT, exits 1 all the same. So each run that
+sources _lib.sh keeps the predicted findings of its change comparison in an expect file, one
+per line as `<policy> <device> <path>`, with `#` starting a comment and blank lines ignored: a
+recorded run's next to its evidence (fixtures/lab-2026-11-21/expect-<run>.txt), and the
+second-platform run's for a platform with no recorded run in
+scripts/lab/expect-second-platform-<platform>.txt. The
 run script checks its report against that file through _lib.sh's expect_findings, and
 tests/test_lab_scripts.py reads the same file to pin the prediction on synthetic snapshots, so
 the two can never drift apart.
@@ -14,7 +17,7 @@ that cannot be read. Standard library only, and outside ncv like the rest of scr
 
 Usage:
   check_findings.py <report.json> <expected file>
-  check_findings.py output/lab/ibgp-<stamp>-change/report.json scripts/lab/expect-ibgp.txt
+  check_findings.py output/lab/ibgp-<stamp>-change/report.json fixtures/lab-2026-11-21/expect-ibgp.txt
 """
 
 from __future__ import annotations

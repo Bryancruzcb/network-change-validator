@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # The lab probe: what the sandbox answers, asked without changing anything. Read-only.
 #
-# Two things decide what the next lab runs can do and are still unknown: whether the routers'
-# management addresses (10.10.20.171 and .172, Ethernet0/2 in vrf Mgmt-intf) answer over the
-# VPN, which they did not on 2026-09-12 for reasons nobody recorded, and which node images the
-# CML controller has. This asks, in four steps:
+# Two things decide what the next lab runs can do: whether the routers' management addresses
+# (10.10.20.171 and .172, Ethernet0/2 in vrf Mgmt-intf) answer over the VPN, which they did not
+# on 2026-09-12 for reasons nobody recorded, and which node images the CML controller has. On
+# 2026-11-21 this probe answered both on the DevNet sandbox: no answer on ports 22 and 23 within
+# 3 s and no ping reply, SSH disabled with no host keys on both routers, and node definitions
+# with an image for iosv, cat8000v, and nxosv9000 on CML 2.7.2. A new reservation may differ, so
+# ask again. This asks, in four steps:
 #
 #   1. from this machine: the VPN address and the route to 10.10.20.171, then for both
 #      management addresses a TCP connect test to ports 22 and 23 (open; refused, when

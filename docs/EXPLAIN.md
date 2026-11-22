@@ -10,7 +10,7 @@ Point at those pictures rather than narrating them.
 1. Intent is the checklist. Snapshots are evidence. A raw diff is not the same thing.
 2. Four rules: adjacency up (OSPF neighbor FULL on its intended interface, BGP peer Established in its VRF), route present, error counters under a limit, config lines present or absent.
 3. CI runs on saved fixtures so it does not need a live router.
-4. Live capture is optional, requires `--testbed`, `--output`, and `--i-am-in-a-lab`, and is never aimed at production. Automated tests for that path use mocks. The demo snapshots in `fixtures/pre` and `fixtures/post` are synthetic. The snapshots under `fixtures/lab-2026-09-12`, `fixtures/lab-2026-09-18`, and `fixtures/lab-2026-11-20` are sanitized captures from four DevNet CML runs.
+4. Live capture is optional, requires `--testbed`, `--output`, and `--i-am-in-a-lab`, and is never aimed at production. Automated tests for that path use mocks. The demo snapshots in `fixtures/pre` and `fixtures/post` are synthetic. The snapshots under `fixtures/lab-2026-09-12`, `fixtures/lab-2026-09-18`, `fixtures/lab-2026-11-20`, and `fixtures/lab-2026-11-21` are sanitized captures from eight DevNet CML runs, all in one simulated lab and reached through its console server. Every run captured two IOS XE 17.15 routers on IOL; one also captured a third router running classic IOS 15.9 on IOSv. Each change comparison in the four 2026-11-21 runs gave exactly the findings predicted and merged before the run.
 
 ## What not to say
 
@@ -18,6 +18,7 @@ Point at those pictures rather than narrating them.
 - That it ran on a company production network.
 - That it is Cisco pyATS itself. It uses the same idea; the live path calls Genie if you install pyATS.
 - That the demo fixtures came off a router. They did not.
+- That it was tested on NX-OS, Catalyst 8000V, or over SSH. It was not: the one NX-OS node tried never loaded its system in the sandbox, so there is no capture and ncv has never talked to an NX-OS device, which leaves ncv on NX-OS unknown either way; Catalyst 8000V was not tried; and the sandbox's routers gave no answer on their management addresses and report SSH disabled.
 
 ## Demo commands
 

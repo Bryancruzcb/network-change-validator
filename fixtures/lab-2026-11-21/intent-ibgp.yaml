@@ -1,6 +1,6 @@
-# Draft intent for the iBGP run (scripts/lab/run-ibgp.sh). It was written before any capture of
-# that run exists, and it moves next to its evidence under fixtures/ once a run is recorded, as
-# intent-bgp-holdtimer.yaml did.
+# Intent used for the iBGP run in fixtures/lab-2026-11-21/ibgp (see SOURCE.md). It was written and
+# merged (PR #16) before the run, and moved here with its rules unchanged once the run was
+# recorded, as intent-bgp-holdtimer.yaml was.
 #
 # iBGP in AS 65010 runs between the routers' Loopback0 addresses, which reach each other only
 # through OSPF, so the rules cover three layers: the OSPF adjacencies and the peer's Loopback0

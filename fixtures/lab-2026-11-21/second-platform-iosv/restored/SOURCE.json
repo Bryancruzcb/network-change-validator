@@ -1,0 +1,16 @@
+{
+  "source": "live-pyats",
+  "testbed": "testbeds/lab-r3.yaml",
+  "devices": [
+    "R1",
+    "R2",
+    "R3"
+  ],
+  "features": [
+    "ospf",
+    "bgp",
+    "routing",
+    "interface",
+    "config"
+  ]
+}

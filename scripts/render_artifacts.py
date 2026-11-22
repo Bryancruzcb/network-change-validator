@@ -3,7 +3,7 @@
 
     python3 scripts/render_artifacts.py
 
-Runs `ncv diff` from this checkout's src/ on the demo pair and on the three lab runs,
+Runs `ncv diff` from this checkout's src/ on the demo pair and on every recorded lab run (see LAB_RUNS),
 copies each report into docs/artifacts, and draws the two SVG summaries from those
 reports. The files come out byte for byte the same on every platform, and
 tests/test_artifacts.py fails when a checked-in file falls behind what this builds.
@@ -74,6 +74,26 @@ LAB_RUNS = (
         lab_case("2026-11-20", "bgp-holdtimer", "intent-bgp-holdtimer.yaml", 2),
         "2026-11-20 BGP hold timer",
         "inbound ACL on R1 drops BGP from R2",
+    ),
+    (
+        lab_case("2026-11-21", "ospf-deadtimer", "intent-ospf-deadtimer.yaml", 2),
+        "2026-11-21 OSPF dead timer",
+        "inbound ACL on R1 drops OSPF from R2",
+    ),
+    (
+        lab_case("2026-11-21", "ibgp", "intent-ibgp.yaml", 8),
+        "2026-11-21 iBGP over OSPF",
+        "inbound ACL on R1 drops OSPF from R2",
+    ),
+    (
+        lab_case("2026-11-21", "bgp-vrf", "intent-bgp-vrf.yaml", 5),
+        "2026-11-21 BGP in vrf NCV",
+        "shutdown on R1 subinterface Ethernet0/1.100",
+    ),
+    (
+        lab_case("2026-11-21", "second-platform-iosv", "intent-second-platform-iosv.yaml", 9),
+        "2026-11-21 second platform, R3 on IOSv",
+        "shutdown on R1 Ethernet0/3, the link to R3",
     ),
 )
 CASES = (DEMO, *(case for case, _, _ in LAB_RUNS))
@@ -184,17 +204,19 @@ def findings_svg(report: dict[str, Any], title: str, subtitle: str) -> str:
 
 def lab_svg(runs: list[tuple[str, str, dict[str, Any]]]) -> str:
     """One block per lab run, (title, change, report), listing the findings of pre vs post."""
-    header_h, block_gap = 88, 16
-    height = header_h + sum(56 + 28 * len(report["findings"]) + block_gap for _, _, report in runs) + 28
+    header_h, block_gap = 108, 16
+    height = header_h + 8 + sum(48 + 26 * len(report["findings"]) + block_gap for _, _, report in runs) + 28
     first = runs[0][2]
     body = [
         f'  <rect x="0" y="0" width="{WIDTH}" height="{header_h}" fill="#0f172a"/>',
         f'  <text x="24" y="34" font-size="20" font-family="{SANS}" fill="#f8fafc"'
-        ' font-weight="700">Lab evidence — three DevNet CML runs</text>',
+        f' font-weight="700">Lab evidence — {len(runs)} DevNet CML runs</text>',
         f'  <text x="24" y="56" font-size="13" font-family="{SANS}" fill="#cbd5e1">'
-        "IOS XE 17.15 IOL R1–R2 in Cisco Modeling Labs 2.7.2 default-lab."
-        " Sanitized captures replayed by tests/test_lab_evidence.py.</text>",
-        f'  <text x="24" y="76" font-size="12" font-family="{SANS}" fill="#94a3b8">'
+        "R1 and R2 are IOS XE 17.15 IOL in Cisco Modeling Labs 2.7.2 default-lab."
+        " The last run adds R3 on IOSv (IOS 15.9).</text>",
+        f'  <text x="24" y="76" font-size="13" font-family="{SANS}" fill="#cbd5e1">'
+        "Sanitized captures replayed by tests/test_lab_evidence.py.</text>",
+        f'  <text x="24" y="96" font-size="12" font-family="{SANS}" fill="#94a3b8">'
         "pre vs pre and pre vs restored were clean (exit 0) on every run."
         f" ncv {esc(first.get('ncv_version'))}, report format {esc(first.get('report_version'))}.</text>",
     ]
@@ -225,7 +247,8 @@ def lab_svg(runs: list[tuple[str, str, dict[str, Any]]]) -> str:
     body.append(
         f'  <text x="24" y="{height - 10}" font-size="11" font-family="{SANS}" fill="#64748b">'
         "Rows are the findings ncv wrote from the sanitized captures under fixtures/lab-*."
-        " One image, one simulated lab — not routers in general.</text>"
+        " Two images (IOS XE 17.15 on IOL, IOS 15.9 on IOSv), one simulated lab"
+        " — not routers in general.</text>"
     )
     return _svg(height, "Lab evidence findings", "#f8fafc", body)
 

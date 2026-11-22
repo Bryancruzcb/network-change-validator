@@ -7,8 +7,10 @@
 #   features=bgp,routing,interface
 #   intent=scripts/lab/intent-<run>.yaml
 #
-# and ends with lab_finish. The four published runs (run-lab.sh, run-ospf.sh, run-bgp.sh,
-# run-bgp-holdtimer.sh) keep their own copy of these lines: they reproduce recorded runs.
+# and ends with lab_finish. Once a run is recorded, its intent and predicted findings move next
+# to its evidence, as in intent=fixtures/lab-2026-11-21/intent-ibgp.yaml. The four runs
+# recorded before this file existed (run-lab.sh, run-ospf.sh, run-bgp.sh, run-bgp-holdtimer.sh)
+# keep their own copy of these lines: they reproduce recorded runs.
 #
 # lab_init <run-name>
 #   cd to the repository root, refuse with exit 2 unless the sandbox VPN (tun0) is up and the
@@ -39,7 +41,8 @@
 #   Network is unreachable or No route to host, where this machine or a router on the way said
 #   there is no path; and "no answer in 3 s" (returns 124), where nothing came back at all, so
 #   the packets were dropped on the way or never routed. Which of these it is was the question
-#   the 2026-09-12 attempt to reach the management addresses left open.
+#   the 2026-09-12 attempt to reach the management addresses left open. The probe answered it on
+#   2026-11-21: every test of ports 22 and 23 gave "no answer in 3 s".
 # step <text>                          a timestamped line on the terminal and in the log
 # ctl <args>                           labctl.py, logged, returning its exit code
 # cap <args>                           cml_capture.py, logged, returning its exit code

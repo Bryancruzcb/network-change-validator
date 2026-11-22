@@ -1,0 +1,18 @@
+{
+  "R1": {
+    "neighbors": {
+      "2.2.2.2": {
+        "state": "full",
+        "interface": "Ethernet0/1"
+      }
+    }
+  },
+  "R2": {
+    "neighbors": {
+      "1.1.1.1": {
+        "state": "full",
+        "interface": "Ethernet0/1"
+      }
+    }
+  }
+}

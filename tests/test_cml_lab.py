@@ -1,7 +1,9 @@
 """scripts/lab/cml_lab.py: the read-only inventory of the CML controller, against a fake CML.
 
-The inventory below is invented: no real listing of this controller's node definitions, image
-definitions, or topology has been seen, and several of those response shapes are unverified.
+The inventory below is invented. The probe of 2026-11-21 read a real listing from the
+sandbox's CML 2.7.2 (node definitions iosv, cat8000v, and nxosv9000, each with an image, and
+default-lab's nodes and links), but that listing is not published and nothing here copies it;
+every node's image printed as unknown there, so several response shapes are still unverified.
 Only the field names cml_capture.py already relies on (lab_title, label, interface_a and
 interface_b) come from the controller's own API description. The report must therefore print
 "unknown" where a field is missing and say so where a response has another shape, never raise.
@@ -323,9 +325,11 @@ def test_a_lab_that_cannot_be_found_exits_1(cml_lab, monkeypatch, capsys):
     assert "expected one lab titled 'no-such-lab', found 0" in capsys.readouterr().out
 
 
-# add-r3 and remove-r3 against an invented controller that changes as it is told. Nothing here
-# was seen on the sandbox: the node definition ids and interface labels are from CML's
-# documentation, and a real controller may differ in every field read with .get().
+# add-r3 and remove-r3 against an invented controller that changes as it is told. The node
+# definition ids and interface labels are from CML's documentation. On the sandbox's CML 2.7.2 on
+# 2026-11-21, add-r3 created an IOSv R3 with GigabitEthernet0/0 and an NX-OS R3 with Ethernet1/1,
+# and remove-r3 took the IOSv one out; GigabitEthernet1 (cat8000v) has not been tried, and a real
+# controller may still differ in any field read with .get().
 LAB_PASS = "r3-admin-value"
 NODES = f"/labs/{LAB}/nodes?populate_interfaces=true"
 R3_STATE = f"/labs/{LAB}/nodes/n3/state"
@@ -660,6 +664,11 @@ def test_kept_day0_reads_the_hostname_from_a_string_or_a_list_of_files(cml_lab):
     assert not cml_lab.kept_day0(None)
 
 
+# A real CML does not always look like this fake. On 2026-11-21 CML marked an NX-OS R3 BOOTED when
+# the nxosv9000 node definition's 480 s boot timeout ran out (its events: 478 s after STARTED), and
+# that R3 had never loaded NX-OS. An IOSv R3 was marked BOOTED 177 s after STARTED, which fits the
+# iosv 180 s timeout (its console log was not read); add-r3's poll first saw it at 181 s. So
+# add-r3 can get BOOTED whether the node booted or not, well before this 20-minute limit.
 def test_a_node_that_never_boots_times_out_with_exit_1(r3_env, capsys):
     fake = FakeCML(states=("STARTED",))
     code, clock = _r3(r3_env, fake, "add-r3", "nxosv9000")

@@ -10,21 +10,23 @@ scripts/lab/labctl.py reads router show output to know when a change has taken. 
 its parsers on sample output, and the findings the BGP run's planned change was predicted to
 produce, on synthetic snapshots shaped like the 2026-09-12 captures. That prediction was
 written before the run; the 2026-09-18 run matched it, and tests/test_lab_evidence.py replays
-the real captures. The OSPF dead-timer run, the iBGP run, and the BGP VRF run are prepared the
-same way and have not run: their predictions are pinned here on synthetic snapshots built
-through ncv's own adapter from Genie-shaped data, and the predicted change findings are read
-from the scripts/lab/expect-<run>.txt file each run script checks its report against. The last
-tests pin what `labctl.py reset` would send, on the published configs and on ones built here;
-tests/test_labctl_commands.py runs the commands on a fake lab. Then come the SSH testbed
-example, the read-only probe, and the order of the prepared SSH path run. The next ones
-are the prepared second-platform run: R1's side of the R3 link, the three per-platform draft
-intents, the prediction on synthetic snapshots whose R3 records are shaped as each platform's
-Genie data writes them, the R3 testbed example, and the run script's order. After them, the
-session script: every name it knows names a script that exists, and every prepared run is one
-of its names, so a new run cannot be forgotten; and every script here has a row in the README.
-The last ones hold the README to the code: the runs it says can capture over SSH, each prepared
-run's prediction table against its expected file, and each configuration block against the
-builder that sends it.
+the real captures. The OSPF dead-timer run, the iBGP run, and the BGP VRF run were prepared the
+same way before they ran on 2026-11-21, and in each run the change comparison matched its
+prediction. The predictions are pinned here on synthetic snapshots built through ncv's own
+adapter from Genie-shaped data, and the predicted change findings are read from the
+expect-<run>.txt file each run script checks its report against, kept with the run's evidence
+in fixtures/lab-2026-11-21. The next tests pin what `labctl.py reset` would send, on the
+published configs and on ones built here; tests/test_labctl_commands.py runs the commands on a
+fake lab. Then come the SSH testbed example, the read-only probe, and the order of the prepared
+SSH path run. After those come the second-platform run, recorded with R3 on IOSv: R1's side of
+the R3 link, the three per-platform intents, the prediction on synthetic snapshots whose R3
+records are shaped as each platform's Genie data writes them, the R3 testbed example, and the
+run script's order.
+After them, the session script: every name it knows names a script that exists, and every run
+script that sources _lib.sh is one of its names, so a new run cannot be forgotten; and every
+script here has a row in the README. The last ones hold the README to the code: the runs it
+says can capture over SSH, each 2026-11-21 run's prediction table against its expected file,
+and each configuration block against the builder that sends it.
 """
 
 from __future__ import annotations
@@ -96,7 +98,7 @@ def test_sanitizer_replaces_passwords_and_certificate_bodies_only(root):
 def test_published_lab_configs_are_the_sanitizers_fixed_point(root):
     sanitize = _load_script(root, "sanitize_capture.py").sanitize
     configs = sorted((root / "fixtures").glob("lab-*/**/config.json"))
-    assert len(configs) == 12
+    assert len(configs) == 24  # 3 stages of 8 runs: 4 runs before 2026-11-21, 4 on that day
     for path in configs:
         for device, record in json.loads(path.read_text(encoding="utf-8")).items():
             sanitized, secrets, _ = sanitize(record["running"])
@@ -331,11 +333,20 @@ def _bgp_diff(root, tmp_path, before, after, label, intent=None):
     return code, sorted((f["policy_id"], f["device"], f["path"]) for f in findings)
 
 
-def _expected(root, name):
-    """A prepared run's predicted change findings, read from scripts/lab/<name> with the parser
-    the run script's check uses, so the test and the run compare against one file."""
+# Where a run's intent and predicted findings live: next to its evidence once the run is
+# recorded, and in scripts/lab until then. Of the second-platform run's three platforms only
+# iosv has a recorded run; run-second-platform.sh makes the same choice in its own `case`.
+RECORDED = ("fixtures", "lab-2026-11-21")
+UNRECORDED = ("scripts", "lab")
+SECOND_PLATFORM_DIRS = {"nxosv9000": UNRECORDED, "cat8000v": UNRECORDED, "iosv": RECORDED}
+
+
+def _expected(root, *parts):
+    """A run's predicted change findings, read from the file at `parts` under the repository
+    root with the parser the run script's check uses, so the test and the run compare against
+    one file."""
     check = _load_script(root, "check_findings.py")
-    path = root / "scripts" / "lab" / name
+    path = root.joinpath(*parts)
     return sorted(check.parse_expected(path.read_text(encoding="utf-8"), str(path)))
 
 
@@ -477,11 +488,13 @@ def test_holdtimer_intent_refuses_a_session_without_the_fast_timers(root, tmp_pa
     ]
 
 
-# The OSPF dead-timer run, prepared and not run yet: OSPF on the link with a 1 s hello (so a
-# 4 s dead interval), and an inbound ACL on R1 that drops OSPF from R2 as the planned change.
+# The OSPF dead-timer run, prepared before it ran on 2026-11-21: OSPF on the link with a 1 s
+# hello (so a 4 s dead interval), and an inbound ACL on R1 that drops OSPF from R2 as the planned
+# change.
 
 # Synthetic `show ip ospf interface Ethernet0/1` output; the timers line follows the format
-# Genie's IOS XE parser documents. No real output of this command has been captured yet.
+# Genie's IOS XE parser documents. No published capture holds this command's output; the
+# 2026-11-21 run log, which is not published, does.
 OSPF_INTERFACE_FAST = """\
 Ethernet0/1 is up, line protocol is up
   Internet Address 1.1.1.1/24, Interface ID 3, Area 0
@@ -546,7 +559,7 @@ def test_labctl_ospf_block_drops_ospf_from_r2_and_nothing_else(root):
     ]
 
 
-DEADTIMER_INTENT = ("scripts", "lab", "intent-ospf-deadtimer.yaml")
+DEADTIMER_INTENT = (*RECORDED, "intent-ospf-deadtimer.yaml")
 
 
 def test_deadtimer_intent_names_both_adjacencies_and_requires_the_fast_hello(root):
@@ -579,7 +592,7 @@ def test_deadtimer_run_prediction_on_synthetic_snapshots(root, tmp_path):
     full = {"R1": {"2.2.2.2": "full"}, "R2": {"1.1.1.1": "full"}}
     _write_ospf_snapshot(pre, full, FAST_HELLO, FAST_HELLO)
     _write_ospf_snapshot(post, {"R1": {}, "R2": {"1.1.1.1": "init"}}, FAST_HELLO + OSPF_ACL_ON_R1, FAST_HELLO)
-    expected = _expected(root, "expect-ospf-deadtimer.txt")
+    expected = _expected(root, *RECORDED, "expect-ospf-deadtimer.txt")
     assert len(expected) == 2
     assert _bgp_diff(root, tmp_path, pre, pre, "baseline", intent) == (0, [])
     assert _bgp_diff(root, tmp_path, pre, post, "change", intent) == (1, expected)
@@ -604,8 +617,9 @@ def test_deadtimer_intent_refuses_a_capture_without_the_fast_hello(root, tmp_pat
     )
 
 
-# The iBGP run, prepared and not run yet: iBGP in AS 65010 between the routers' loopbacks, which
-# reach each other only over OSPF, and the dead-timer run's ACL on R1 as the planned change.
+# The iBGP run, prepared before it ran on 2026-11-21: iBGP in AS 65010 between the routers'
+# loopbacks, which reach each other only over OSPF, and the dead-timer run's ACL on R1 as the
+# planned change.
 
 IBGP_SUMMARY = """\
 BGP router identifier 1.1.1.1, local AS number 65010
@@ -681,7 +695,7 @@ def test_labctl_setup_ibgp_lines_for_r2_differ_only_in_the_mirrored_values(root)
     assert sum(a != b for a, b in zip(r1, r2, strict=True)) == 11
 
 
-IBGP_INTENT = ("scripts", "lab", "intent-ibgp.yaml")
+IBGP_INTENT = (*RECORDED, "intent-ibgp.yaml")
 
 
 def test_ibgp_intent_names_four_adjacencies_the_learned_routes_and_the_required_lines(root):
@@ -793,7 +807,7 @@ def test_ibgp_run_prediction_on_synthetic_snapshots(root, tmp_path):
     ]
     ospf_after = {"R1": {}, "R2": {"1.1.1.1": "init"}}
     _write_ibgp_snapshot(post, ospf_after, {"R1": "Idle", "R2": "Idle"}, lost, OSPF_ACL_ON_R1)
-    expected = _expected(root, "expect-ibgp.txt")
+    expected = _expected(root, *RECORDED, "expect-ibgp.txt")
     assert len(expected) == 8
     assert _bgp_diff(root, tmp_path, pre, pre, "baseline", intent) == (0, [])
     assert _bgp_diff(root, tmp_path, pre, post, "change", intent) == (1, expected)
@@ -821,8 +835,8 @@ def test_ibgp_intent_refuses_a_setup_that_never_learned_the_bgp_prefix(root, tmp
     )
 
 
-# The BGP VRF run, prepared and not run yet: the hold-timer run's eBGP session in the global
-# table plus a second one to the same peer address in vrf NCV on Ethernet0/1.100, and
+# The BGP VRF run, prepared before it ran on 2026-11-21: the hold-timer run's eBGP session in the
+# global table plus a second one to the same peer address in vrf NCV on Ethernet0/1.100, and
 # `shutdown` on R1's subinterface as the planned change.
 
 
@@ -944,7 +958,7 @@ def test_labctl_reads_whether_show_vrf_still_lists_a_vrf(root):
     assert labctl.vrf_listed("  *", "NCV") is False
 
 
-BGP_VRF_INTENT = ("scripts", "lab", "intent-bgp-vrf.yaml")
+BGP_VRF_INTENT = (*RECORDED, "intent-bgp-vrf.yaml")
 
 
 def test_bgp_vrf_intent_names_four_bgp_adjacencies_two_per_router_one_per_vrf(root):
@@ -1045,7 +1059,7 @@ def test_bgp_vrf_run_prediction_on_synthetic_snapshots(root, tmp_path):
         "R1": ["NCV", "default"],
         "R2": ["NCV", "default"],
     }
-    expected = _expected(root, "expect-bgp-vrf.txt")
+    expected = _expected(root, *RECORDED, "expect-bgp-vrf.txt")
     assert len(expected) == 5
     assert all(path.split(".")[1:3] == ["vrfs", "NCV"] for _, _, path in expected)
     assert _bgp_diff(root, tmp_path, pre, pre, "baseline", intent) == (0, [])
@@ -1213,7 +1227,7 @@ def test_reset_never_touches_the_management_path_or_the_static_routes(root):
     configs = [EVERYTHING_ON_R1]
     for path in sorted((root / "fixtures").glob("lab-*/**/config.json")):
         configs += [record["running"] for record in json.loads(path.read_text(encoding="utf-8")).values()]
-    assert len(configs) == 25
+    assert len(configs) == 52  # 1 + 24 files x 2 routers + 3 for R3 (second-platform-iosv)
     for config in configs:
         for line in labctl.reset_lines(config):
             assert "Mgmt-intf" not in line
@@ -1411,12 +1425,21 @@ def test_reset_after_the_second_platform_run_removes_bgp_ospf_and_returns_ethern
         ("run-bgp-vrf.sh", "expect-bgp-vrf.txt"),
     ],
 )
-def test_each_prepared_run_checks_its_change_findings_against_its_expected_file(root, script, expected):
-    """The run script and the prediction test read one file, and the shared helpers do the
-    reset and the packet capture, so an early exit stops the capture and a failed reset stops
-    the run."""
+def test_each_recorded_run_checks_its_change_findings_against_the_files_beside_its_evidence(
+    root, script, expected
+):
+    """The run script and the prediction test read one file, kept with the intent beside the
+    run's evidence, and the shared helpers do the reset and the packet capture, so an early exit
+    stops the capture and a failed reset stops the run."""
     text = (root / "scripts" / "lab" / script).read_text(encoding="utf-8")
-    assert f'expect_findings change "$out-change" scripts/lab/{expected}\n' in text
+    run = expected.removeprefix("expect-").removesuffix(".txt")
+    header = " ".join(line.removeprefix("#").strip() for line in text.splitlines()[1:3])
+    assert f"This is the run recorded in fixtures/lab-2026-11-21/{run}." in header
+    assert (root / "fixtures" / "lab-2026-11-21" / run).is_dir()
+    assert f"\nintent=fixtures/lab-2026-11-21/intent-{run}.yaml\n" in text
+    assert (root.joinpath(*RECORDED, f"intent-{run}.yaml")).is_file()
+    assert f'expect_findings change "$out-change" fixtures/lab-2026-11-21/{expected}\n' in text
+    assert root.joinpath(*RECORDED, expected).is_file()
     assert text.index('compare pre post change; expect_exit change 1 "$?"') < text.index("expect_findings")
     assert "\nlab_reset\n" in text
     assert "ctl reset" not in text
@@ -1518,15 +1541,20 @@ def test_the_ssh_path_run_checks_the_port_before_it_resets_and_captures_both_pat
     assert "#   3. labctl.py reset" in text
 
 
-# The second-platform run, prepared and not run yet: R3, a router of another platform that
-# cml_lab.py adds and links to R1 Ethernet0/3, peering with R1 over OSPF and eBGP, and `shutdown`
-# on R1 Ethernet0/3 as the planned change.
+# The second-platform run, prepared before it ran on 2026-11-21 with R3 on IOSv (nxosv9000 and
+# cat8000v have no recorded run): R3, a router of another platform that cml_lab.py adds and
+# links to R1 Ethernet0/3, peering with R1 over OSPF and eBGP, and `shutdown` on R1 Ethernet0/3
+# as the planned change.
 
 PLATFORMS = ("nxosv9000", "cat8000v", "iosv")
 
 
 def _second_platform_intent(root, platform):
-    return root / "scripts" / "lab" / f"intent-second-platform-{platform}.yaml"
+    return root.joinpath(*SECOND_PLATFORM_DIRS[platform], f"intent-second-platform-{platform}.yaml")
+
+
+def _second_platform_expect(platform):
+    return (*SECOND_PLATFORM_DIRS[platform], f"expect-second-platform-{platform}.txt")
 
 
 def test_labctl_r3_link_lines_for_r1(root):
@@ -1589,8 +1617,8 @@ def test_second_platform_nxos_intent_names_both_ends_of_the_link_in_nxos_strings
     assert set(required["R1"]) <= set(labctl.r3_link_lines())
 
 
-def test_the_three_draft_intents_differ_only_in_r3s_interface_and_its_connected_route_string(root):
-    """One draft per platform, R3's first data interface taken from cml_lab.py's platform table:
+def test_the_three_platform_intents_differ_only_in_r3s_interface_and_its_connected_route_string(root):
+    """One intent per platform, R3's first data interface taken from cml_lab.py's platform table:
     NX-OS writes a connected route as `direct`, IOS as `connected`."""
     table = _load_script(root, "cml_lab.py").PLATFORM_TABLE
     assert tuple(table) == PLATFORMS
@@ -1716,9 +1744,9 @@ def test_second_platform_run_prediction_on_synthetic_snapshots(root, tmp_path, p
     _write_r3_snapshot(pre, platform, interface)
     _write_r3_snapshot(post, platform, interface, linked=False)
     _write_r3_snapshot(restored, platform, interface)
-    expected = _expected(root, f"expect-second-platform-{platform}.txt")
+    expected = _expected(root, *_second_platform_expect(platform))
     assert len(expected) == 9
-    assert _expected(root, "expect-second-platform-nxosv9000.txt") == expected
+    assert _expected(root, *_second_platform_expect("nxosv9000")) == expected
     assert _bgp_diff(root, tmp_path, pre, pre, "baseline", intent) == (0, [])
     assert _bgp_diff(root, tmp_path, pre, post, "change", intent) == (1, expected)
     report = json.loads((tmp_path / "report-change" / "report.json").read_text(encoding="utf-8"))
@@ -1785,13 +1813,17 @@ def test_the_r3_testbed_example_adds_r3_through_the_console_server_and_holds_no_
 
 def test_the_second_platform_run_checks_its_platform_first_and_adds_r3_after_the_reset(root):
     text = (root / "scripts" / "lab" / "run-second-platform.sh").read_text(encoding="utf-8")
-    assert "Prepared, not run yet." in text.splitlines()[1]
+    header = " ".join(line.removeprefix("#").strip() for line in text.splitlines()[1:5])
+    assert "With iosv, this is the run recorded in fixtures/lab-2026-11-21/second-platform-iosv." in header
+    assert "An nxosv9000 attempt the same day stopped before any capture" in header
+    assert "cat8000v has not run." in header
     steps = [
         '. "$here/_lib.sh"',
         "case ${1:-} in -h | --help) lab_print_header; exit 0 ;; esac",
         'platform-os "$platform"',
         'export NCV_TESTBED="${NCV_TESTBED:-testbeds/lab-r3.yaml}"',
         'lab_r3_testbed_fits "$platform" "$r3_os" || exit 2',
+        "\ncase $platform in\n",
         "lab_init second-platform",
         "\nlab_reset\n",
         'cml add-r3 "$platform"',
@@ -1806,7 +1838,7 @@ def test_the_second_platform_run_checks_its_platform_first_and_adds_r3_after_the
         "sleep 15\n",
         "snap post ",
         'compare pre post change; expect_exit change 1 "$?"',
-        'expect_findings change "$out-change" "scripts/lab/expect-second-platform-$platform.txt"',
+        'expect_findings change "$out-change" "$files_dir/expect-second-platform-$platform.txt"',
         "ctl r3-noshut ",
         "ctl wait-r3-up 300 ",
         "snap restored ",
@@ -1816,18 +1848,25 @@ def test_the_second_platform_run_checks_its_platform_first_and_adds_r3_after_the
     positions = [text.index(step) for step in steps]
     assert positions == sorted(positions)
     assert "features=ospf,bgp,routing,interface\n" in text
-    assert "intent=scripts/lab/intent-second-platform-$platform.yaml\n" in text
-    assert "correct $intent from $run/pre" in text
+    assert "intent=$files_dir/intent-second-platform-$platform.yaml\n" in text
+    # One explicit case picks each platform's directory, and it is the choice the tests make.
+    case = text[text.index("\ncase $platform in\n") : text.index("\nesac\n")]
+    chosen = dict(re.findall(r"^  ([\w |]+)\) files_dir=(\S+) ;;$", case, re.M))
+    dirs = {name.strip(): path for names, path in chosen.items() for name in names.split("|")}
+    assert dirs == {platform: "/".join(SECOND_PLATFORM_DIRS[platform]) for platform in PLATFORMS}
+    assert '\n  *) echo "$usage" >&2; exit 2 ;;' in case
+    assert "compare $intent with $run/pre" in text
     assert "cml_lab.py remove-r3" in text
     assert 'remove-r3"' not in text and "cml remove-r3" not in text  # it leaves R3 in the lab
     assert "cap_start" not in text  # cml_capture.py captures the R1-R2 link only
     for platform in PLATFORMS:
         assert _second_platform_intent(root, platform).is_file()
-        assert (root / "scripts" / "lab" / f"expect-second-platform-{platform}.txt").is_file()
+        assert root.joinpath(*_second_platform_expect(platform)).is_file()
 
 
-# run-session.sh runs the prepared runs after asking for the logins once. Its `case` is the one
-# place a session name meets its script, so a run added here and forgotten there would never run.
+# run-session.sh runs the scripts that source _lib.sh after asking for the logins once. Its
+# `case` is the one place a session name meets its script, so a run added here and forgotten there
+# would never run.
 
 BRANCH_RUNS = (
     "probe.sh",
@@ -1847,7 +1886,7 @@ def _session_map(root):
     return dict(re.findall(r'^\s+([\w:*-]+)\) echo "([\w.-]+)', body, re.M))
 
 
-def test_every_session_name_names_a_script_that_exists_and_every_prepared_run_has_a_name(root):
+def test_every_session_name_names_a_script_that_exists_and_every_lib_sh_run_has_a_name(root):
     lab = root / "scripts" / "lab"
     names = _session_map(root)
     assert set(names) == {
@@ -1966,7 +2005,7 @@ ADDRESS = r"\d+\.\d+\.\d+\.\d+(?:/\d+)?"
 
 @pytest.mark.parametrize(("title", "name"), PREDICTED_TABLES)
 def test_each_readme_prediction_table_names_the_findings_in_its_expect_file(root, title, name):
-    """The README's table of a prepared run is the same prediction as the expected file the run
+    """The README's table of a 2026-11-21 run is the same prediction as the expected file the run
     checks its report against: the change row names every policy, device, and address in the
     file and no other address, its count is the file's, and the other two rows are clean."""
     readme = (root / "scripts" / "lab" / "README.md").read_text(encoding="utf-8")
@@ -1982,7 +2021,7 @@ def test_each_readme_prediction_table_names_the_findings_in_its_expect_file(root
     assert rows["| pre vs restored"] == ["0", "none |"]
     ((exit_code, cell),) = [value for key, value in rows.items() if key.startswith("| pre vs post")]
     assert exit_code == "1"
-    expected = _expected(root, name)
+    expected = _expected(root, *RECORDED, name)
     assert set(re.findall(ADDRESS, cell)) == {
         re.search(ADDRESS + "$", path).group() for _, _, path in expected
     }

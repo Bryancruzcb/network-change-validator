@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# The BGP VRF run on the DevNet CML default-lab in one command. Prepared, not run yet.
+# The BGP VRF run on the DevNet CML default-lab in one command. This is the run recorded in
+# fixtures/lab-2026-11-21/bgp-vrf.
 #
-# Every BGP capture so far had one session, in the global table. This run keeps the hold-timer
-# run's eBGP session there (R1 AS 65001, R2 AS 65002, a 9 s hold time, untagged on Ethernet0/1)
-# and adds a second session to the same peer address inside vrf NCV, on the dot1Q subinterface
-# Ethernet0/1.100, which reuses the link's own addresses. Then it breaks only that one. It is
-# the live test of ncv keeping BGP neighbors by VRF: the same address in two VRFs must be
-# captured as two neighbors, and a change to one must be reported for that one only.
+# Before this run, every BGP capture had one session, in the global table. This run keeps the
+# hold-timer run's eBGP session there (R1 AS 65001, R2 AS 65002, a 9 s hold time, untagged on
+# Ethernet0/1) and adds a second session to the same peer address inside vrf NCV, on the dot1Q
+# subinterface Ethernet0/1.100, which reuses the link's own addresses. Then it breaks only that
+# one. It is the live test of ncv keeping BGP neighbors by VRF: the same address in two VRFs must
+# be captured as two neighbors, and a change to one must be reported for that one only.
 #
 # Returns both routers to the shipped configuration and waits for IOS to finish deleting any
 # earlier vrf NCV, sets up the hold-timer run's session and then the VRF one, waits for both
@@ -17,9 +18,9 @@
 # 9 s hold timer runs out and then loses the prefix it learned; both global sessions stay
 # Established. Post capture and compare, `no shutdown`, wait for the VRF sessions, restored
 # capture and compare. The predicted findings of the change comparison are in
-# scripts/lab/expect-bgp-vrf.txt, and scripts/lab/README.md explains them; the script exits 0
-# only when every comparison exits as predicted and the change comparison finds exactly those
-# findings, 3 when it ran to the end but one did not, and 1 when it stopped early.
+# fixtures/lab-2026-11-21/expect-bgp-vrf.txt, and scripts/lab/README.md explains them; the script
+# exits 0 only when every comparison exits as predicted and the change comparison finds exactly
+# those findings, 3 when it ran to the end but one did not, and 1 when it stopped early.
 #
 # Packet evidence: right before the change, scripts/lab/cml_capture.py starts a capture of
 # `tcp port 179 or (vlan and tcp port 179)` on the R1-R2 link through the CML API, so both the
@@ -39,7 +40,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 lab_takes_no_arguments "$@"
 lab_init bgp-vrf
 features=bgp,routing,interface
-intent=scripts/lab/intent-bgp-vrf.yaml
+intent=fixtures/lab-2026-11-21/intent-bgp-vrf.yaml
 undo_hint="run scripts/lab/change.sh vrf-undo, or let the next run's labctl.py reset remove it"
 
 step "1/11 reset both routers to the shipped configuration (a router runs one BGP process, and a reused reservation may carry an earlier run), then wait for IOS to finish deleting any earlier vrf NCV"
@@ -75,7 +76,7 @@ ctl wait-vrf-bgp-down 60 || step "a vrf NCV session still shows Established, cap
 step "9/11 post capture and compare (expect exit 1)"
 snap post || { step "post capture failed; R1 Ethernet0/1.100 is still shut down, $undo_hint"; exit 1; }
 compare pre post change; expect_exit change 1 "$?"
-expect_findings change "$out-change" scripts/lab/expect-bgp-vrf.txt
+expect_findings change "$out-change" fixtures/lab-2026-11-21/expect-bgp-vrf.txt
 step "10/11 undo: no shutdown on R1 Ethernet0/1.100, then wait for both vrf NCV sessions to learn a prefix again"
 ctl vrf-noshut || { step "undo failed; $undo_hint"; exit 1; }
 ctl wait-vrf-bgp-up 240 || step "vrf NCV sessions have not learned a prefix yet, capturing anyway"

@@ -95,8 +95,8 @@ LOOPBACKS = {
     "R2": {"Loopback0": "10.255.255.2/32", "Loopback1": "172.16.2.1/24"},
 }
 # What each router originates into BGP: its Loopback1 subnet. No static route the lab ships with
-# covers 172.16.0.0/16, so unlike the eBGP runs the peer should install the prefix, and its loss
-# should show in the routing table.
+# covers 172.16.0.0/16, so unlike the eBGP runs the peer installs the prefix, and its loss shows
+# in the routing table: on 2026-11-21 it gave a V_ROUTE on each router.
 IBGP_PREFIXES = {name: ip_interface(loopbacks["Loopback1"]).network for name, loopbacks in LOOPBACKS.items()}
 # Each router's iBGP peer: the other router's Loopback0.
 IBGP_PEERS = {
@@ -139,7 +139,8 @@ PROBE_COMMANDS = (
     # The management path: whether Ethernet0/2 in vrf Mgmt-intf is up, has its route back through
     # 10.10.20.254 and an ARP entry for it, runs an SSH server, and reaches the gateway and the
     # CML controller. On 2026-09-12 the management addresses did not answer over the VPN, and
-    # nobody recorded why.
+    # nobody recorded why. On 2026-11-21 they gave no answer on ports 22 and 23 within 3 s and
+    # no ping reply, and `show ip ssh` on both routers reported SSH disabled with no host keys.
     "show ip interface brief",
     "show vrf",
     "show ip route vrf Mgmt-intf",
@@ -223,8 +224,9 @@ def ospf_interface_timers(output: str):
     """From `show ip ospf interface <intf>`: the (hello, dead) intervals in seconds, read from
     the line `Timer intervals configured, Hello 1, Dead 4, Wait 4, Retransmit 5`, or None if
     the output has no such line (OSPF is not enabled on the interface). Genie's IOS XE parser
-    documents the same line, with Hello 10, Dead 40 for the defaults. Only the two numbers are
-    matched on that line, since some IOS XE trains append more timers to it."""
+    documents the same line, with Hello 10, Dead 40 for the defaults, and IOS XE 17.15 printed
+    exactly the line above on 2026-11-21. Only the two numbers are matched on that line, since
+    some IOS XE trains append more timers to it."""
     for line in output.splitlines():
         match = _OSPF_INTERFACE_TIMERS.search(line) if "Timer intervals configured" in line else None
         if match:

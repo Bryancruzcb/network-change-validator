@@ -29,10 +29,11 @@ never printed, saved, or logged: the configuration is echoed as it would be with
 for the password, the node POST's response is never printed, and every message this script
 prints passes through `redact`. It stops with exit 1 and a one-line reason at the first thing
 that is not as it needs, and once R3 exists every such line ends by naming remove-r3. The
-request paths and bodies come from Cisco's own client (virl2_client 2.7); which form of
-`configuration` the server takes, and whether it links a running IOL node, are assumptions
-named where the calls are made. Exit 2 is bad usage or a missing login. Standard library only,
-and outside ncv like the rest of scripts/lab.
+request paths and bodies come from Cisco's own client (virl2_client 2.7). Two of its
+assumptions were settled on the sandbox's CML 2.7.2 on 2026-11-21, by an IOSv R3 and then an
+NX-OS R3: the server kept `configuration` sent as one string, and it linked a running IOL R1 to
+the new node. The notes where the calls are made say so. Exit 2 is bad usage or a missing
+login. Standard library only, and outside ncv like the rest of scripts/lab.
 """
 
 from __future__ import annotations
@@ -387,6 +388,13 @@ R3_POSITION = (0, 300)
 REMOVED = "<removed>"
 MIB = 1024 * 1024
 POLL_SECONDS = 15
+# CML's BOOTED is not proof that a node booted: CML also sets it when the node definition's boot
+# timeout runs out. On 2026-11-21 CML's lab events put an NX-OS R3's BOOTED 478 s after STARTED
+# (the nxosv9000 timeout is 480 s), and that R3 had not loaded NX-OS. For an IOSv R3 they put it
+# 177 s after STARTED (the iosv timeout is 180 s), and add-r3's poll first saw it at 181 s. That
+# R3 did boot; its console log was not read, so that its BOOTED came from the timeout is inferred
+# from the timing only. Both timeouts are shorter than BOOT_SECONDS, so on those platforms this
+# limit cannot catch a stuck boot.
 BOOT_SECONDS = 20 * 60  # an NX-OS 9000v is said to take 5 to 15 minutes; IOSv one to three
 # Still QUEUED, DEFINED_ON_CORE, or STOPPED this long after the start: R3 will not boot.
 NOT_STARTED_SECONDS = 3 * 60
@@ -494,7 +502,9 @@ class Platform(NamedTuple):
 
 
 # In the order the inventory's answers list them. The node definition ids and interface labels
-# are from CML's documentation of its node definitions, not from a node this controller created.
+# are from CML's documentation of its node definitions. On the sandbox's CML 2.7.2 on 2026-11-21,
+# all three node definitions existed, and add-r3 found GigabitEthernet0/0 on the IOSv R3 and
+# Ethernet1/1 on the NX-OS R3 it created; GigabitEthernet1 (cat8000v) has not been tried.
 PLATFORM_TABLE = MappingProxyType(
     {
         "nxosv9000": Platform("nxosv9000", "nxos", "Ethernet1/1", nxos_day0),
@@ -519,9 +529,11 @@ def redact(text: str, secret: str) -> str:
 
 
 def node_body(platform: str, password: str) -> dict:
-    """The body of the node POST. UNVERIFIED: `configuration` as one string. Cisco's client sends
-    a string or a list of {"name", "content"} files, and which form CML 2.7.2 keeps is not known;
-    add-r3 reads the node back to check, before it starts anything."""
+    """The body of the node POST, with `configuration` as one string. Cisco's client sends a
+    string or a list of {"name", "content"} files. CML 2.7.2 kept the one string on 2026-11-21 for
+    an IOSv R3 and for an NX-OS R3, and the IOSv R3 applied it (its OSPF and BGP came up with R1).
+    The NX-OS R3 never loaded NX-OS, so it never read its configuration. add-r3 still reads the
+    node back to check, before it starts anything."""
     x, y = R3_POSITION
     return {
         "label": R3,
@@ -545,8 +557,10 @@ def kept_day0(node) -> bool:
 def memory_check(stats, platform: str, ram_mib) -> tuple[str, bool]:
     """(the line to print, whether free memory is plainly short of what the node definition asks
     for). /system_stats is read as bytes and the node definition's RAM as MiB, which is how
-    Cisco's client treats them; neither unit is checked against this controller. When either
-    number is missing the check is skipped, and the line says which."""
+    Cisco's client treats them. Neither unit is documented by this controller; the numbers CML
+    2.7.2 returned on 2026-11-21 (about 31 GiB in total, node definitions of 512 to 12288 MiB) fit
+    that reading, which is an inference, not a check. When either number is missing the check is
+    skipped, and the line says which."""
     used, total = _dig(stats, "all", "memory", "used"), _dig(stats, "all", "memory", "total")
     numbers = {"/system_stats memory": (used, total), f"{platform}'s RAM": (ram_mib,)}
     missing = [name for name, values in numbers.items() if not all(_is_number(v) for v in values)]
@@ -705,8 +719,8 @@ def _r3_interface(call, lab_id: str, node_id: str, platform: Platform) -> str:
 
 
 def _create_link(call, lab_id: str, spare: str, r3_interface: str) -> str:
-    # UNVERIFIED: that CML adds a link to R1 while R1 runs. R1 Ethernet0/3 already exists, so no
-    # interface is hot-added, but nobody has tried this on the sandbox.
+    # That CML adds a link to R1 while R1 runs: R1 Ethernet0/3 already exists, so no interface is
+    # hot-added. CML 2.7.2 did it on 2026-11-21, for an IOSv R3 and then an NX-OS R3.
     path = f"/labs/{lab_id}/links"
     try:
         reply = call("POST", path, {"src_int": spare, "dst_int": r3_interface})
@@ -714,7 +728,7 @@ def _create_link(call, lab_id: str, spare: str, r3_interface: str) -> str:
         detail = f"HTTP {err.code}" if isinstance(err, urllib.error.HTTPError) else str(err)
         raise Refusal(
             f"could not link R1 Ethernet0/3 to {R3}: POST {path}: {detail} "
-            "(whether CML links a running R1 is unverified)"
+            "(CML 2.7.2 linked it while R1 ran, twice on 2026-11-21)"
         ) from None
     link_id = reply.get("id") if isinstance(reply, dict) else None
     if not link_id:
@@ -726,7 +740,10 @@ def _wait_booted(call, lab_id: str, node_id: str, say, sleep, now) -> None:
     """Poll R3's state every POLL_SECONDS until BOOTED, printing each, for at most BOOT_SECONDS.
     Still QUEUED or DEFINED_ON_CORE after NOT_STARTED_SECONDS means CML is not starting it, and
     STOPPED then means it stopped and will not boot without another start. A STOPPED seen earlier
-    than that is let pass: the start may not have reached the node yet."""
+    than that is let pass: the start may not have reached the node yet. BOOTED is only CML's
+    state, which it also sets at the node definition's boot timeout (see BOOT_SECONDS), so a
+    return from here does not prove that R3 booted. Nothing here reads R3's console or CML's
+    statistics for it."""
     path = f"{_node_path(lab_id, node_id)}/state"
     began = now()
     while True:

@@ -1,0 +1,69 @@
+{
+  "report_version": 1,
+  "ncv_version": "0.1.0",
+  "intent_id": "devnet-default-lab-bgp-vrf",
+  "finding_count": 5,
+  "by_policy": {
+    "V_ADJ": 2,
+    "V_ROUTE": 3
+  },
+  "findings": [
+    {
+      "policy_id": "V_ADJ",
+      "device": "R1",
+      "path": "bgp.vrfs.NCV.neighbors.1.1.1.2",
+      "before": {
+        "state": "Established",
+        "remote_as": 65002
+      },
+      "after": {
+        "state": "Idle",
+        "remote_as": 65002
+      },
+      "why": "required BGP neighbor 1.1.1.2 must be Established in vrf NCV with remote AS 65002",
+      "action": "inspect the peer session, its vrf, and its remote AS in the lab"
+    },
+    {
+      "policy_id": "V_ADJ",
+      "device": "R2",
+      "path": "bgp.vrfs.NCV.neighbors.1.1.1.1",
+      "before": {
+        "state": "Established",
+        "remote_as": 65001
+      },
+      "after": {
+        "state": "Active",
+        "remote_as": 65001
+      },
+      "why": "required BGP neighbor 1.1.1.1 must be Established in vrf NCV with remote AS 65001",
+      "action": "inspect the peer session, its vrf, and its remote AS in the lab"
+    },
+    {
+      "policy_id": "V_ROUTE",
+      "device": "R1",
+      "path": "routing.vrfs.NCV.routes.1.1.1.0/24",
+      "before": "connected",
+      "after": null,
+      "why": "required prefix 1.1.1.0/24 missing from R1 vrf NCV",
+      "action": "in lab, restore the originating advertisement and re-learn routing"
+    },
+    {
+      "policy_id": "V_ROUTE",
+      "device": "R1",
+      "path": "routing.vrfs.NCV.routes.172.16.102.0/24",
+      "before": "bgp",
+      "after": null,
+      "why": "required prefix 172.16.102.0/24 missing from R1 vrf NCV",
+      "action": "in lab, restore the originating advertisement and re-learn routing"
+    },
+    {
+      "policy_id": "V_ROUTE",
+      "device": "R2",
+      "path": "routing.vrfs.NCV.routes.172.16.101.0/24",
+      "before": "bgp",
+      "after": null,
+      "why": "required prefix 172.16.101.0/24 missing from R2 vrf NCV",
+      "action": "in lab, restore the originating advertisement and re-learn routing"
+    }
+  ]
+}

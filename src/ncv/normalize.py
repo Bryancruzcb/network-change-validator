@@ -78,7 +78,9 @@ def _bgp_neighbors(data: dict[str, Any]) -> dict[str, Any]:
 
     Genie 26.8 puts every peer at `instance.<instance>.vrf.<vrf>.neighbor.<address>` on iosxe,
     ios, and nxos, and its own IOS XE test data holds one address in two VRFs. This shape was
-    prepared from that model and test data; no lab capture of a non-default-VRF peer exists yet.
+    prepared from that model and test data. Lab captures hold it now: in fixtures/lab-2026-11-21,
+    bgp-vrf has one address under vrf default and vrf NCV on IOS XE 17.15, and
+    second-platform-iosv has R3's peer from IOS 15.9 on IOSv. No NX-OS capture exists.
     """
     if not any(key in data for key in ("instance", "vrf", "neighbor", "neighbors")):
         raise ValueError("unsupported BGP data: expected instance, vrf, or neighbor")
@@ -170,7 +172,8 @@ _GENIE_STATUS_KEYS = frozenset({"oper_status", "enabled", "counters", "type", "m
 # NX-OS also lists ports that `show interface` does not describe, from `show vrf all interface`
 # (a record holding only its own `vrf`, a string) and `show interface switchport` (only
 # switchport keys). Such a record is still an interface, one whose status was not reported.
-# Prepared from Genie 26.8's NX-OS test data; no NX-OS capture exists yet.
+# Prepared from Genie 26.8's NX-OS test data; no NX-OS capture exists (the 2026-11-21 NX-OS
+# attempt stopped before any capture).
 _GENIE_INTERFACE_KEYS = _GENIE_STATUS_KEYS | {"vrf", "switchport_enable", "switchport_mode"}
 
 

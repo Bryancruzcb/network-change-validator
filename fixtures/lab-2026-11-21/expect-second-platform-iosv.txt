@@ -1,11 +1,14 @@
 # The predicted findings of the second-platform run's change comparison (pre vs post) with R3 on
-# iosv, written before any capture exists. One finding per line: <policy> <device> <path>.
-# Blank lines and everything after a # are ignored. The three platforms' files predict the same
-# findings: only R3's strings in the draft intents differ, and no finding names them.
+# iosv, for the run in fixtures/lab-2026-11-21/second-platform-iosv (see SOURCE.md). A prediction
+# file is written before any capture exists: this one was merged (PR #16) before the run, and
+# moved here with its findings unchanged once the run was recorded. The run's change comparison
+# gave exactly these findings. One finding per line: <policy> <device> <path>. Blank lines and
+# everything after a # are ignored. The three platforms' files predict the same findings: only
+# R3's strings in the intents differ, and no finding names them.
 #
 # run-second-platform.sh iosv checks its change report against this file with
 # check_findings.py, and tests/test_lab_scripts.py reads it to pin the prediction on synthetic
-# snapshots. It moves next to the evidence, with the draft intent, once a run is recorded.
+# snapshots.
 #
 # Nine findings, on the assumption that R3's interface stays up when R1 shuts its own end (CML
 # does not pass carrier across a link). If it goes down too, R3 also loses its connected

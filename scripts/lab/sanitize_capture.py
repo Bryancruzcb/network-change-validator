@@ -13,8 +13,11 @@ of a console or vty line, and the body of a `certificate self-signed|ca` block u
 from NX-OS's documentation, not from a capture: `username <name> password <type> <hash> role
 ...`, which the username rule already replaces after the type, and `snmp-server user <name>
 <group> auth <alg> <key> priv [<alg>] <key> localizedkey`, whose keys NX-OS derives from the
-admin password, replaced from `auth` to the end. Everything else is copied as captured, so
-read a copy before publishing it (line by line for a platform no capture has come from yet)
+admin password, replaced from `auth` to the end; no NX-OS capture exists to try them on (the
+2026-11-21 NX-OS attempt stopped before any capture). The one secret line of the IOSv R3
+captured that day, `username admin privilege 15 secret 9 <hash>`, is the username rule's form.
+Everything else is copied as captured, so read a copy before publishing it (line by line for a
+platform no capture has come from yet)
 and record what was removed in the run's SOURCE.md. tests/test_lab_scripts.py pins these
 rules and checks that the published fixtures are this script's own output.
 """

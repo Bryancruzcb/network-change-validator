@@ -1,0 +1,38 @@
+{
+  "report_version": 1,
+  "ncv_version": "0.1.0",
+  "intent_id": "devnet-default-lab-ospf-deadtimer",
+  "finding_count": 2,
+  "by_policy": {
+    "V_ADJ": 2
+  },
+  "findings": [
+    {
+      "policy_id": "V_ADJ",
+      "device": "R1",
+      "path": "ospf.neighbors.2.2.2.2",
+      "before": {
+        "state": "full",
+        "interface": "Ethernet0/1"
+      },
+      "after": null,
+      "why": "required OSPF neighbor 2.2.2.2 must be FULL on Ethernet0/1",
+      "action": "inspect peer state and interface configuration in the lab"
+    },
+    {
+      "policy_id": "V_ADJ",
+      "device": "R2",
+      "path": "ospf.neighbors.1.1.1.1",
+      "before": {
+        "state": "full",
+        "interface": "Ethernet0/1"
+      },
+      "after": {
+        "state": "init",
+        "interface": "Ethernet0/1"
+      },
+      "why": "required OSPF neighbor 1.1.1.1 must be FULL on Ethernet0/1",
+      "action": "inspect peer state and interface configuration in the lab"
+    }
+  ]
+}

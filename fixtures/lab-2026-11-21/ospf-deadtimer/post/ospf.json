@@ -1,0 +1,13 @@
+{
+  "R1": {
+    "neighbors": {}
+  },
+  "R2": {
+    "neighbors": {
+      "1.1.1.1": {
+        "state": "init",
+        "interface": "Ethernet0/1"
+      }
+    }
+  }
+}

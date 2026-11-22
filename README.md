@@ -5,11 +5,12 @@ compares saved before/after snapshots to that checklist and names every rule tha
 failed.
 
 - **Fixtures (default and CI):** synthetic, hand-authored snapshots. No SSH or pyATS.
-- **Lab evidence:** sanitized captures from four live runs against a Cisco DevNet
+- **Lab evidence:** sanitized captures from eight live runs against a Cisco DevNet
   CML sandbox, replayed by the tests. See
   [fixtures/lab-2026-09-12](fixtures/lab-2026-09-12/SOURCE.md),
-  [fixtures/lab-2026-09-18](fixtures/lab-2026-09-18/SOURCE.md), and
-  [fixtures/lab-2026-11-20](fixtures/lab-2026-11-20/SOURCE.md).
+  [fixtures/lab-2026-09-18](fixtures/lab-2026-09-18/SOURCE.md),
+  [fixtures/lab-2026-11-20](fixtures/lab-2026-11-20/SOURCE.md), and
+  [fixtures/lab-2026-11-21](fixtures/lab-2026-11-21/SOURCE.md).
 - **Live (optional):** collect from a lab you own using pyATS/Genie. Requires
   `--i-am-in-a-lab` on every capture.
 
@@ -123,15 +124,18 @@ Both reports record the JSON format version and the `ncv` version that wrote the
 
 ### Live lab (Cisco DevNet CML)
 
-Four runs, same two IOS XE 17.15 IOL routers in the CML 2.7.2 `default-lab`,
-reached through the console server. Each run is sanitized in-repo and replayed by
-`tests/test_lab_evidence.py`.
+Eight runs, all in the CML 2.7.2 `default-lab` and reached through the console server.
+Every run captured the lab's two IOS XE 17.15 IOL routers, R1 and R2. The last one also
+captured R3, an IOSv node running classic IOS 15.9, added to the lab for that run and linked
+to R1. Each run is sanitized in-repo and replayed by `tests/test_lab_evidence.py`.
 
 ```mermaid
 flowchart LR
-    R1["R1<br/>Ethernet0/1 1.1.1.1/24"]
-    R2["R2<br/>Ethernet0/1 1.1.1.2/24"]
+    R1["R1, IOS XE on IOL<br/>Ethernet0/1 1.1.1.1/24"]
+    R2["R2, IOS XE on IOL<br/>Ethernet0/1 1.1.1.2/24"]
+    R3["R3, IOS on IOSv, last run only<br/>GigabitEthernet0/0 10.1.3.3/24"]
     R1 --- R2
+    R1 ---|"Ethernet0/3 10.1.3.1/24"| R3
 ```
 
 ```mermaid
@@ -145,7 +149,7 @@ sequenceDiagram
     Note over NCV: pre vs restored → exit 0
 ```
 
-![Findings ncv wrote from the four sanitized CML captures](docs/artifacts/lab-findings.svg)
+![Findings ncv wrote from the eight sanitized CML captures](docs/artifacts/lab-findings.svg)
 
 | Date | Change | `ncv diff` pre vs post | Report |
 |---|---|---|---|
@@ -153,6 +157,10 @@ sequenceDiagram
 | 2026-09-12 OSPF | same shutdown, OSPF area 0 on the link | exit 1, 4 findings: `V_ADJ` R1 neighbor 2.2.2.2 and R2 neighbor 1.1.1.1 gone, plus those two R1 routes | [report](docs/artifacts/lab-2026-09-12-ospf-post.md) |
 | 2026-09-18 BGP | `neighbor 1.1.1.2 shutdown` on R1 | exit 1, 3 findings: both peers Idle (`V_ADJ`) and forbidden line `neighbor 1.1.1.2 shutdown` on R1 (`V_DRIFT`) | [report](docs/artifacts/lab-2026-09-18-bgp-post.md) |
 | 2026-11-20 BGP hold timer | inbound ACL on R1 Ethernet0/1 dropping BGP from R2, with a 9 s hold time | exit 1, 2 findings: both peers Idle (`V_ADJ`); no rule names the ACL, so no `V_DRIFT` | [report](docs/artifacts/lab-2026-11-20-bgp-holdtimer-post.md) |
+| 2026-11-21 OSPF dead timer | inbound ACL on R1 Ethernet0/1 dropping OSPF from R2, with a 1 s hello and a 4 s dead interval | exit 1, 2 findings: R1 neighbor 2.2.2.2 gone and R2 neighbor 1.1.1.1 in `init` (`V_ADJ`); no route here depends on OSPF | [report](docs/artifacts/lab-2026-11-21-ospf-deadtimer-post.md) |
+| 2026-11-21 iBGP over OSPF | the same ACL, with iBGP in AS 65010 between loopbacks that OSPF carries | exit 1, 8 findings: both OSPF neighbors out of FULL and both iBGP peers Idle (`V_ADJ`); on each router the peer's loopback (was `ospf`) and its BGP network (was `bgp`) missing (`V_ROUTE`) | [report](docs/artifacts/lab-2026-11-21-ibgp-post.md) |
+| 2026-11-21 BGP in vrf NCV | `shutdown` on R1 Ethernet0/1.100, the dot1Q subinterface of vrf NCV, beside a global session to the same address | exit 1, 5 findings, all in vrf NCV: R1 peer Idle and R2 peer Active (`V_ADJ`); `1.1.1.0/24` and `172.16.102.0/24` missing on R1 and `172.16.101.0/24` on R2 (`V_ROUTE`) | [report](docs/artifacts/lab-2026-11-21-bgp-vrf-post.md) |
+| 2026-11-21 second platform | `shutdown` on R1 Ethernet0/3, the link to R3 on IOSv | exit 1, 9 findings: on R1 and on R3 the OSPF neighbor gone and the BGP peer down, Idle on R1 and Active on R3 (`V_ADJ`); three routes missing on R1 and two on R3 (`V_ROUTE`) | [report](docs/artifacts/lab-2026-11-21-second-platform-iosv-post.md) |
 
 On every run, `pre` vs `pre` and `pre` vs `restored` exited **0** with zero findings.
 R2's end of the link stayed up in the route simulation, so R2's route rules stayed
@@ -164,7 +172,39 @@ packet capture of the link from a second run shows the cause ncv cannot see: R1 
 `NOTIFICATION 4/0 Hold Timer Expired` and R2 sent none
 ([summary](fixtures/lab-2026-11-20/bgp-holdtimer-pcap/summary.txt)).
 
-That is evidence about IOS XE 17.15 on IOL in that lab, not about routers in general.
+`pre` vs `pre` checks the pre capture against itself, so it shows the pre capture met every
+rule. In the 2026-11-21 runs the normalized JSON of `restored` also equals `pre`, but the lab
+was not identical: config text differs in timestamps and stray blank lines, and the link
+captures show the OSPF DR and BDR roles swapped after recovery and the BGP sessions back on
+new TCP ports. ncv compares none of those.
+
+Each 2026-11-21 run's intent and predicted findings were merged before the run (PR #16), and
+each change comparison gave exactly the predicted findings. The first three of those runs
+captured the R1-R2 link:
+
+- OSPF dead timer ([summary](fixtures/lab-2026-11-21/ospf-deadtimer-pcap/summary.txt)): R2's
+  Hellos stayed on the wire, while R1's Hellos stopped listing R2 10.1 s into the capture.
+  Nothing was shut down: every interface kept its status in the snapshots, and the R1-R2 link
+  stayed up.
+- iBGP ([summary](fixtures/lab-2026-11-21/ibgp-pcap/summary.txt)): the written packet
+  prediction did not hold. The keepalives stopped, and no NOTIFICATION was on the link during
+  the outage. But R2's `Hold Timer Expired` NOTIFICATION reached the wire after the undo, on
+  the old TCP connection, and R1 answered it with a reset.
+- BGP in vrf NCV ([summary](fixtures/lab-2026-11-21/bgp-vrf-pcap/summary.txt)): R2 sent
+  `NOTIFICATION 4/0 Hold Timer Expired` on VLAN 100 at 13.3 s and retransmitted it at 21.2 s.
+  The summary shows both without marking the second as a retransmission. The untagged global
+  session ran on untouched.
+
+The second-platform run has no packet capture. R3's GigabitEthernet0/0 stayed up and R3 kept
+its connected 10.1.3.0/24, which is why it gave nine findings and not ten. R2 lost three
+routes it had learned through R1, with no finding, because the intent does not list R2.
+
+An NX-OS 9000v node took R3's place that evening, but it never loaded its system in this
+sandbox, so no NX-OS capture exists and ncv has still never talked to an NX-OS device
+([what was seen](docs/LIVE.md#when-cml-says-booted)).
+
+That is evidence about IOS XE 17.15 on IOL and classic IOS 15.9 on IOSv in that lab, not
+about routers in general.
 
 ## How the pieces fit
 
@@ -177,7 +217,7 @@ flowchart TB
 
     subgraph offline["Default / CI — no SSH, no pyATS"]
         F[fixtures/pre and fixtures/post]
-        LabFix["fixtures/lab-2026-09-*"]
+        LabFix["fixtures/lab-2026-*"]
     end
     F --> S
     LabFix --> S
@@ -251,8 +291,23 @@ Those scripts push configuration to the lab by design; `ncv` itself never does.
 
 Tests use synthetic data and mocked connections. They verify the lab flag,
 initialization safeguards, normalization, cleanup, and failure reporting **without
-pyATS installed**. Four live runs have happened, two on 2026-09-12, one on 2026-09-18, and
-one on 2026-11-20, all against two IOS XE 17.15 routers (IOL) in a Cisco DevNet CML sandbox.
+pyATS installed**. Eight live runs with published snapshots have happened in a Cisco DevNet CML sandbox: two on
+2026-09-12, one on 2026-09-18, one on 2026-11-20, and four on 2026-11-21.
+
+What the lab evidence covers, and what it does not:
+
+- Two platforms have been captured: IOS XE 17.15 on IOL (R1 and R2, in every run) and
+  classic IOS 15.9 on IOSv (R3, in one run). Genie's output for classic IOS normalized into
+  the same snapshot layout as IOS XE, with no adapter change.
+- OSPF, eBGP, iBGP between loopbacks, and BGP in one non-default VRF beside the default one,
+  all IPv4 unicast.
+- Still one simulated lab, reached only through the CML console server.
+- NX-OS and Catalyst 8000V have no capture. The one NX-OS node tried, on 2026-11-21, never
+  loaded its system in this sandbox, so ncv has still never talked to NX-OS; Catalyst 8000V
+  was not tried.
+- The SSH path has not run. In this sandbox the routers' management addresses gave no answer
+  on ports 22 and 23 over the VPN, and the routers report SSH disabled with no host keys, so
+  the SSH run was not started.
 
 ## Development
 

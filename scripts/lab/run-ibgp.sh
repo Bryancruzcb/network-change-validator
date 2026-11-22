@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# The iBGP run on the DevNet CML default-lab in one command. Prepared, not run yet.
+# The iBGP run on the DevNet CML default-lab in one command. This is the run recorded in
+# fixtures/lab-2026-11-21/ibgp.
 #
 # Every earlier BGP run was eBGP between directly connected addresses. This one is iBGP as it is
 # usually built: the session runs between the routers' Loopback0 addresses, and those are
@@ -14,9 +15,9 @@
 # routes to the peer loopbacks, and, seconds later, the iBGP sessions and the prefixes learned
 # over them. Post capture and compare, remove the ACL, wait for FULL and for the sessions,
 # restored capture and compare. The predicted findings of the change comparison are in
-# scripts/lab/expect-ibgp.txt, and scripts/lab/README.md explains them; the script exits 0 only
-# when every comparison exits as predicted and the change comparison finds exactly those
-# findings, 3 when it ran to the end but one did not, and 1 when it stopped early.
+# fixtures/lab-2026-11-21/expect-ibgp.txt, and scripts/lab/README.md explains them; the script
+# exits 0 only when every comparison exits as predicted and the change comparison finds exactly
+# those findings, 3 when it ran to the end but one did not, and 1 when it stopped early.
 #
 # Packet evidence: right before the change, scripts/lab/cml_capture.py starts a capture of
 # `ip proto 89 or tcp port 179` (OSPF and BGP) on the R1-R2 link through the CML API, with the
@@ -35,7 +36,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 lab_takes_no_arguments "$@"
 lab_init ibgp
 features=ospf,bgp,routing,interface
-intent=scripts/lab/intent-ibgp.yaml
+intent=fixtures/lab-2026-11-21/intent-ibgp.yaml
 
 step "1/11 reset both routers to the shipped configuration (a router runs one BGP process, and a reused reservation may carry an earlier run)"
 lab_reset
@@ -62,7 +63,7 @@ ctl wait-ibgp-down 60 || step "an iBGP session still shows Established, capturin
 step "9/11 post capture and compare (expect exit 1)"
 snap post || { step "post capture failed; the ACL is still on R1, run scripts/lab/change.sh deadtimer-undo, or let the next run's labctl.py reset remove it"; exit 1; }
 compare pre post change; expect_exit change 1 "$?"
-expect_findings change "$out-change" scripts/lab/expect-ibgp.txt
+expect_findings change "$out-change" fixtures/lab-2026-11-21/expect-ibgp.txt
 step "10/11 undo: remove the ACL, wait for FULL, then for both iBGP sessions to learn a prefix again"
 ctl ospf-unblock || { step "undo failed; run scripts/lab/change.sh deadtimer-undo, or let the next run's labctl.py reset remove it"; exit 1; }
 ctl wait-full 180 || step "neighbors not FULL yet, going on"

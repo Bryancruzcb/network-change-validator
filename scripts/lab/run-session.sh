@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A whole lab session with one login: the prepared runs in order, asking for the logins once.
+# A whole lab session with one login: the newer runs in order, asking for the logins once.
 #
 # Usage: run-session.sh [name ...]
 #

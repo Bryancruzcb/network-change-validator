@@ -1,8 +1,9 @@
 # Copy to testbeds/lab-ssh.yaml (gitignored) to reach the DevNet CML default-lab routers over SSH
 # to their management addresses (Ethernet0/2, vrf Mgmt-intf) instead of through the CML console
 # server. This path has never worked in this sandbox: on 2026-09-12 the management addresses did
-# not answer over the VPN, and nobody recorded why. Run scripts/lab/probe.sh first; it says
-# whether port 22 answers. Never point this at a work production network.
+# not answer over the VPN, and on 2026-11-21 scripts/lab/probe.sh found no answer on ports 22 and
+# 23 within 3 s, no ping reply, and both routers reporting SSH disabled with no host keys. Run
+# the probe first on a new reservation; it says whether port 22 answers. Never point this at a work production network.
 #
 # The SSH login is the router's local user, which lands in user EXEC; Unicon always sends
 # `enable` on IOS XE and answers its password prompt with the "enable" credential. %ENV{} reads

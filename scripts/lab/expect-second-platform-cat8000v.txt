@@ -1,7 +1,7 @@
 # The predicted findings of the second-platform run's change comparison (pre vs post) with R3 on
 # cat8000v, written before any capture exists. One finding per line: <policy> <device> <path>.
 # Blank lines and everything after a # are ignored. The three platforms' files predict the same
-# findings: only R3's strings in the draft intents differ, and no finding names them.
+# findings: only R3's strings in the intents differ, and no finding names them.
 #
 # run-second-platform.sh cat8000v checks its change report against this file with
 # check_findings.py, and tests/test_lab_scripts.py reads it to pin the prediction on synthetic

@@ -7,8 +7,9 @@
 # correct them after the first pre capture; the no-change check is what will say so, naming the
 # rule whose string the capture does not hold. The strings are NX-OS's own, copied as Genie
 # writes them: R3's connected route is `direct`, not `connected`, and its first data port is
-# Ethernet1/1. intent-second-platform-cat8000v.yaml and -iosv.yaml differ from this file only
-# in those two strings.
+# Ethernet1/1. intent-second-platform-cat8000v.yaml, beside this file, and
+# fixtures/lab-2026-11-21/intent-second-platform-iosv.yaml differ from it only in those two
+# strings.
 #
 # R1 peers with R3 over the link on R1 Ethernet0/3 (10.1.3.0/24): OSPF in area 0, with R3's
 # Loopback0 3.3.3.3/32 learned through it, and eBGP from AS 65001 to AS 65003, with R3's

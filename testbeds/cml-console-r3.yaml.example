@@ -1,9 +1,11 @@
 # Copy to testbeds/lab-r3.yaml (gitignored) for the second-platform run
 # (scripts/lab/run-second-platform.sh), which adds R3 to default-lab with
 # `scripts/lab/cml_lab.py add-r3 <platform>`. R1 and R2 are reached as in
-# cml-console.yaml.example; R3 through the same console server. Prepared, not run yet: no
-# connection to an R3 has been made, and the R3 entry was checked only against Unicon's own
-# mock devices. Never point this at a work production network.
+# cml-console.yaml.example; R3 through the same console server. On 2026-11-21 an IOSv R3 was
+# reached with the IOS form below (fixtures/lab-2026-11-21/second-platform-iosv). The NX-OS
+# entry that follows has not connected to a device: an NX-OS attempt the same day stopped before
+# ncv connected to R3, and the entry was checked only against Unicon's own mock devices. Never
+# point this at a work production network.
 #
 # R3 below is an NX-OS 9000v (`cml_lab.py add-r3 nxosv9000`). NX-OS asks for its own login
 # after the CML one, so the connection lists two credentials in order: `default` (the CML
@@ -19,7 +21,8 @@
 #
 # For a Catalyst 8000V or IOSv R3 (`add-r3 cat8000v` or `add-r3 iosv`), replace the R3 entry
 # with the IOS form: the day-0 configuration sets no console login, so the console needs only
-# the CML login, as R1 and R2 do.
+# the CML login, as R1 and R2 do. On 2026-11-21 ncv connected to an IOSv R3's console that way,
+# with `os: ios`, and captured it three times with no connect error.
 #
 #   R3:
 #     os: iosxe            # cat8000v; `os: ios` for iosv

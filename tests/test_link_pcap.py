@@ -1,10 +1,12 @@
 """scripts/lab/link_pcap.py, the OSPF and BGP timeline of a lab link, on captures built here.
 
-No OSPF capture exists yet. The OSPF packets follow RFC 2328 appendix A.3 and the frames reuse
-tests/test_bgp_pcap.py's builders, with checksums left at zero because nothing reads them. One
-Hello is also written out byte by byte from the RFC, so the decoder and the builders here are
-checked against the RFC and not only against each other. The one real capture, the 2026-11-20
-hold-timer run's BGP-only pcap, must read exactly as bgp_pcap.py reads it.
+The OSPF packets here follow RFC 2328 appendix A.3 and the frames reuse tests/test_bgp_pcap.py's
+builders, with checksums left at zero because nothing reads them. One Hello is also written out
+byte by byte from the RFC, so the decoder and the builders here are checked against the RFC and
+not only against each other. The one real capture read here, the 2026-11-20 hold-timer run's
+BGP-only pcap, must read exactly as bgp_pcap.py reads it. The real OSPF captures of 2026-11-21,
+whose IOS XE Hellos and Database Descriptions carry the LLS block the decoder cuts off, are
+replayed against their summaries in tests/test_lab_evidence.py.
 """
 
 from __future__ import annotations

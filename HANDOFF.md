@@ -1,7 +1,10 @@
 # Handoff
 
-Working notes for whoever picks this up next. Everything described here is on `main`. Five lab
-runs are prepared and have not run.
+Working notes for whoever picks this up next. Everything described here is on `main`. Four of
+the five runs PR #16 prepared ran on 2026-11-21 and are recorded, which makes eight live runs with published snapshots. The
+fifth, the SSH path run, cannot start in this sandbox. Of the second-platform run's three forms,
+IOSv is recorded, NX-OS was tried once and stopped before any capture because R3's virtual
+machine never loaded NX-OS, and Catalyst 8000V has not been tried.
 
 ## Current state
 
@@ -15,8 +18,11 @@ runs are prepared and have not run.
 - PR [#16](https://github.com/Bryancruzcb/network-change-validator/pull/16) holds eight pieces
   of prepared work and two rounds of fixes, one after a design review and one after an
   examination of the whole branch, described below from "PR #16, BGP neighbors keyed by VRF"
-  on. It went in as a fast-forward, 17 commits on top of `914431e`. None of it has run against
-  a lab.
+  on. It went in as a fast-forward, 17 commits on top of `914431e`. Four of its runs ran on
+  2026-11-21.
+- PR #17 publishes those four runs: their sanitized captures in `fixtures/lab-2026-11-21`, three
+  link captures, their reports in `docs/artifacts`, and each run's intent and expect file moved
+  beside its evidence. See "PR #17, the 2026-11-21 evidence".
 - `main` is protected: a commit reaches it only after the three CI jobs passed on that
   exact commit, admins included, and force pushes and deletion are refused. Push a
   branch, let CI finish, then fast-forward `main` to it (or merge the PR).
@@ -191,7 +197,7 @@ The fourth live path, prepared the way PR #9 prepared the BGP run, and merged be
   outside ncv): TCP flags, retransmissions, OPEN timers, and NOTIFICATION codes by name. It
   is the packet side of the evidence: the hold-timer run should show NOTIFICATION code 4,
   where the admin shutdown would show code 6. Whether the DevNet sandbox lets a reservation
-  capture on a link has not been checked.
+  capture on a link had not been checked then; PR #15 showed that it does.
 - Predicted findings, pinned on synthetic snapshots: `V_ADJ` on both routers and nothing
   else. No rule names the ACL, so the config rules stay clean; that the adjacency rules
   catch a cause no rule anticipated is the point of the run.
@@ -244,7 +250,7 @@ it checked. Flat snapshots keep the old rule and wording.
 
 The shape was prepared from Genie 26.8's Ops model and its own IOS XE and NX-OS test data,
 which normalize to their `default` and `VRF1` peers. No lab capture of a non-default-VRF peer
-exists yet.
+existed then; the 2026-11-21 BGP VRF run is the first (PR #17).
 
 ### PR #16, the lab script foundation
 
@@ -258,19 +264,21 @@ exists yet.
   `NCV-` ACLs and their bindings, `router bgp` 65001, 65002, and 65010, `router ospf 1`, the
   link's shutdown and OSPF timers, Loopback0, Loopback1, Loopback100, Ethernet0/1.100, a reused
   Ethernet0/3, and vrf NCV. It never touches the management path or the static routes. It is
-  pinned on the published configs and on configs built in the tests; it has not run on a
-  router.
+  pinned on the published configs and on configs built in the tests. It first ran on the routers
+  on 2026-11-21, at the start of every run and as a session step, and exited 0 each time. IOS
+  keeps listing a subinterface it deleted, so the captures after the VRF run show
+  Ethernet0/1.100 down with empty counters; no config holds it and no rule reads it.
 - `scripts/lab/_lib.sh` is what the new run scripts source. It asks for each login only when it
   is unset, again until it is not empty, without `bash -x` printing it. It holds the shared
   steps (`lab_reset`, `cap_start`/`cap_stop` with an exit trap that stops a capture an early
   exit left running, `expect_exit`, `expect_findings`, `lab_finish`). A prepared run exits 0
   when every comparison gave its predicted exit and the change comparison found exactly the
-  findings in its `scripts/lab/expect-<run>.txt`, 3 when it ran to the end but did not, 1 when
-  it stopped early, and 2 when it could not start. `scripts/lab/check_findings.py` does the
-  findings check, and the tests read the same expected files. The four published run scripts
-  are unchanged.
+  findings in its `expect-<run>.txt` (in `scripts/lab/` until the run is recorded, then beside
+  its evidence), 3 when it ran to the end but did not, 1 when it stopped early, and 2 when it
+  could not start. `scripts/lab/check_findings.py` does the findings check, and the tests read
+  the same expected files. The four run scripts written before `_lib.sh` are unchanged.
 
-### PR #16, the OSPF dead-timer run, prepared and not run
+### PR #16, the OSPF dead-timer run
 
 `scripts/lab/run-ospf-deadtimer.sh` is the OSPF twin of the hold-timer run. It resets both
 routers, sets up OSPF with a 1 s hello (`setup-ospf-fast`; IOS derives the 4 s dead interval),
@@ -279,41 +287,44 @@ on R1, `NCV-BLOCK-OSPF`, that drops OSPF from R2 (`ospf-block`; `change.sh
 deadtimer-apply|deadtimer-undo` by hand), and `wait-ospf-lost` waits for it, because R2 keeps
 its entry. The packet capture filters `ip proto 89`, and the new `scripts/lab/link_pcap.py`
 prints OSPF packets and BGP segments on one timeline; on the published hold-timer pcap it
-prints exactly `summary.txt`. The draft intent is `scripts/lab/intent-ospf-deadtimer.yaml`.
+prints exactly `summary.txt`. The intent was drafted in `scripts/lab/` and now sits beside the
+evidence as `fixtures/lab-2026-11-21/intent-ospf-deadtimer.yaml`.
 
 Predicted findings of the change comparison, pinned on synthetic snapshots built through ncv's
 adapter: `V_ADJ` R1 2.2.2.2 (gone) and `V_ADJ` R2 1.1.1.1 (listed in INIT), and no `V_DRIFT`.
-Nothing has run against a lab and no document claims otherwise.
+The run happened on 2026-11-21 and matched the prediction (PR #17).
 
-### PR #16, the iBGP run, prepared and not run
+### PR #16, the iBGP run
 
 `scripts/lab/run-ibgp.sh` builds iBGP the usual way. `setup-ibgp` gives each router Loopback0
 (10.255.255.x/32, in OSPF, the iBGP endpoint) and Loopback1 (172.16.x.1/24, originated into BGP
 only), OSPF with a 1 s hello, and iBGP in AS 65010 between the Loopback0s with `update-source
 Loopback0` and `timers 3 9`. `wait-ibgp-up` waits for a learned prefix, not only Established.
 The change is the dead-timer run's OSPF ACL; nothing about BGP is touched. The capture filters
-`ip proto 89 or tcp port 179`. The draft intent is `scripts/lab/intent-ibgp.yaml`.
+`ip proto 89 or tcp port 179`. The intent now sits beside the evidence as
+`fixtures/lab-2026-11-21/intent-ibgp.yaml`.
 
 Predicted findings, pinned the same way: eight from one cause, in three layers. `V_ADJ` ospf on
 R1 and R2, `V_ROUTE` for each peer loopback /32, `V_ADJ` bgp at
 `bgp.vrfs.default.neighbors.<loopback>`, and `V_ROUTE` for each 172.16.x.0/24. The packet
-prediction is that no NOTIFICATION reaches the wire, the opposite of 2026-11-20. Nothing has run
-against a lab and no document claims otherwise.
+prediction was that no NOTIFICATION would reach the wire, the opposite of 2026-11-20. The run
+happened on 2026-11-21 and the eight findings matched. The packet prediction held only during
+the outage: R2's NOTIFICATION reached the wire after the undo, on the old TCP connection (PR #17).
 
-### PR #16, the BGP VRF run, prepared and not run
+### PR #16, the BGP VRF run
 
 `scripts/lab/run-bgp-vrf.sh` is the live test of BGP neighbors keyed by VRF. After `reset` it
 waits with `wait-vrf-gone`, because IOS deletes a VRF in the background. `setup-bgp-fast` builds
 the hold-timer run's global session, and `setup-vrf` adds a second eBGP session to the same
 peer address in vrf NCV, on the dot1Q subinterface Ethernet0/1.100, which reuses 1.1.1.1/24 and
 1.1.1.2/24. The change is `shutdown` on R1 Ethernet0/1.100 (`change.sh vrf-apply|vrf-undo`).
-The capture filters `tcp port 179 or (vlan and tcp port 179)`. The draft intent is
-`scripts/lab/intent-bgp-vrf.yaml`.
+The capture filters `tcp port 179 or (vlan and tcp port 179)`. The intent now sits beside the
+evidence as `fixtures/lab-2026-11-21/intent-bgp-vrf.yaml`.
 
 Predicted findings, pinned on snapshots built through the adapter from a Genie-shaped dict with
 the same address under `default` and `NCV`: five, all in vrf NCV. `V_ADJ` R1 1.1.1.2 and R2
 1.1.1.1, `V_ROUTE` R1 1.1.1.0/24 and 172.16.102.0/24, and `V_ROUTE` R2 172.16.101.0/24, with
-nothing for the default VRF. Nothing has run against a lab and no document claims otherwise.
+nothing for the default VRF. The run happened on 2026-11-21 and matched the prediction (PR #17).
 
 ### PR #16, fixes after a design review
 
@@ -334,7 +345,7 @@ Three reviewers read the designs before any run. What changed:
 - `_lib.sh` gained the re-asking prompts, `lab_reset` (a failed reset stops the run), and the
   capture exit trap.
 
-### PR #16, a read-only probe and the SSH path run, prepared and not run
+### PR #16, a read-only probe and the SSH path run
 
 `scripts/lab/probe.sh` asks what the sandbox answers and changes nothing. From this machine it
 gives the VPN route, a TCP test of ports 22 and 23 on both management addresses that tells
@@ -347,6 +358,13 @@ with three answers, each with its evidence line: do the management addresses ans
 22, is R1 Ethernet0/3 free, and which of `nxosv9000`, `cat8000v`, and `iosv` are available.
 `cml_lab.py check-login` checks the CML login alone.
 
+The probe ran on 2026-11-21 from 12:58 to 13:00 PT and gave three definite answers. The
+management addresses 10.10.20.171 and .172 gave no answer on port 22 or port 23 within 3 s, and
+no ping reply over the VPN; the routers themselves report SSH disabled, with no host keys. R1
+Ethernet0/3 is free: CML lists it as not connected. All three images exist: `iosv`
+(`iosv-159-3-m9`, 512 MiB), `cat8000v` (`cat8000v-17-15-01a`, 4096 MiB), and `nxosv9000`
+(`nxosv9300-10-5-1-f`, 12288 MiB).
+
 `scripts/lab/run-ssh-path.sh` tests that the access path does not change the evidence. After a
 port check and `reset`, it captures the routers through the console server and then over SSH
 (`testbeds/cml-ssh.yaml.example`, copied to the gitignored `testbeds/lab-ssh.yaml`), and
@@ -355,10 +373,12 @@ expects `scripts/lab/compare_captures.py` and `ncv diff` against
 not accept port 22 it exits 4, "not reachable in this sandbox": a result, not a run that
 stopped early.
 
-Prediction: both comparisons exit 0, with no difference between the two paths. Nothing has run
-against a lab and no document claims otherwise.
+Prediction: both comparisons exit 0, with no difference between the two paths. The run was not
+started, because of the probe's first answer. Running it needs another lab whose management
+addresses answer, or SSH enabled with host keys on these routers, a configuration change that no
+lab script makes and that ncv must not make. No capture has gone over SSH.
 
-### PR #16, the second-platform run, prepared and not run
+### PR #16, the second-platform run
 
 `scripts/lab/run-second-platform.sh nxosv9000|cat8000v|iosv` adds a third router, R3, on another
 platform, and breaks the link from R1's end. `cml_lab.py add-r3 <platform>` checks the image,
@@ -367,8 +387,10 @@ hello, eBGP AS 65003 with `timers 3 9`, and an admin login whose password is `NC
 is never printed), checks that CML kept it, links R3, boots it, and starts the link. Every
 failure after the node exists names `cml_lab.py remove-r3`. `labctl.py` configures R1's side
 only. The testbed is `testbeds/cml-console-r3.yaml.example`, copied to `testbeds/lab-r3.yaml`.
-The run leaves R3 in the lab. One draft intent and one expected-findings file per platform
-differ only in R3's interface and its connected-route string (`direct` on NX-OS).
+The run leaves R3 in the lab. One intent and one expected-findings file per platform differ
+only in R3's interface and its connected-route string (`direct` on NX-OS). The iosv pair now sits
+beside its evidence in `fixtures/lab-2026-11-21/`; the nxosv9000 and cat8000v pairs stay in
+`scripts/lab/`, and the script picks the directory per platform with one `case`.
 
 In ncv: NX-OS interface records that carry no status are kept with unknown status, as long as
 one record in the learn reports a status (checked against Genie 26.8's NX-OS test data). A
@@ -377,8 +399,48 @@ and the error names the dialog (checked against Unicon's mock devices only).
 
 Predicted findings, pinned on synthetic snapshots built through the adapter from each
 platform's Genie shapes: nine. `V_ADJ` ospf and bgp on R1 and on R3, `V_ROUTE` R1 10.1.3.0/24,
-3.3.3.3/32, and 172.16.3.0/24, and `V_ROUTE` R3 1.1.1.0/24 and 10.10.10.0/24. Nothing has run
-against a lab and no document claims otherwise.
+3.3.3.3/32, and 172.16.3.0/24, and `V_ROUTE` R3 1.1.1.0/24 and 10.10.10.0/24.
+
+The `iosv` form ran on 2026-11-21 and its nine findings matched the prediction (PR #17).
+`add-r3`'s poll saw R3 BOOTED at 181 s (CML's events put it 177 s after STARTED), and R3's
+strings in the intent, written before any capture, needed no correction: the no-change check
+showed the pre capture met every rule. ncv connected to R3's console with the CML login alone
+and captured it three times with no connect error. R3's GigabitEthernet0/0 stayed up and R3 kept
+its connected 10.1.3.0/24, so there was no tenth finding.
+
+The `nxosv9000` form was tried that evening, from 21:18 to 21:40 PT, and stopped before any
+capture (exit 1). `remove-r3` first took the IOSv R3 out. `add-r3 nxosv9000` then created R3
+(image `nxosv9300-10-5-1-f`, 12288 MiB asked with 29757 MiB free), CML kept the day-0
+configuration, R1 Ethernet0/3 was linked to R3 Ethernet1/1, and `add-r3` printed R3 BOOTED after
+483 s and the link STARTED. R1's side was configured and R1 Ethernet0/3 was up/up, but for 600 s
+R1 saw no OSPF neighbor and no BGP peer on that link, and R1's CDP table listed only R2. ncv never
+connected to R3. R3, the NX-OS node, was still in the lab when the session ended.
+
+Two read-only checks looked at R3 afterwards, from 21:55 to 22:03 PT. They were ad-hoc scripts
+outside the repo: GET calls to the CML API and one console connection made the way ncv makes it.
+Nothing was configured. What they showed: CML's events put R3's BOOTED 478 s after STARTED (481 s
+after QUEUED), at the `nxosv9000` node definition's 480 s boot timeout, not after a console line.
+CML's console log for R3 held 12 characters, against over a million each for R1 and R2, and 44
+minutes after the start R3 had sent no packet on its link. Those two set it apart. Its disk
+counter did not: R3's virtual machine had read 512 bytes and written none, but R1 and R2, which
+run as IOL processes, showed 0 bytes read and written. R3 also kept one of its two virtual CPUs
+busy. No booted virtual-machine node was sampled for comparison. The console connection timed
+out with an empty buffer.
+
+What follows: R3's virtual machine never loaded NX-OS, and CML's BOOTED state is not proof that a
+node booted. (The IOSv R3's BOOTED, 177 s after STARTED in CML's events, most likely came from its
+node definition's 180 s timeout too. That is inferred from the timing only: its console log was
+not read before the node was deleted. That R3 did boot, as its captures show.) The day-0
+configuration, the link, and ncv are not the cause: NX-OS reads its day-0 configuration only once
+it runs, the link was up, and ncv never reached a prompt.
+
+Inferred, not proven here: the machine is stuck in its firmware. The likely reason is that the
+sandbox's CML host has an AMD processor; a Cisco employee wrote on the Cisco Community on
+2024-12-04 that some CML reference images, NX-OSv 9000 among them, have boot issues on AMD. The
+attempt says nothing about ncv on NX-OS, which has still never talked to an NX-OS device. The
+NX-OS section of `fixtures/lab-2026-11-21/SOURCE.md` has the detail and the Cisco Community link.
+
+The `cat8000v` form has not been tried.
 
 ### PR #16, one login for a whole session
 
@@ -395,12 +457,17 @@ its own `NCV_STAMP`, so the closing table, on the screen and in
 last step before the capture cleanup. A failed run does not stop the session, since the next
 run starts with `reset`; a run that could not start (exit 2) or a failed probe does, and the
 script prints the names still to run as a ready command. Ctrl-C prints the table so far and the
-same command. It has run only against stand-in run scripts in `tests/test_lab_lib.py`.
+same command. Besides the stand-in run scripts in `tests/test_lab_lib.py`, it drove three real
+sessions on 2026-11-21: `probe ospf-deadtimer ibgp bgp-vrf reset` and `second-platform:iosv
+reset`, with every run exit 0, and in the evening `remove-r3 second-platform:nxosv9000 reset`.
+There the NX-OS run stopped early (exit 1), the table named its last step, and the reset still
+ran. The logs show the logins were accepted; they do not show whether they were typed at the
+`read -rsp` prompt or already set.
 
 ### PR #16, fixes after an examination of the whole branch
 
 Once the eight pieces above were built, the whole branch was examined again before any run, and
-a second set of fixes followed. None of it has run against a lab. What changed:
+a second set of fixes followed. None of it had run against a lab when it merged. What changed:
 
 - **The tool**: the capture's first-boot guard also refuses NX-OS's `Do you want to enforce
   secure password standard` question. A failed `show running-config` read names only the
@@ -426,7 +493,8 @@ a second set of fixes followed. None of it has run against a lab. What changed:
   `?exclude_configurations=false`, the query Cisco's virl2_client 2.7.1 sends. `remove-r3` also
   accepts `DEFINED_ON_CORE` after the stop, so one run removes a node that never started. The
   inventory also drops canvas annotations and VNC keys, and a 403 on the node POST also names
-  the licence's node limit.
+  the licence's node limit. On 2026-11-21 `add-r3` created R3 twice, and each time the read-back
+  said CML kept the day-0 configuration; `remove-r3` ran once and took out the booted IOSv R3.
 - **The session script**: `remove-r3` is a session name, run like `reset` with the logins the
   session asked for, since the logins last only while a script runs. The session refuses a
   missing `testbeds/lab-ssh.yaml` or R3 testbed, or an R3 `os` that does not fit the platform,
@@ -442,9 +510,76 @@ a second set of fixes followed. None of it has run against a lab. What changed:
   `scripts/lab/README.md` to the code: the SSH sentence, each prediction table against its
   expected file, and each configuration block against its builder.
 
+### PR #17, the 2026-11-21 evidence
+
+Four of the runs PR #16 prepared happened on 2026-11-21, in the same reservation as the 2026-11-20
+runs (CML 2.7.2, R1 and R2 on IOS XE 17.15 IOL), driven by `run-session.sh` at `630402c` in two
+sessions: the probe, the OSPF dead-timer, iBGP, and BGP VRF runs, and a reset, from 12:58 to 13:27
+PT; then the second-platform run with R3 on IOSv, and a reset, from 13:34 to 13:49 PT. Every step
+exited 0. All four change comparisons matched the prediction: each gave exactly the findings of
+its expect file, written and merged before the run (PR #16), and each no-change check and
+restored comparison gave 0 findings. The packet predictions are a separate matter: the iBGP one
+did not hold (see below).
+
+- **OSPF dead timer**: 2 findings, `V_ADJ` on R1 (2.2.2.2 gone) and on R2 (1.1.1.1 in `init`). An
+  inbound ACL on R1 denied OSPF from R2; nothing was shut down.
+- **iBGP over OSPF**: 8 findings from the same ACL. `V_ADJ` for both OSPF neighbors and both iBGP
+  peers (`Established` to `Idle`), and `V_ROUTE` for each peer's Loopback0 /32 (`ospf`) and
+  Loopback1 /24 (`bgp`). It is the first capture written in the by-VRF BGP layout.
+- **BGP in vrf NCV**: 5 findings, all in vrf NCV, and none for the global session to the same
+  address, which stayed Established. It is the first real capture with peers in two VRFs.
+- **Second platform, R3 on IOSv**: 9 findings, on R1 and R3. The captures record R3 as IOS
+  `version 15.9`; `15.9(3)M9` comes from the CML image name `iosv-159-3-m9`. Genie's output for
+  classic IOS normalized into the same snapshot layout as IOS XE with no adapter change. R3's
+  GigabitEthernet0/0 stayed up and R3 kept its connected 10.1.3.0/24, which is why there are nine
+  findings and not ten. R2 was not unaffected: it lost three routes it had learned through R1,
+  with no finding because the intent does not list R2. This run has no packet capture, so R3's
+  snapshot shows its OSPF neighbor gone and its BGP peer `Active`, not why.
+
+The no-change check compares each pre capture with itself, so it shows the pre capture met every
+rule. In all four runs the normalized JSON of restored equals pre, but the lab did not return to
+an identical state: config text differs in timestamps and stray blank lines, the OSPF DR and BDR
+roles swapped after recovery in the two runs whose OSPF was captured on the wire, and the BGP
+sessions came back on new TCP ports. ncv compares none of those.
+
+The three R1-R2 runs captured their link through `cml_capture.py`. What the pcaps added:
+
+- **OSPF dead timer**: R2's Hellos stayed on the wire through the block while R1's Hellos stopped
+  listing R2, 4.0 s after an R2 Hello. That R1 timed R2 out on its dead interval is inferred, not
+  shown.
+- **iBGP**: the written packet prediction did not hold. During the outage no NOTIFICATION was on
+  the link, only 150.4 s with no port-179 segment at all. But R2's "Hold Timer Expired"
+  NOTIFICATION reached the wire after the undo, on the old TCP connection, and R1 answered it with
+  a reset. R1's own NOTIFICATION never appears.
+- **BGP VRF**: the VRF session rode 802.1Q VLAN 100, so a CML link capture keeps the tag. R1 went
+  silent on VLAN 100. R2 sent one NOTIFICATION 4/0 Hold Timer Expired at 13.3 s, 9.6 s after R1's
+  last keepalive, and retransmitted it at 21.2 s; `summary.txt` shows two NOTIFICATION lines
+  because `link_pcap.py` does not mark repacketized retransmissions. The untagged global session
+  ran on untouched.
+
+Not recorded: the SSH path run, never started because the probe showed the management addresses
+do not answer (see "PR #16, a read-only probe and the SSH path run"); the NX-OS attempt that
+evening, which stopped before any capture because R3 never loaded NX-OS (see "PR #16, the
+second-platform run"); and Catalyst 8000V, not tried.
+
+The sanitized captures are in `fixtures/lab-2026-11-21`, one directory per run (`ospf-deadtimer`,
+`ibgp`, `bgp-vrf`, `second-platform-iosv`), with a `SOURCE.md` that tells each run step by step,
+what was sanitized, and what the evidence does not establish. The pcaps and their `summary.txt`
+are in `ospf-deadtimer-pcap`, `ibgp-pcap`, and `bgp-vrf-pcap`. `tests/test_lab_evidence.py`
+replays the captures and the pcaps (see "Test count"). `docs/artifacts/lab-2026-11-21-<run>-post.*`
+and four more blocks in `lab-findings.svg` come from `render_artifacts.py`. The README,
+`docs/LIVE.md`, `docs/EXPLAIN.md`, and `scripts/lab/README.md` say what ran.
+
+What moved: each recorded run's intent and expect file went from `scripts/lab/` to
+`fixtures/lab-2026-11-21/`, with their rules and findings unchanged and only their headers
+reworded, as `intent-bgp-holdtimer.yaml` moved in PR #14. The run scripts and the tests read them
+from there. `run-second-platform.sh` picks the directory per platform with one `case`: `iosv` from
+`fixtures/lab-2026-11-21`, `nxosv9000` and `cat8000v` from `scripts/lab`, which have no recorded
+run.
+
 ## Test count
 
-**579 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
+**609 tests.** The 50 that existed at `11ee5bd` all survive the reorganization, plus
 the 2 policy regressions from PR #1, the 21 that came with BGP support and feature
 selection, 3 covering report provenance and the version flag, 1 that loads both
 bundled intents so the lab template cannot rot unnoticed, 2 covering the interface shape
@@ -481,13 +616,25 @@ to the code (6 in `test_lab_scripts.py`, 1 in `test_lab_evidence.py`). The 80 te
 `tests/test_lab_lib.py` run the shell scripts under bash and are skipped on Windows; the Ubuntu
 CI jobs run them.
 
+PR #17 adds 30 in `tests/test_lab_evidence.py` (15 before, 45 now), for the four 2026-11-21
+runs: each change comparison gives exactly its recorded findings, and those equal its expect
+file; each no-change and restored comparison is clean; each post capture holds the change and
+the states `SOURCE.md` names (the ACL or shutdown lines, the neighbor and session states, the
+routes lost, in the second-platform run only R2's, and in three runs the status of both ends of
+the changed link); restored equals pre outside the config text; and each of the three link
+summaries is what `link_pcap.py` reads from its pcap, with the timeline facts `SOURCE.md` relies
+on pinned (the Hello neighbor lists and the DR/BDR swap, the iBGP gap, the late NOTIFICATION and
+the reset, and the VLAN 100 NOTIFICATION and its retransmission). `tests/test_lab_scripts.py`
+and `tests/test_check_findings.py` read the moved intent and expect files from their new place,
+with the same number of tests as before.
+
 ## Verify
 
 ```bash
 python3 -m pip install -e ".[dev]"
 python3 -m ruff check .
 python3 -m ruff format --check .
-python3 -m pytest                      # 579 passed (on Windows: 499 passed, 80 skipped)
+python3 -m pytest                      # 609 passed (on Windows: 529 passed, 80 skipped)
 git diff --check                       # clean
 python3 scripts/render_artifacts.py    # rewrites docs/artifacts with identical bytes
 git status --short docs/artifacts      # lists nothing (on Windows, run git diff instead;
@@ -528,79 +675,129 @@ python -m venv .venv
   enforces it.
 - **Old snapshots stay readable.** The flat BGP shape in the published fixtures keeps loading
   and reporting the same findings and paths.
-- **Claims match the evidence.** Four live runs have happened against IOS XE 17.15 IOL in a
-  DevNet CML sandbox: two on 2026-09-12 (`fixtures/lab-2026-09-12`), one on static routes and
-  one with OSPF, one on 2026-09-18 (`fixtures/lab-2026-09-18`) with eBGP lost to an
-  administrative shutdown, and one on 2026-11-20 (`fixtures/lab-2026-11-20`) with the same
-  session lost to a hold-timer expiry. Nothing in the repo may
-  claim more than that evidence shows, and synthetic fixtures are never relabeled as
-  captures.
+- **Claims match the evidence.** Eight live runs with published snapshots have happened in a
+  DevNet CML sandbox, all with
+  R1 and R2 on IOS XE 17.15 IOL in its `default-lab`, reached through the CML console server, and
+  Genie 26.8: two on 2026-09-12 (`fixtures/lab-2026-09-12`), one on static routes and one with
+  OSPF; one on 2026-09-18 (`fixtures/lab-2026-09-18`) with eBGP lost to an administrative
+  shutdown; one on 2026-11-20 (`fixtures/lab-2026-11-20`) with the same session lost to a
+  hold-timer expiry; and four on 2026-11-21 (`fixtures/lab-2026-11-21`): an OSPF adjacency lost
+  to an inbound ACL, iBGP over OSPF, BGP in vrf NCV, and a third router, R3, on IOSv (classic IOS
+  15.9). The evidence covers no NX-OS or Catalyst 8000V capture (the NX-OS attempt stopped before
+  any), no SSH path, nothing beyond IPv4 unicast, and no other Genie release. The no-change check
+  shows a pre capture met every rule, not that two captures agreed; a restored comparison with 0
+  findings is not an identical lab; ncv's interface rules check error counters only, never
+  up/down; and a mechanism such as a timer expiry or a NOTIFICATION is claimed only where a pcap
+  shows it. Nothing in the repo may claim more than that evidence shows, and synthetic fixtures
+  are never relabeled as captures.
 
 ## Open
 
-The five runs PR #16 prepared wait for a reservation: the OSPF dead-timer run, the iBGP run,
-the BGP VRF run, the SSH path run, and the second-platform run. The probe has not run either.
-Run them from the WSL clone (`~/network-change-validator`) after a `git pull` on `main`, in
-this order (`scripts/lab/README.md`, "A whole session with one login"):
+What is open:
 
-1. `bash scripts/lab/run-session.sh probe`, and read its three answers.
-2. `bash scripts/lab/run-session.sh ospf-deadtimer ibgp bgp-vrf reset`.
-3. `ssh-path` only if the probe says both management addresses answer on port 22, and
-   `second-platform:<platform>` only if it says R1 Ethernet0/3 is free and that platform has an
-   image, with `testbeds/lab-ssh.yaml` or `testbeds/lab-r3.yaml` copied into the clone first.
-   `remove-r3` takes R3 out afterwards, one platform per session, for example
-   `bash scripts/lab/run-session.sh second-platform:iosv remove-r3`.
+- **NX-OS evidence needs another lab.** On 2026-11-21 the NX-OS R3's virtual machine never
+  loaded NX-OS (see "PR #16, the second-platform run"). Whether NX-OS 9000v can boot in this
+  sandbox at all rests on that one attempt. Any lab where an NX-OS 9000v actually boots, reached
+  over SSH or a console, would do. Everything about ncv on NX-OS is still open: the console login
+  with two credentials, a first-boot dialog, and Genie's NX-OS output through the adapter. ncv has
+  never talked to an NX-OS device, so its NX-OS handling still rests on Genie's test data and
+  Unicon's mock devices. When the evening session ended R3, the NX-OS node, was still in the lab;
+  on that reservation, `bash scripts/lab/run-session.sh remove-r3` takes it out.
+- **`add-r3` trusts CML's BOOTED state.** That state came from the node definition's boot
+  timeout, not from a console line, so the NX-OS run waited ten minutes on R1 for a router that
+  never ran. `add-r3` should check the boot by something better before that wait, such as R3's
+  console log or the packets it sends on its link. The disk counter alone would not do: the
+  running IOL routers R1 and R2 showed 0 bytes read and written, while the stuck R3 showed 512
+  bytes read and none written.
+- **Unicon at an NX-OS loader prompt** (`src/ncv/live.py`): found the same evening, offline
+  against Unicon 26.8's mock n9k device only. With ncv's connect arguments, Unicon's NX-OS plugin
+  answers a device at a loader prompt by sending `boot`, and one at a boot-mode prompt by sending
+  `load-nxos`, and ncv's first-boot guard does not cover those prompts. No real device was
+  affected. This branch does not fix it.
+- **Catalyst 8000V**: still untried. The probe lists `cat8000v` (`cat8000v-17-15-01a`, 4096 MiB). Its
+  intent and expect file are in `scripts/lab/`, and `testbeds/lab-r3.yaml` must give R3 `os:
+  iosxe`. With no R3 in the lab, `bash scripts/lab/run-session.sh second-platform:cat8000v
+  remove-r3` runs it and takes R3 out afterwards.
+- **The SSH path**: it cannot run in this sandbox. It needs another lab whose management addresses
+  answer, or SSH enabled with host keys on the routers. That is a configuration change no lab
+  script makes, and ncv must not make it.
+- **Sanitizer gaps** that no capture has triggered yet. `sanitize_capture.py` lets these through
+  with their values: `enable algorithm-type scrypt secret`; a `username` line with
+  `algorithm-type` or `view` before `secret`; BGP `neighbor <address> password`; key-chain
+  `key-string`; TACACS and RADIUS keys; SNMP communities and IOS-form v3 users; OSPF
+  authentication and message-digest keys; NTP authentication keys; ISAKMP and pre-shared keys;
+  `ppp chap password`; the body of an enrolled (not self-signed) certificate; `license udi`
+  serials; and the user named in `! Last configuration change ... by <user>`. It has no catch-all
+  for a hash or type 7 string under another keyword, and a certificate block cut off before
+  `quit` silently drops the rest of the config. Read every new capture's configs before
+  publishing it.
+- **The pcap decoder**: `link_pcap.py` does not mark retransmissions that TCP repacketized. In the
+  BGP VRF summary, R2's one NOTIFICATION appears twice (13.3 s, and its retransmission at 21.2 s).
+- **What ncv does not compare**: OSPF DR and BDR roles, interface up/down (the interface rules
+  check error counters only), TCP connections and ports, config lines no rule names, and devices
+  the intent does not list. On 2026-11-21 each of these changed with no finding: the roles swapped
+  after recovery, R1 Ethernet0/3 went down, sessions came back on new ports, the ACL lines
+  appeared, and R2 lost three routes in the second-platform run. Whether any of them should
+  become a rule has not been decided.
 
-What is most likely to differ from each prediction:
+What the 2026-11-21 sessions settled among the assumptions PR #16 listed as most likely to differ
+from each prediction:
 
-- **Probe**: several CML response shapes `cml_lab.py inspect` reads are documented nowhere the
-  repo can check, so some answers may come back `unknown`; and the topology may not list R1
-  Ethernet0/3 at all.
-- **OSPF dead-timer**: whether an inbound ACL drops OSPF hellos (IP protocol 89, multicast) as it
-  dropped BGP, and whether Genie reports R2's neighbor in `init` rather than leaving it out (the
-  finding is the same; the README's evidence would not be). Also whether CML accepts `ip proto
-  89` as a capture filter.
-- **iBGP**: the timing. The post capture assumes both sessions and the BGP prefixes are gone
-  within `wait-ibgp-down 60`, and that Genie labels the routes `ospf` and `bgp`.
-- **BGP VRF**: whether IOL accepts a dot1Q subinterface on Ethernet0/1 and the CML link carries
-  the tag, and whether Genie files the VRF neighbor under `vrf NCV` as its test data does.
-- **SSH path**: whether the management addresses answer on port 22 at all; if not, the run ends
-  with exit 4, which is a result. If they do, whether the routers' SSH server accepts the
-  client's key exchange and host key algorithms.
-- **Second platform**: which images and how much memory the sandbox has, and whether this login
-  may add nodes; whether a custom day-0 configuration still boots NX-OS (it may drop the `boot
-  nxos` line and stop at `loader>`); and whether R3's interface stays up when R1 shuts its end,
-  or the change comparison has a tenth finding.
-- **The session script**: it has driven only stand-in run scripts, and `read -rsp` has been
-  tested with piped input, not at a real WSL terminal.
+- **Probe**: all three answers came back definite, and CML lists R1 Ethernet0/3 as not connected.
+  The per-node image still prints as `unknown`.
+- **OSPF dead timer**: after the inbound ACL went on, R2's Hellos stayed on the wire and R1 lost
+  its neighbor; Genie reported R2's neighbor in `init` rather than leaving it out; and CML
+  accepted `ip proto 89` as a capture filter.
+- **iBGP**: both sessions were out of Established at the poll at 13:12:50, inside `wait-ibgp-down
+  60`, and Genie labeled the routes `ospf` and `bgp`.
+- **BGP VRF**: IOL accepted the dot1Q subinterface, the CML link carried the VLAN 100 tag and the
+  link capture kept it, and Genie filed the VRF neighbor under vrf NCV.
+- **SSH path**: the management addresses gave no answer on port 22 within 3 s, and the routers
+  report SSH disabled with no host keys. Whether their SSH server would accept the client's key
+  exchange and host key algorithms was not reached.
+- **Second platform**: the sandbox has all three images, with 29783 MiB free before the IOSv run;
+  this login may add nodes; CML kept a day-0 configuration sent as one string; CML linked R1 while
+  it ran; `add-r3`'s poll saw the IOSv R3 BOOTED after 181 s; and the IOSv R3's interface
+  stayed up when R1 shut its end, so there was no tenth finding. For NX-OS, `add-r3` printed R3
+  BOOTED after 483 s, but CML's events put that state 478 s after STARTED, at the node
+  definition's 480 s boot timeout: R3's virtual machine never loaded NX-OS. The IOSv R3's BOOTED,
+  177 s after STARTED in CML's events, most likely came from its node definition's 180 s timeout
+  too; that is inferred from the timing only.
+- **The session script**: it drove three real sessions (see "PR #16, one login for a whole
+  session").
 
-A run that came out as predicted is published as PR #14 published the hold-timer run: sanitize
+A run that came out as predicted is published as PR #17 published the 2026-11-21 runs: sanitize
 its captures into `fixtures/lab-<date>/<run>` with `scripts/lab/sanitize_capture.py`, move its
-draft intent and `expect-<run>.txt` beside them with a `SOURCE.md`, add tests that replay the
-captures to `tests/test_lab_evidence.py`, rebuild `docs/artifacts` if a report is added there,
-and update the README, `docs/LIVE.md`, this file, and "Claims match the evidence". If the run
-saved a packet capture, copy `captures/<run>-<stamp>/link.pcap` and
-`output/lab/<run>-<stamp>-pcap.txt` to `fixtures/lab-<date>/<run>-pcap/link.pcap` and
-`summary.txt`, after checking that it holds only lab addresses, as PR #15 published the
-hold-timer pcap; `sanitize_capture.py` does not copy it. A run that
-did not come out as predicted is published the same way, with what happened: its `SOURCE.md`
-and the README say which part of the prediction was wrong, and the expected file stays as the
-prediction that was made.
+intent and `expect-<run>.txt` beside them with a `SOURCE.md`, point its run script and the tests
+at the new place, add tests that replay the captures to `tests/test_lab_evidence.py`, rebuild
+`docs/artifacts` if a report is added there, and update the README, `docs/LIVE.md`, this file,
+and "Claims match the evidence". If the run saved a packet capture, copy
+`captures/<run>-<stamp>/link.pcap` and `output/lab/<run>-<stamp>-pcap.txt` (under
+`run-session.sh` the stamp ends in the run's number, `-<n>`) to
+`fixtures/lab-<date>/<run>-pcap/link.pcap` and `summary.txt`, after checking that it holds only
+lab addresses, as PR #15 published the hold-timer pcap; `sanitize_capture.py` does not copy it.
+A run that did not come out as predicted is published the same way, with what happened: its
+`SOURCE.md` and the README say which part of the prediction was wrong, and the expected file
+stays as the prediction that was made.
 
-Still open from the design review, which no change in PR #16 settled:
+Still open from the design review and the examination of the branch, which no change in PR #16
+or PR #17 settled:
 
 - OSPF neighbors are still keyed by router id only, so the same router id on two links is still
   refused. Keying them by interface or VRF, as BGP now is by VRF, has not started.
-- Whether a CML link capture keeps 802.1Q tags, which the BGP VRF run's packet evidence needs.
-- Whether CML allows two captures on one link at once. The capture exit trap stops a capture a
-  run leaves behind after an ordinary early exit, but not after a killed shell or a VPN drop.
+- Whether CML allows two captures on one link at once; the 2026-11-21 runs did not try. The
+  capture exit trap stops a capture a run leaves behind after an ordinary early exit, but not
+  after a killed shell or a VPN drop.
+- Whether `show vrf` lists NCV while IOS is still deleting it; the BGP VRF run's own reset found
+  no NCV to wait for.
 - `SENDLINE_AFTER_CRED` for R1 and R2 in `testbeds/cml-console.yaml.example`. It was verified
   offline to clear a leftover `Password:` prompt, a possible second cause of the 2026-11-20
   `CredentialsExhaustedError` failures, and not adopted there, because the published path works
-  without it. It is used on R3's connection only, in `testbeds/cml-console-r3.yaml.example`
-  (checked against Unicon's mock devices only).
+  without it. It is used on the NX-OS R3's connection only, in
+  `testbeds/cml-console-r3.yaml.example` (checked against Unicon's mock devices only); the IOS
+  form that reached the IOSv R3 does not set it.
 - `lab_finish` warns when a password value appears in a run log; a very short password can
-  give a false warning.
+  give a false warning. No 2026-11-21 log has the warning.
 
-Ideas not started: the always-on DevNet sandboxes as a capture-only second image, and OSPF
-neighbors keyed by interface or VRF (above).
+Ideas not started: the always-on DevNet sandboxes as a capture-only source of more images, and
+OSPF neighbors keyed by interface or VRF (above).

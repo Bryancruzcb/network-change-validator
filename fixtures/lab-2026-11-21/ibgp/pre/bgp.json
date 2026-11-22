@@ -1,0 +1,26 @@
+{
+  "R1": {
+    "vrfs": {
+      "default": {
+        "neighbors": {
+          "10.255.255.2": {
+            "state": "Established",
+            "remote_as": 65010
+          }
+        }
+      }
+    }
+  },
+  "R2": {
+    "vrfs": {
+      "default": {
+        "neighbors": {
+          "10.255.255.1": {
+            "state": "Established",
+            "remote_as": 65010
+          }
+        }
+      }
+    }
+  }
+}

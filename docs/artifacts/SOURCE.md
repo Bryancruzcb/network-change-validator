@@ -35,8 +35,35 @@ python3 -m ncv diff fixtures/lab-2026-09-18/bgp/pre \
   --report output/artifacts-bgp
 # exit 1, finding_count 3
 
-python3 -m ncv diff fixtures/lab-2026-11-20/bgp-holdtimer/pre   fixtures/lab-2026-11-20/bgp-holdtimer/post   --intent fixtures/lab-2026-11-20/intent-bgp-holdtimer.yaml   --report output/artifacts-bgp-holdtimer
+python3 -m ncv diff fixtures/lab-2026-11-20/bgp-holdtimer/pre \
+  fixtures/lab-2026-11-20/bgp-holdtimer/post \
+  --intent fixtures/lab-2026-11-20/intent-bgp-holdtimer.yaml \
+  --report output/artifacts-bgp-holdtimer
 # exit 1, finding_count 2
+
+python3 -m ncv diff fixtures/lab-2026-11-21/ospf-deadtimer/pre \
+  fixtures/lab-2026-11-21/ospf-deadtimer/post \
+  --intent fixtures/lab-2026-11-21/intent-ospf-deadtimer.yaml \
+  --report output/artifacts-ospf-deadtimer
+# exit 1, finding_count 2
+
+python3 -m ncv diff fixtures/lab-2026-11-21/ibgp/pre \
+  fixtures/lab-2026-11-21/ibgp/post \
+  --intent fixtures/lab-2026-11-21/intent-ibgp.yaml \
+  --report output/artifacts-ibgp
+# exit 1, finding_count 8
+
+python3 -m ncv diff fixtures/lab-2026-11-21/bgp-vrf/pre \
+  fixtures/lab-2026-11-21/bgp-vrf/post \
+  --intent fixtures/lab-2026-11-21/intent-bgp-vrf.yaml \
+  --report output/artifacts-bgp-vrf
+# exit 1, finding_count 5
+
+python3 -m ncv diff fixtures/lab-2026-11-21/second-platform-iosv/pre \
+  fixtures/lab-2026-11-21/second-platform-iosv/post \
+  --intent fixtures/lab-2026-11-21/intent-second-platform-iosv.yaml \
+  --report output/artifacts-second-platform-iosv
+# exit 1, finding_count 9
 ```
 
 `python3 scripts/render_artifacts.py` runs those diffs with this checkout's `ncv`,
@@ -53,12 +80,17 @@ here falls behind the code.
 | `lab-2026-09-12-ospf-post.*` | sanitized CML capture, OSPF run |
 | `lab-2026-09-18-bgp-post.*` | sanitized CML capture, BGP run |
 | `lab-2026-11-20-bgp-holdtimer-post.*` | sanitized CML capture, BGP hold-timer run |
+| `lab-2026-11-21-ospf-deadtimer-post.*` | sanitized CML capture, OSPF dead-timer run |
+| `lab-2026-11-21-ibgp-post.*` | sanitized CML capture, iBGP over OSPF run |
+| `lab-2026-11-21-bgp-vrf-post.*` | sanitized CML capture, BGP in vrf NCV run |
+| `lab-2026-11-21-second-platform-iosv-post.*` | sanitized CML capture, second-platform run with R3 on IOSv |
 | `demo-findings.svg`, `lab-findings.svg` | rendered from the JSON files above |
 
 The demo snapshots are hand-authored. The lab snapshots are sanitized copies of
-captures taken on 2026-09-12, 2026-09-18, and 2026-11-20; see
+captures taken on 2026-09-12, 2026-09-18, 2026-11-20, and 2026-11-21; see
 [fixtures/lab-2026-09-12/SOURCE.md](../../fixtures/lab-2026-09-12/SOURCE.md),
-[fixtures/lab-2026-09-18/SOURCE.md](../../fixtures/lab-2026-09-18/SOURCE.md), and
-[fixtures/lab-2026-11-20/SOURCE.md](../../fixtures/lab-2026-11-20/SOURCE.md).
+[fixtures/lab-2026-09-18/SOURCE.md](../../fixtures/lab-2026-09-18/SOURCE.md),
+[fixtures/lab-2026-11-20/SOURCE.md](../../fixtures/lab-2026-11-20/SOURCE.md), and
+[fixtures/lab-2026-11-21/SOURCE.md](../../fixtures/lab-2026-11-21/SOURCE.md).
 Password and certificate bodies were stripped before publish. The collector's
 `raw/` directory is not in this repository.

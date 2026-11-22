@@ -1,8 +1,9 @@
 """scripts/lab/check_findings.py: a run's change report against the findings it predicted.
 
-A prepared run's script checks its change comparison's report.json against the expected file
-next to its draft intent, and tests/test_lab_scripts.py reads the same files. These tests pin
-the parser and the comparison on small inputs, then the command line's exit codes.
+A run script checks its change comparison's report.json against the expected file next to its
+intent (beside the run's evidence once it is recorded), and tests/test_lab_scripts.py reads the
+same files. These tests pin the parser and the comparison on small inputs, then the command
+line's exit codes.
 """
 
 from __future__ import annotations
@@ -124,16 +125,16 @@ def test_cli_unreadable_or_malformed_input_exits_2_naming_the_file(check, tmp_pa
 @pytest.mark.parametrize(
     "name",
     [
-        "expect-ospf-deadtimer.txt",
-        "expect-ibgp.txt",
-        "expect-bgp-vrf.txt",
-        "expect-second-platform-nxosv9000.txt",
-        "expect-second-platform-cat8000v.txt",
-        "expect-second-platform-iosv.txt",
+        "fixtures/lab-2026-11-21/expect-ospf-deadtimer.txt",
+        "fixtures/lab-2026-11-21/expect-ibgp.txt",
+        "fixtures/lab-2026-11-21/expect-bgp-vrf.txt",
+        "scripts/lab/expect-second-platform-nxosv9000.txt",
+        "scripts/lab/expect-second-platform-cat8000v.txt",
+        "fixtures/lab-2026-11-21/expect-second-platform-iosv.txt",
     ],
 )
 def test_each_expected_file_parses_and_says_it_is_a_prediction(check, root, name):
-    path = root / "scripts" / "lab" / name
+    path = root.joinpath(*name.split("/"))
     text = path.read_text(encoding="utf-8")
     assert check.parse_expected(text, str(path))
     assert "written before any capture exists" in " ".join(text.replace("#", " ").split())

@@ -1,0 +1,42 @@
+{
+  "R1": {
+    "vrfs": {
+      "NCV": {
+        "neighbors": {
+          "1.1.1.2": {
+            "state": "Established",
+            "remote_as": 65002
+          }
+        }
+      },
+      "default": {
+        "neighbors": {
+          "1.1.1.2": {
+            "state": "Established",
+            "remote_as": 65002
+          }
+        }
+      }
+    }
+  },
+  "R2": {
+    "vrfs": {
+      "NCV": {
+        "neighbors": {
+          "1.1.1.1": {
+            "state": "Established",
+            "remote_as": 65001
+          }
+        }
+      },
+      "default": {
+        "neighbors": {
+          "1.1.1.1": {
+            "state": "Established",
+            "remote_as": 65001
+          }
+        }
+      }
+    }
+  }
+}

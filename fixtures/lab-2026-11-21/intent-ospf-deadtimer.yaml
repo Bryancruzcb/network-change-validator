@@ -1,6 +1,6 @@
-# Draft intent for the OSPF dead-timer run (scripts/lab/run-ospf-deadtimer.sh). It was written
-# before any capture of that run exists, and it moves next to its evidence under fixtures/ once
-# a run is recorded, as intent-bgp-holdtimer.yaml did.
+# Intent used for the OSPF dead-timer run in fixtures/lab-2026-11-21/ospf-deadtimer (see
+# SOURCE.md). It was written and merged (PR #16) before the run, and moved here with its rules
+# unchanged once the run was recorded, as intent-bgp-holdtimer.yaml was.
 #
 # The same rules as fixtures/lab-2026-09-12/intent-ospf.yaml, plus the 1 s hello line on both
 # routers, so the no-change check proves the fast timer is configured before the change. IOS

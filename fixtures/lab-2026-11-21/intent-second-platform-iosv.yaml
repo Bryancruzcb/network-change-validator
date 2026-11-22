@@ -1,14 +1,13 @@
-# Draft intent for the second-platform run (scripts/lab/run-second-platform.sh iosv), with
-# R3 an IOSv (IOS 15). It was written before any capture of this platform exists, and it moves
-# next to its evidence under fixtures/ once a run is recorded.
+# Intent used for the second-platform run with R3 an IOSv (IOS 15), in
+# fixtures/lab-2026-11-21/second-platform-iosv (see SOURCE.md). It was written and merged (PR #16)
+# before the run, and moved here with its rules unchanged once the run was recorded.
 #
 # docs/LIVE.md's rule is to write an intent from the pre capture. This one could not be: R3's
-# strings are taken from Genie's IOS parsers and the platform's documentation, not from a
-# device. Expect to correct them after the first pre capture; the no-change check is what will
-# say so, naming the rule whose string the capture does not hold. R3's connected route is
-# `connected`, as on R1, and its first data port is GigabitEthernet0/0.
-# intent-second-platform-nxosv9000.yaml explains the rules; this file differs from it only in
-# those two strings.
+# strings were taken from Genie's IOS parsers and the platform's documentation, not from a
+# device. The no-change check showed the first pre capture met every rule, so none needed
+# correcting. R3's connected route is `connected`, as on R1, and its first data port is
+# GigabitEthernet0/0. scripts/lab/intent-second-platform-nxosv9000.yaml explains the rules;
+# this file differs from it only in those two strings.
 intent_id: devnet-default-lab-second-platform
 version: 1
 

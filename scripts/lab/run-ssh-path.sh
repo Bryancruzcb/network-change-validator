@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # The SSH path run on the DevNet CML default-lab in one command. Prepared, not run yet.
+# On 2026-11-21 scripts/lab/probe.sh found that neither management address answers on port 22,
+# and both routers report SSH disabled with no host keys, so the session did not start it.
 #
 # Every capture so far reached the routers through the CML console server. This captures them
 # twice in a row, once that way and once over SSH to their management addresses, and tests one

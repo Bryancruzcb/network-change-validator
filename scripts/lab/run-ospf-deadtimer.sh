@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# The OSPF dead-timer run on the DevNet CML default-lab in one command. Prepared, not run yet.
+# The OSPF dead-timer run on the DevNet CML default-lab in one command. This is the run recorded
+# in fixtures/lab-2026-11-21/ospf-deadtimer.
 #
 # The OSPF twin of run-bgp-holdtimer.sh. Returns both routers to the shipped configuration, sets
 # up OSPF area 0 on the R1-R2 link with a 1 s hello on Ethernet0/1 of both routers (IOS derives
@@ -9,9 +10,10 @@
 # carrying OSPF: R1 stops hearing R2 and its dead timer runs out, while R2 still hears R1 and is
 # predicted to hold R1 in INIT. Post capture and compare, remove the ACL, wait for FULL,
 # restored capture and compare. The predicted findings of the change comparison are in
-# scripts/lab/expect-ospf-deadtimer.txt, and scripts/lab/README.md explains them; the script
-# exits 0 only when every comparison exits as predicted and the change comparison finds exactly
-# those findings, 3 when it ran to the end but one did not, and 1 when it stopped early.
+# fixtures/lab-2026-11-21/expect-ospf-deadtimer.txt, and scripts/lab/README.md explains them;
+# the script exits 0 only when every comparison exits as predicted and the change comparison
+# finds exactly those findings, 3 when it ran to the end but one did not, and 1 when it stopped
+# early.
 #
 # Packet evidence: right before the change, scripts/lab/cml_capture.py starts a capture of
 # `ip proto 89` (OSPF) on the R1-R2 link through the CML API, with the CML login given below; at
@@ -29,7 +31,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 lab_takes_no_arguments "$@"
 lab_init ospf-deadtimer
 features=ospf,routing,interface
-intent=scripts/lab/intent-ospf-deadtimer.yaml
+intent=fixtures/lab-2026-11-21/intent-ospf-deadtimer.yaml
 undo_hint="run scripts/lab/change.sh deadtimer-undo, or let the next run's labctl.py reset remove it"
 
 step "1/11 reset both routers to the shipped configuration (a reused reservation may carry an earlier run)"
@@ -54,7 +56,7 @@ ctl wait-ospf-lost 60 || step "a neighbor still shows FULL, capturing anyway"
 step "9/11 post capture and compare (expect exit 1)"
 snap post || { step "post capture failed; the ACL is still on R1, $undo_hint"; exit 1; }
 compare pre post change; expect_exit change 1 "$?"
-expect_findings change "$out-change" scripts/lab/expect-ospf-deadtimer.txt
+expect_findings change "$out-change" fixtures/lab-2026-11-21/expect-ospf-deadtimer.txt
 step "10/11 undo: remove the ACL and wait for FULL again"
 ctl ospf-unblock || { step "undo failed; $undo_hint"; exit 1; }
 ctl wait-full 180 || step "neighbors not FULL yet, capturing anyway"

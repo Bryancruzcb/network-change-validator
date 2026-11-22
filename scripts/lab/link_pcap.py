@@ -12,13 +12,13 @@ session that rides a VLAN on the same link can be told apart.
 
 Every OSPF body ends at the packet length in the OSPF header, not at the end of the IPv4
 payload. IOS XE runs link-local signaling (RFC 5613) and appends an LLS block after the OSPF
-packet on every Hello and Database Description; the IPv4 length counts it and the OSPF length
-does not, so reading a Hello's neighbor list to the end of the IPv4 payload would list the LLS
-bytes as about three more neighbors. A Hello therefore lists (packet length - 44) / 4
-neighbors, and whatever follows the packet length is ignored. A packet whose length field is
-smaller than the OSPF header or larger than the bytes present, one too short for its own
-body, or one that is not OSPF version 2, is shown as `OSPF (malformed)` rather than stopping
-the read.
+packet on every Hello and Database Description, as the 2026-11-21 captures of IOS XE 17.15
+show; the IPv4 length counts it and the OSPF length does not, so reading a Hello's neighbor
+list to the end of the IPv4 payload would list the LLS bytes as about three more neighbors. A
+Hello therefore lists (packet length - 44) / 4 neighbors, and whatever follows the packet length
+is ignored. A packet whose length field is smaller than the OSPF header or larger than the
+bytes present, one too short for its own body, or one that is not OSPF version 2, is shown as
+`OSPF (malformed)` rather than stopping the read.
 
 It reads classic libpcap only, as bgp_pcap.py does, and reuses that script's frame walk and
 BGP descriptions. Standard library only, and outside ncv like the rest of scripts/lab.
